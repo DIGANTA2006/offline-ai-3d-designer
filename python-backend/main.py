@@ -1,0 +1,268 @@
+"""FastAPI CAD Service for Offline AI 3D Designer."""
+
+from contextlib import asynccontextmanager
+from typing import Optional
+import uuid
+import base64
+import io
+import os
+import tempfile
+import traceback
+
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+import uvicorn
+
+# Import our CAD engine
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+
+from ai3d_designer.core.spec.models import (
+    PartSpec, FeatureSpec, ParameterSpec,
+    PrimitiveType, OperationType, UnitSystem
+)
+from ai3d_designer.core.geometry.engine import create_part_from_spec
+from ai3d_designer.core.export.exporter import export_step, export_stl, ExportResult
+from ai3d_designer.core.validation.validator import validate_spec, validate_geometry
+from ai3d_designer.core.nlp.parser import parse_natural_language
+
+
+# =============================================================================
+# Request/Response Models
+# =============================================================================
+
+class HealthResponse(BaseModel):
+    status: str = "healthy"
+    version: str = "0.1.0"
+    ocrAvailable: bool = False
+    cadAvailable: bool = True
+    imageTo3dAvailable: bool = False
+
+
+class OcrRequest(BaseModel):
+    fileBase64: str
+    fileName: str
+    mimeType: str
+
+
+class ExtractedSpec(BaseModel):
+    dimensions: dict = Field(default_factory=dict)
+    tolerances: dict = Field(default_factory=dict)
+    fits: list = Field(default_factory=list)
+    material: Optional[str] = None
+    surfaceFinish: Optional[str] = None
+    threads: list = Field(default_factory=list)
+    views: list = Field(default_factory=list)
+    annotations: list = Field(default_factory=list)
+    confidence: float = 0.0
+    rawText: str = ""
+
+
+class OcrResponse(BaseModel):
+    success: bool
+    spec: Optional[ExtractedSpec] = None
+    error: Optional[str] = None
+    jobId: str
+
+
+class GenerationRequest(BaseModel):
+    spec: ExtractedSpec
+    jobId: str
+    userId: str
+
+
+class GenerationResponse(BaseModel):
+    success: bool
+    stepUrl: Optional[str] = None
+    stlUrl: Optional[str] = None
+    glbUrl: Optional[str] = None
+    fitReport: Optional[str] = None
+    isApproximation: bool = False
+    error: Optional[str] = None
+    version: int = 1
+
+
+class TextToCadRequest(BaseModel):
+    text: str
+    userId: str
+    unitSystem: str = "mm"
+    exportFormats: list[str] = ["step", "stl"]
+
+
+class TextToCadResponse(BaseModel):
+    success: bool
+    partSpec: Optional[dict] = None
+    stepBase64: Optional[str] = None
+    stlBase64: Optional[str] = None
+    validationErrors: list[str] = Field(default_factory=list)
+    error: Optional[str] = None
+
+
+# =============================================================================
+# In-memory job storage (replace with Redis/DB in production)
+# =============================================================================
+
+jobs: dict[str, dict] = {}
+
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+def _export_part_to_base64(part, formats: list[str]) -> dict:
+    """Export part to requested formats and return base64 encoded data."""
+    results = {}
+    
+    with tempfile.TemporaryDirectory() as tmpdir:
+        for fmt in formats:
+            if fmt.lower() == "step":
+                file_path = os.path.join(tmpdir, "part.step")
+                result: ExportResult = export_step(part, file_path)
+                if result.success and os.path.exists(file_path):
+                    with open(file_path, "rb") as f:
+                        results["stepBase64"] = base64.b64encode(f.read()).decode()
+            elif fmt.lower() == "stl":
+                file_path = os.path.join(tmpdir, "part.stl")
+                result: ExportResult = export_stl(part, file_path)
+                if result.success and os.path.exists(file_path):
+                    with open(file_path, "rb") as f:
+                        results["stlBase64"] = base64.b64encode(f.read()).decode()
+    
+    return results
+
+
+# =============================================================================
+# Lifespan
+# =============================================================================
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    print("🚀 CAD Service starting...")
+    yield
+    # Shutdown
+    print("🛑 CAD Service shutting down...")
+
+
+# =============================================================================
+# FastAPI App
+# =============================================================================
+
+app = FastAPI(
+    title="Offline AI 3D Designer - CAD Service",
+    version="0.1.0",
+    lifespan=lifespan,
+)
+
+# Configure CORS
+cors_origins = os.environ.get("CORS_ORIGINS", "http://localhost:3000").split(",")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# =============================================================================
+# Routes
+# =============================================================================
+
+@app.get("/health", response_model=HealthResponse)
+async def health():
+    return HealthResponse()
+
+
+@app.post("/api/v1/ocr/extract", response_model=OcrResponse)
+async def ocr_extract(request: OcrRequest):
+    """Extract specifications from uploaded drawing/image."""
+    job_id = str(uuid.uuid4())[:8]
+    
+    # TODO: Implement actual OCR (Phase 3+)
+    # For now, return mock response
+    return OcrResponse(
+        success=False,
+        error="OCR not yet implemented. Use /api/v1/text-to-cad for natural language input.",
+        jobId=job_id,
+    )
+
+
+@app.post("/api/v1/generate", response_model=GenerationResponse)
+async def generate_cad(request: GenerationRequest):
+    """Generate CAD from extracted specification."""
+    job_id = request.jobId
+    
+    # TODO: Implement full pipeline (Phase 3+)
+    return GenerationResponse(
+        success=False,
+        error="Full generation pipeline not yet implemented. Use /api/v1/text-to-cad.",
+        jobId=job_id,
+    )
+
+
+@app.post("/api/v1/text-to-cad", response_model=TextToCadResponse)
+async def text_to_cad(request: TextToCadRequest):
+    """Convert natural language to 3D CAD model."""
+    try:
+        # Parse natural language
+        parse_result = parse_natural_language(request.text)
+        
+        if not parse_result.success or not parse_result.spec:
+            return TextToCadResponse(
+                success=False,
+                error=parse_result.error or "Failed to parse description",
+                validationErrors=parse_result.errors or [],
+            )
+        
+        part_spec = parse_result.spec
+        part_spec.unit_system = UnitSystem(request.unitSystem)
+        
+        # Validate spec
+        spec_validation = validate_spec(part_spec)
+        if not spec_validation.is_valid:
+            return TextToCadResponse(
+                success=False,
+                error="Specification validation failed",
+                validationErrors=[issue.message for issue in spec_validation.issues],
+            )
+        
+        # Generate geometry
+        part = create_part_from_spec(part_spec)
+        
+        # Validate geometry
+        geom_validation = validate_geometry(part)
+        if not geom_validation.is_valid:
+            return TextToCadResponse(
+                success=False,
+                error="Geometry validation failed",
+                validationErrors=[issue.message for issue in geom_validation.issues],
+            )
+        
+        # Export to requested formats
+        export_results = _export_part_to_base64(part, request.exportFormats)
+        
+        return TextToCadResponse(
+            success=True,
+            partSpec=part_spec.model_dump(mode="json"),
+            stepBase64=export_results.get("stepBase64"),
+            stlBase64=export_results.get("stlBase64"),
+        )
+        
+    except Exception as e:
+        traceback.print_exc()
+        return TextToCadResponse(
+            success=False,
+            error=f"Generation failed: {str(e)}",
+        )
+
+
+# =============================================================================
+# Entry Point
+# =============================================================================
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)

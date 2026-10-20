@@ -8,13 +8,14 @@ import {
   RecaptchaVerifier,
   createUserWithEmailAndPassword,
   getAuth,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithPhoneNumber,
   signInWithPopup,
   updateProfile,
   type ConfirmationResult,
 } from "firebase/auth";
-import { ArrowRight, CheckCircle2, Globe, LoaderCircle, LockKeyhole, Mail, Phone, UserRound } from "lucide-react";
+import { ArrowRight, CheckCircle2, Globe, LoaderCircle, LockKeyhole, Mail, Phone, RotateCcw, UserRound } from "lucide-react";
 import { getFirebaseClientApp } from "@/lib/firebase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -68,6 +69,7 @@ export function AuthPanel({ mode }: Props) {
   const [success, setSuccess] = useState("");
   const [firebaseReady, setFirebaseReady] = useState(false);
   const [configError, setConfigError] = useState("");
+  const [showReset, setShowReset] = useState(false);
   const verifierRef = useRef<RecaptchaVerifier | null>(null);
 
   useEffect(() => {
@@ -131,6 +133,26 @@ export function AuthPanel({ mode }: Props) {
     }
   }
 
+  async function handleForgotPassword() {
+    if (!email.trim()) {
+      setError("Enter your email address first.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setSuccess("");
+    try {
+      const auth = getAuth(getFirebaseClientApp());
+      await sendPasswordResetEmail(auth, email.trim());
+      setSuccess("Password reset email sent. Check your inbox (and spam folder).");
+      setShowReset(false);
+    } catch (cause) {
+      setError(explainAuthError(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function sendPhoneCode() {
     setBusy(true);
     setError("");
@@ -180,7 +202,29 @@ export function AuthPanel({ mode }: Props) {
       <form onSubmit={handleEmail} className="space-y-4">
         {mode === "signup" && <div className="space-y-2"><Label htmlFor="display-name">Full name</Label><Input id="display-name" autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Your name" maxLength={80} required disabled={busy || !firebaseReady} /></div>}
         <div className="space-y-2"><Label htmlFor="email">Email address</Label><Input id="email" type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" required disabled={busy || !firebaseReady} /></div>
-        <div className="space-y-2"><Label htmlFor="password">Password</Label><Input id="password" type="password" autoComplete={mode === "signup" ? "new-password" : "current-password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder={mode === "signup" ? "At least 8 characters" : "Your password"} minLength={8} required disabled={busy || !firebaseReady} /></div>
+        <div className="space-y-2">
+          <Label htmlFor="password">Password</Label>
+          <Input id="password" type="password" autoComplete={mode === "signup" ? "new-password" : "current-password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder={mode === "signup" ? "At least 8 characters" : "Your password"} minLength={8} required disabled={busy || !firebaseReady} />
+          {mode === "login" && (
+            <button
+              type="button"
+              onClick={() => setShowReset(!showReset)}
+              className="mt-1 text-sm text-primary hover:underline flex items-center gap-1"
+              disabled={busy}
+            >
+              <RotateCcw className="size-3" /> Forgot password?
+            </button>
+          )}
+        </div>
+        {showReset && (
+          <div className="rounded-xl border border-primary/30 bg-primary/5 p-3 space-y-2">
+            <p className="text-sm text-primary">Enter your email above, then click send.</p>
+            <Button type="button" variant="outline" className="w-full" onClick={handleForgotPassword} disabled={busy || !email.trim()}>
+              {busy ? <LoaderCircle className="size-4 animate-spin" /> : <Mail className="size-4" />} Send reset email
+            </Button>
+            <button type="button" className="w-full text-sm text-muted-foreground hover:text-foreground" onClick={() => setShowReset(false)}>Cancel</button>
+          </div>
+        )}
         <Button type="submit" className="w-full" disabled={busy || !firebaseReady}>{busy ? <LoaderCircle className="size-4 animate-spin" /> : mode === "signup" ? <UserRound className="size-4" /> : <Mail className="size-4" />}{mode === "signup" ? "Create account" : "Sign in with email"}<ArrowRight className="ml-auto size-4" /></Button>
       </form>
 

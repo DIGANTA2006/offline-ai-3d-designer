@@ -1,0 +1,21 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "buildCommand": "cd web && npm run build",
+  "devCommand": "cd web && npm run dev",
+  "installCommand": "cd web && npm install",
+  "outputDirectory": "web/.next",
+  "rootDirectory": "web",
+  "crons": [
+    {
+      "path": "/api/cron/account-deletion",
+      "schedule": "17 2 * * *"
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/api/cad/(.*)",
+      "destination": "https://YOUR_CAD_SERVICE_URL/api/v1/$1"
+    }
+  ]
+}

@@ -1,4 +1,3 @@
-
 """
 NLP module for natural language to PartSpec conversion.
 Uses local LLM (llama.cpp) for offline processing.
@@ -12,7 +11,7 @@ from typing import Optional, List, Dict, Any
 from pathlib import Path
 
 from ..spec.models import (
-    PartSpec, FeatureSpec, ParameterSpec, PrimitiveType, 
+    PartSpec, FeatureSpec, ParameterSpec, PrimitiveType,
     OperationType, UnitSystem
 )
 
@@ -28,8 +27,8 @@ class ParseResult:
 
 class PromptTemplates:
     """Prompt templates for LLM interaction."""
-    
-    SYSTEM_PROMPT = """You are an expert mechanical engineer and CAD designer. 
+
+    SYSTEM_PROMPT = """You are an expert mechanical engineer and CAD designer.
 Convert natural language descriptions into precise PartSpec JSON for a 3D CAD system.
 
 The PartSpec schema:
@@ -142,13 +141,13 @@ Output JSON only:"""
 
 class NLPEngine:
     """Natural language to PartSpec converter using local LLM."""
-    
+
     def __init__(self, model_path: Optional[str] = None, n_ctx: int = 4096, n_threads: int = 4):
         self.model_path = model_path or self._find_default_model()
         self.n_ctx = n_ctx
         self.n_threads = n_threads
         self._llm = None
-    
+
     def _find_default_model(self) -> Optional[str]:
         """Find default model in vendor directory."""
         base = Path(__file__).parent.parent.parent.parent / "vendor" / "llama.cpp"
@@ -158,18 +157,18 @@ class NLPEngine:
             if models:
                 return str(models[0])
         return None
-    
+
     def _load_model(self):
         """Lazy load the llama.cpp model."""
         if self._llm is not None:
             return
-        
+
         if not self.model_path or not os.path.exists(self.model_path):
             raise RuntimeError(
                 f"Model not found at {self.model_path}. "
                 "Please download a GGUF model to vendor/llama.cpp/"
             )
-        
+
         try:
             from llama_cpp import Llama
             self._llm = Llama(
@@ -180,18 +179,18 @@ class NLPEngine:
             )
         except ImportError:
             raise RuntimeError("llama-cpp-python not installed. Run: pip install llama-cpp-python")
-    
+
     def parse(self, description: str, unit_system: UnitSystem = UnitSystem.MM) -> ParseResult:
         """Parse natural language description to PartSpec."""
         if not description or not description.strip():
             return ParseResult(success=False, error="Empty description")
-        
+
         try:
             self._load_model()
-            
+
             # Build prompt with few-shot examples
             prompt = self._build_prompt(description)
-            
+
             # Generate response
             response = self._llm(
                 prompt,
@@ -201,25 +200,25 @@ class NLPEngine:
                 stop=["```", "```json"],
                 echo=False,
             )
-            
+
             raw_text = response["choices"][0]["text"].strip()
-            
+
             # Extract JSON from response
             spec = self._extract_json(raw_text)
-            
+
             if spec is None:
                 return ParseResult(
                     success=False,
                     error="Failed to parse JSON from LLM response",
                     raw_response=raw_text
                 )
-            
+
             # Ensure unit_system is set
             spec["unit_system"] = unit_system.value
-            
+
             # Validate and create PartSpec
             part_spec = PartSpec(**spec)
-            
+
             # Run validation
             from ..validation import validate_spec
             val_result = validate_spec(part_spec)
@@ -230,25 +229,25 @@ class NLPEngine:
                     error=f"Generated spec validation failed: {errors}",
                     raw_response=raw_text
                 )
-            
+
             return ParseResult(success=True, spec=part_spec, raw_response=raw_text)
-            
+
         except Exception as e:
             return ParseResult(success=False, error=str(e))
-    
+
     def _build_prompt(self, description: str) -> str:
         """Build the full prompt with examples."""
         parts = [PromptTemplates.SYSTEM_PROMPT, ""]
-        
+
         for ex in PromptTemplates.FEW_SHOT_EXAMPLES:
             parts.append(f"Input: {ex['input']}")
             parts.append(f"Output: {json.dumps(ex['output'], separators=(',', ':'))}")
             parts.append("")
-        
+
         parts.append(PromptTemplates.USER_PROMPT_TEMPLATE.format(description=description))
-        
+
         return "\n".join(parts)
-    
+
     def _extract_json(self, text: str) -> Optional[Dict[str, Any]]:
         """Extract JSON object from text."""
         # Try to find JSON between ```json and ``` or just the first { ... }
@@ -257,7 +256,7 @@ class NLPEngine:
             r'```\s*(\{.*?\})\s*```',
             r'(\{.*\})',
         ]
-        
+
         for pattern in patterns:
             matches = re.findall(pattern, text, re.DOTALL)
             for match in matches:
@@ -265,46 +264,46 @@ class NLPEngine:
                     return json.loads(match)
                 except json.JSONDecodeError:
                     continue
-        
+
         return None
 
 
 class RuleBasedParser:
     """Fallback rule-based parser for simple descriptions without LLM."""
-    
+
     def parse(self, description: str, unit_system: UnitSystem = UnitSystem.MM) -> ParseResult:
         """Parse using simple pattern matching."""
         desc_lower = description.lower()
-        
+
         try:
             # Try to extract dimensions
             dims = self._extract_dimensions(desc_lower)
-            
+
             # Determine primitive type
             prim_type = self._detect_primitive(desc_lower)
-            
+
             if prim_type is None:
                 return ParseResult(success=False, error="Could not determine primitive type")
-            
+
             # Build feature
             feature = self._build_feature(prim_type, dims, desc_lower)
-            
+
             spec = PartSpec(
                 name=self._generate_name(prim_type, desc_lower),
                 description=description,
                 unit_system=unit_system,
                 features=[feature]
             )
-            
+
             return ParseResult(success=True, spec=spec)
-            
+
         except Exception as e:
             return ParseResult(success=False, error=str(e))
-    
+
     def _extract_dimensions(self, text: str) -> Dict[str, float]:
         """Extract numeric dimensions from text."""
         dims = {}
-        
+
         # Pattern: number followed by unit or dimension word
         patterns = [
             (r'(\d+(?:\.\d+)?)\s*mm', 'mm'),
@@ -319,15 +318,15 @@ class RuleBasedParser:
             (r'(\d+(?:\.\d+)?)\s*(?:radius|rad)', 'radius'),
             (r'(\d+(?:\.\d+)?)\s*(?:long|length)', 'length'),
         ]
-        
+
         for pattern, key in patterns:
             matches = re.findall(pattern, text)
             if matches:
                 # Take the last match for each key
                 dims[key] = float(matches[-1])
-        
+
         return dims
-    
+
     def _detect_primitive(self, text: str) -> Optional[PrimitiveType]:
         """Detect primitive type from keywords."""
         keywords = {
@@ -338,34 +337,37 @@ class RuleBasedParser:
             PrimitiveType.TORUS: ["torus", "donut", "ring"],
             PrimitiveType.WEDGE: ["wedge", "ramp", "triangle"],
         }
-        
+
         for prim_type, words in keywords.items():
             if any(w in text for w in words):
                 return prim_type
-        
-        # Default to box if dimensions suggest it
-        if any(w in text for w in ["x", "by", "\u00d7"]):
+
+        # Default to box if dimensions suggest it (e.g., "40x20x10" or "50 x 30 x 20")
+        # Match patterns like "40x20x10", "50 x 30", "10 by 20 by 30", "10×20×30"
+        box_pattern = r'\d+(?:\.\d+)?\s*[x×]\s*\d+(?:\.\d+)?'
+        by_pattern = r'\d+(?:\.\d+)?\s+by\s+\d+(?:\.\d+)?'
+        if re.search(box_pattern, text) or re.search(by_pattern, text):
             return PrimitiveType.BOX
-        
+
         return None
-    
+
     def _build_feature(self, prim_type: PrimitiveType, dims: Dict[str, float], text: str) -> FeatureSpec:
         """Build a FeatureSpec from primitive type and dimensions."""
         params = {}
         feature_id = prim_type.value + "_main"
         feature_name = prim_type.value
-        
+
         if prim_type == PrimitiveType.BOX:
             width = dims.get('width', dims.get('mm', 40))
             depth = dims.get('depth', dims.get('mm', 20))
             height = dims.get('height', dims.get('mm', 10))
-            
+
             params = {
                 "width": ParameterSpec(name="width", value=width),
                 "depth": ParameterSpec(name="depth", value=depth),
                 "height": ParameterSpec(name="height", value=height),
             }
-            
+
             # Check for hole
             hole_diameter = dims.get('diameter')
             if hole_diameter is None and 'hole' in text:
@@ -375,26 +377,26 @@ class RuleBasedParser:
                     hole_match = re.search(r'hole\s*(\d+(?:\.\d+)?)\s*mm', text)
                 if hole_match:
                     hole_diameter = float(hole_match.group(1))
-            
+
             if hole_diameter:
                 # Add hole as second feature (will be handled by caller)
                 pass
-        
+
         elif prim_type == PrimitiveType.CYLINDER:
             radius = dims.get('radius', dims.get('diameter', 20) / 2)
             height = dims.get('height', dims.get('length', dims.get('mm', 50)))
-            
+
             params = {
                 "radius": ParameterSpec(name="radius", value=radius),
                 "height": ParameterSpec(name="height", value=height),
             }
-        
+
         elif prim_type == PrimitiveType.SPHERE:
             radius = dims.get('radius', dims.get('diameter', 20) / 2)
             params = {
                 "radius": ParameterSpec(name="radius", value=radius),
             }
-        
+
         elif prim_type == PrimitiveType.CONE:
             radius_bottom = dims.get('radius', dims.get('diameter', 20) / 2)
             radius_top = dims.get('radius_top', 0)
@@ -404,7 +406,7 @@ class RuleBasedParser:
                 "radius_top": ParameterSpec(name="radius_top", value=radius_top),
                 "height": ParameterSpec(name="height", value=height),
             }
-        
+
         elif prim_type == PrimitiveType.TORUS:
             major_radius = dims.get('radius', dims.get('major_radius', 20))
             minor_radius = dims.get('minor_radius', dims.get('diameter', 10) / 2)
@@ -412,7 +414,7 @@ class RuleBasedParser:
                 "major_radius": ParameterSpec(name="major_radius", value=major_radius),
                 "minor_radius": ParameterSpec(name="minor_radius", value=minor_radius),
             }
-        
+
         elif prim_type == PrimitiveType.WEDGE:
             width = dims.get('width', 40)
             depth = dims.get('depth', 20)
@@ -426,7 +428,7 @@ class RuleBasedParser:
                 "xmax": ParameterSpec(name="xmax", value=width),
                 "zmax": ParameterSpec(name="zmax", value=height),
             }
-        
+
         return FeatureSpec(
             id=feature_id,
             type=prim_type,
@@ -434,7 +436,7 @@ class RuleBasedParser:
             parameters=params,
             operation=OperationType.UNION,
         )
-    
+
     def _generate_name(self, prim_type: PrimitiveType, text: str) -> str:
         """Generate a name for the part."""
         base_names = {

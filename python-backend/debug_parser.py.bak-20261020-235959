@@ -1,0 +1,54 @@
+import sys
+sys.path.insert(0, '..\src')
+from ai3d_designer.core.nlp.parser import RuleBasedParser
+import re
+
+parser = RuleBasedParser()
+
+# Debug the detection
+text = 'invalid gibberish text'
+desc_lower = text.lower()
+print('desc_lower:', repr(desc_lower))
+
+# Check keywords
+keywords = {
+    'box': ['box', 'block', 'cube', 'rectangular', 'plate', 'slab'],
+    'cylinder': ['cylinder', 'rod', 'shaft', 'pin', 'pipe', 'tube'],
+    'sphere': ['sphere', 'ball', 'globe'],
+    'cone': ['cone', 'conical'],
+    'torus': ['torus', 'donut', 'ring'],
+    'wedge': ['wedge', 'ramp', 'triangle'],
+}
+
+for prim_type, words in keywords.items():
+    matches = [w for w in words if w in desc_lower]
+    if matches:
+        print(f'Found {prim_type} keywords: {matches}')
+
+# Check default
+default_check = any(w in desc_lower for w in ['x', 'by', '\u00d7'])
+print('Default box check:', default_check)
+
+# Check dimensions
+dims = {}
+patterns = [
+    (r'(\d+(?:\.\d+)?)\s*mm', 'mm'),
+    (r'(\d+(?:\.\d+)?)\s*cm', 'cm'),
+    (r'(\d+(?:\.\d+)?)\s*inch', 'in'),
+    (r'(\d+(?:\.\d+)?)\s*in\b', 'in'),
+    (r'(\d+(?:\.\d+)?)\s*[\'"]', 'in'),
+    (r'(\d+(?:\.\d+)?)\s*(?:wide|width|x)', 'width'),
+    (r'(\d+(?:\.\d+)?)\s*(?:deep|depth)', 'depth'),
+    (r'(\d+(?:\.\d+)?)\s*(?:tall|high|height)', 'height'),
+    (r'(\d+(?:\.\d+)?)\s*(?:diam|diameter)', 'diameter'),
+    (r'(\d+(?:\.\d+)?)\s*(?:radius|rad)', 'radius'),
+    (r'(\d+(?:\.\d+)?)\s*(?:long|length)', 'length'),
+]
+
+for pattern, key in patterns:
+    matches = re.findall(pattern, desc_lower)
+    if matches:
+        dims[key] = float(matches[-1])
+        print(f'Found dimension {key}: {matches[-1]}')
+
+print('Final dims:', dims)

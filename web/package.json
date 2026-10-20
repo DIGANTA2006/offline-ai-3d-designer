@@ -4,12 +4,17 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
-    "build": "next build --turbopack",
+    "build": "prisma generate && next build --turbopack",
     "start": "next start",
     "lint": "eslint",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy"
+  },
+  "allowScripts": {
+    "@firebase/util": true,
+    "@prisma/client": true,
+    "@prisma/engines": true
   },
   "dependencies": {
     "@prisma/client": "^6.19.0",

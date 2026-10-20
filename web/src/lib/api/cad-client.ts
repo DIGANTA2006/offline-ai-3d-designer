@@ -56,6 +56,23 @@ export interface HealthResponse {
   imageTo3dAvailable: boolean;
 }
 
+// New text-to-cad types
+export interface TextToCadRequest {
+  text: string;
+  userId: string;
+  unitSystem: string;
+  exportFormats: string[];
+}
+
+export interface TextToCadResponse {
+  success: boolean;
+  partSpec?: Record<string, unknown>;
+  stepBase64?: string;
+  stlBase64?: string;
+  validationErrors: string[];
+  error?: string;
+}
+
 /**
  * Call the CAD service OCR endpoint.
  */
@@ -87,6 +104,24 @@ export async function callGenerationEndpoint(request: GenerationRequest): Promis
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: "Generation service unavailable" }));
     throw new Error(error.detail ?? `Generation request failed: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Convert natural language to CAD model.
+ */
+export async function callTextToCadEndpoint(request: TextToCadRequest): Promise<TextToCadResponse> {
+  const response = await fetch(`${CAD_SERVICE_URL}/api/v1/text-to-cad`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Text-to-CAD service unavailable" }));
+    throw new Error(error.detail ?? `Text-to-CAD request failed: ${response.status}`);
   }
 
   return response.json();

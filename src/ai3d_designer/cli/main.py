@@ -5,8 +5,6 @@ Updated to use new core module structure.
 
 import argparse
 import sys
-import os
-import re
 from pathlib import Path
 from typing import Optional
 
@@ -14,6 +12,7 @@ from typing import Optional
 from ai3d_designer.core.spec.models import PartSpec, FeatureSpec, PrimitiveType, OperationType, UnitSystem, ParameterSpec
 from ai3d_designer.core.geometry.engine import create_part_from_spec
 from ai3d_designer.core.export.exporter import export_step, export_stl, validate_export
+from ai3d_designer.core.nlp.parser import RuleBasedParser, parse_natural_language
 
 
 def create_box_spec(name: str, width: float, depth: float, height: float, 
@@ -105,62 +104,16 @@ def create_sphere_spec(name: str, radius: float) -> PartSpec:
 def create_part_from_text(text: str) -> PartSpec:
     """
     Parse natural language text into a PartSpec.
-    This is a simplified version - in production would use LLM.
+    Uses the core RuleBasedParser for consistent parsing.
     """
-    text_lower = text.lower()
+    # Use the core parser
+    result = parse_natural_language(text)
     
-    # Check for cylinder
-    if "cylinder" in text_lower:
-        # Extract radius and height
-        radius_match = re.search(r'radius\s*[=:]?\s*(\d+(?:\.\d+)?)', text_lower)
-        height_match = re.search(r'height\s*[=:]?\s*(\d+(?:\.\d+)?)', text_lower)
-        # Alternative: "cylinder 10x50" or "cylinder radius 10 height 50"
-        if not radius_match:
-            dims = re.findall(r'(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)', text)
-            if dims and len(dims[0]) == 2:
-                radius, height = map(float, dims[0])
-            else:
-                radius, height = 10, 50  # defaults
-        else:
-            radius = float(radius_match.group(1))
-            height = float(height_match.group(1)) if height_match else 50
-        return create_cylinder_spec("cylinder", radius, height)
+    if result.success:
+        return result.spec
     
-    # Check for sphere
-    if "sphere" in text_lower:
-        radius_match = re.search(r'radius\s*[=:]?\s*(\d+(?:\.\d+)?)', text_lower)
-        if not radius_match:
-            radius_match = re.search(r'sphere\s+(\d+(?:\.\d+)?)', text_lower)
-        radius = float(radius_match.group(1)) if radius_match else 10
-        return create_sphere_spec("sphere", radius)
-    
-    # Default to box
-    # Extract dimensions
-    dims = re.findall(r'(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)', text)
-    if not dims:
-        # Try alternative format with units
-        dims = re.findall(r'(\d+(?:\.\d+)?)\s*(?:mm|cm|in)?\s*[x×]\s*(\d+(?:\.\d+)?)\s*(?:mm|cm|in)?\s*[x×]\s*(\d+(?:\.\d+)?)\s*(?:mm|cm|in)?', text)
-    
-    width, depth, height = 40, 20, 10  # defaults
-    if dims:
-        width, depth, height = map(float, dims[0])
-    
-    # Check for hole - multiple patterns
-    hole_diameter = None
-    # Pattern 1: "5mm hole" or "5 mm hole"
-    hole_match = re.search(r'(\d+(?:\.\d+)?)\s*mm\s*hole', text_lower)
-    if not hole_match:
-        # Pattern 2: "hole 5mm" or "hole 5 mm"
-        hole_match = re.search(r'hole\s*(\d+(?:\.\d+)?)\s*mm', text_lower)
-    if not hole_match:
-        # Pattern 3: "with a 5mm hole"
-        hole_match = re.search(r'with\s+a\s+(\d+(?:\.\d+)?)\s*mm\s*hole', text_lower)
-    if hole_match:
-        hole_diameter = float(hole_match.group(1))
-    
-    name = "box"
-    
-    return create_box_spec(name, width, depth, height, hole_diameter)
+    # If parsing fails, raise an error instead of silently defaulting
+    raise ValueError(f"Could not parse description: {result.error}")
 
 
 def main():
@@ -228,7 +181,11 @@ Examples:
     if args.verbose:
         print(f"Parsing: {args.prompt}")
     
-    spec = create_part_from_text(args.prompt)
+    try:
+        spec = create_part_from_text(args.prompt)
+    except ValueError as e:
+        print(f"Error: {e}")
+        return 1
     
     if args.name:
         spec.name = args.name
