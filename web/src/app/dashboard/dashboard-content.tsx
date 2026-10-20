@@ -1,0 +1,133 @@
+import Link from "next/link";
+import {
+  Box,
+  Clock3,
+  FileUp,
+  FolderKanban,
+  LayoutDashboard,
+  Plus,
+  Settings2,
+  Sparkles,
+  Workflow,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ThemeToggle } from "@/components/theme-toggle";
+import { SignOutButton } from "@/components/sign-out-button";
+
+const recentProjects = [
+  { name: "Desk clock enclosure", detail: "STEP / STL · Python CAD engine", status: "Existing sample" },
+  { name: "Mounting bracket", detail: "Parametric model · Draft", status: "UI preview" },
+  { name: "Bearing spacer", detail: "Fit checks · Not generated", status: "Planned" },
+];
+
+export default function DashboardContent({ user }: { user: { displayName: string | null; email: string | null; role: "USER" | "ADMIN" } }) {
+  return (
+    <main className="min-h-screen bg-background">
+      <div className="flex min-h-screen">
+        <aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-card/50 p-5 lg:flex">
+          <Link href="/" className="flex items-center gap-3 font-semibold tracking-tight">
+            <span className="flex size-10 items-center justify-center rounded-xl bg-primary text-primary-foreground"><Box className="size-5" /></span>
+            <span className="leading-tight">Offline AI<br /><span className="text-muted-foreground">3D Designer</span></span>
+          </Link>
+          <p className="mb-3 mt-10 px-3 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Workspace</p>
+          <nav className="space-y-1">
+            <div className="flex items-center gap-3 rounded-xl bg-primary/10 px-3 py-2.5 text-sm font-medium text-primary"><LayoutDashboard className="size-4" /> Overview</div>
+            <div className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground"><FolderKanban className="size-4" /> Projects</div>
+            <div className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground"><Workflow className="size-4" /> Pipeline jobs</div>
+          </nav>
+          <p className="mb-3 mt-8 px-3 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Account</p>
+          <nav className="space-y-1">
+            <div className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground"><Settings2 className="size-4" /> Settings</div>
+          </nav>
+          <div className="mt-auto rounded-2xl border border-border bg-background p-4">
+            <p className="text-sm font-semibold">Phase 1 foundation</p>
+            <p className="mt-2 text-xs leading-5 text-muted-foreground">Your account is active. Project generation and usage meters will be connected in later phases.</p>
+          </div>
+        </aside>
+
+        <section className="min-w-0 flex-1">
+          <header className="flex items-center justify-between border-b border-border px-5 py-4 sm:px-8">
+            <div>
+              <p className="text-sm text-muted-foreground">Workspace / Overview</p>
+              <h1 className="mt-1 text-xl font-semibold tracking-tight">Engineering dashboard</h1>
+            </div>
+            <div className="flex items-center gap-2">
+              <ThemeToggle />
+              <span className="hidden max-w-48 truncate text-sm text-muted-foreground xl:inline">{user.displayName ?? user.email ?? "Signed in"}</span>
+              <Button variant="outline" asChild><Link href="/profile">Profile</Link></Button>
+              {user.role === "ADMIN" && <Button variant="outline" asChild><Link href="/admin">Admin</Link></Button>}
+              <SignOutButton />
+            </div>
+          </header>
+
+          <div className="mx-auto max-w-7xl space-y-8 p-5 sm:p-8">
+            <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+              <div>
+                <div className="inline-flex items-center gap-2 rounded-full border border-primary/25 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary"><Sparkles className="size-3.5" /> CAD workspace preview</div>
+                <h2 className="mt-4 text-3xl font-semibold tracking-tight">Build your next part.</h2>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">Start from a written description or engineering drawing. The upload and generation pipeline will be connected in Phase 3.</p>
+              </div>
+              <Button asChild><Link href="/login"><Plus className="size-4" /> New project</Link></Button>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              {[
+                { label: "Projects", value: "—", detail: "Connected in Phase 7", icon: FolderKanban },
+                { label: "Generations this month", value: "—", detail: "Usage tracking in Phase 6—7", icon: Sparkles },
+                { label: "Successful exports", value: "—", detail: "Linked to CAD service later", icon: Box },
+                { label: "Pipeline queue", value: "Ready for integration", detail: "FastAPI added in Phase 3", icon: Clock3 },
+              ].map((item) => {
+                const Icon = item.icon;
+                return <Card key={item.label}><CardContent className="p-5"><div className="flex items-center justify-between"><span className="text-sm text-muted-foreground">{item.label}</span><Icon className="size-4 text-primary" /></div><p className="mt-4 text-xl font-semibold">{item.value}</p><p className="mt-1 text-xs text-muted-foreground">{item.detail}</p></CardContent></Card>;
+              })}
+            </div>
+
+            <div className="grid gap-5 xl:grid-cols-[1.4fr_0.6fr]">
+              <Card>
+                <CardHeader className="flex-row items-center justify-between">
+                  <div><CardTitle>Recent projects</CardTitle><p className="mt-1 text-sm text-muted-foreground">Illustrative entries only; no records have been loaded.</p></div>
+                  <Button variant="outline" size="sm" disabled>View history</Button>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {recentProjects.map((project) => (
+                    <div key={project.name} className="flex items-center justify-between gap-4 rounded-xl border border-border bg-background/60 p-4">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-secondary text-muted-foreground"><Box className="size-5" /></span>
+                        <div className="min-w-0"><p className="truncate text-sm font-semibold">{project.name}</p><p className="mt-1 truncate text-xs text-muted-foreground">{project.detail}</p></div>
+                      </div>
+                      <span className="shrink-0 rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground">{project.status}</span>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader><CardTitle>Start a workflow</CardTitle><p className="text-sm text-muted-foreground">Choose the source you have.</p></CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="rounded-xl border border-border bg-background/60 p-4">
+                    <FileUp className="size-5 text-primary" />
+                    <p className="mt-3 text-sm font-semibold">Upload a drawing</p>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">PDF, PNG, JPG, with DXF support to be evaluated.</p>
+                    <Button className="mt-4 w-full" variant="outline" disabled>Upload in Phase 3</Button>
+                  </div>
+                  <div className="rounded-xl border border-border bg-background/60 p-4">
+                    <Sparkles className="size-5 text-primary" />
+                    <p className="mt-3 text-sm font-semibold">Describe a part</p>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">Turn dimensions and constraints into a parametric specification.</p>
+                    <Button className="mt-4 w-full" variant="outline" disabled>Generate in Phase 3</Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            <div className="flex items-start gap-3 rounded-2xl border border-border bg-card p-4 text-sm leading-6 text-muted-foreground">
+              <Workflow className="mt-0.5 size-5 shrink-0 text-primary" />
+              <p><strong className="text-foreground">Engineering safety:</strong> generated geometry, inferred dimensions, fits, and tolerances must be reviewed by a qualified person before a part is manufactured. Account authentication is active; the model-generation service will be connected in Phase 3.</p>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  );
+}

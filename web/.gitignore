@@ -1,0 +1,19 @@
+# Dependencies and generated output
+/node_modules
+/.next
+/out
+/build
+/dist
+/coverage
+*.tsbuildinfo
+next-env.d.ts
+
+# Local environment files; commit only the template
+.env
+.env.*
+!.env.example
+
+# Tooling
+.vercel
+.DS_Store
+*.pem

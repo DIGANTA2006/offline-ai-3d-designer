@@ -1,0 +1,184 @@
+"use client";
+
+import { type FormEvent, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import {
+  getAuth,
+  linkWithPhoneNumber,
+  RecaptchaVerifier,
+  reload,
+  verifyBeforeUpdateEmail,
+  type ConfirmationResult,
+  type User as FirebaseUser,
+} from "firebase/auth";
+import { CheckCircle2, LoaderCircle, MailCheck, Phone, Save, ShieldCheck, Trash2 } from "lucide-react";
+import { getFirebaseClientApp } from "@/lib/firebase/client";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+
+type Provider = { providerId: string; email?: string | null; phoneNumber?: string | null; displayName?: string | null };
+type Profile = { displayName: string | null; email: string | null; phone: string | null; role: "USER" | "ADMIN"; createdAt: string; linkedProviders: Provider[] };
+
+async function syncSession(firebaseUser: FirebaseUser) {
+  const response = await fetch("/api/auth/session", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify({ idToken: await firebaseUser.getIdToken(true) }),
+  });
+  const result = (await response.json().catch(() => ({}))) as { error?: string };
+  if (!response.ok) throw new Error(result.error ?? "Could not refresh the secure session.");
+}
+
+export function ProfileForm() {
+  const router = useRouter();
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [displayName, setDisplayName] = useState("");
+  const [newEmail, setNewEmail] = useState("");
+  const [newPhone, setNewPhone] = useState("");
+  const [smsCode, setSmsCode] = useState("");
+  const [phoneConfirmation, setPhoneConfirmation] = useState<ConfirmationResult | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const verifierRef = useRef<RecaptchaVerifier | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/users/me", { credentials: "same-origin" })
+      .then(async (response) => {
+        const result = (await response.json()) as { user?: Profile; error?: string };
+        if (!response.ok || !result.user) throw new Error(result.error ?? "Could not load your profile.");
+        if (active) { setProfile(result.user); setDisplayName(result.user.displayName ?? ""); }
+      })
+      .catch((cause: unknown) => { if (active) setError(cause instanceof Error ? cause.message : "Could not load your profile."); });
+    return () => { active = false; verifierRef.current?.clear(); verifierRef.current = null; };
+  }, []);
+
+  async function saveName(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setBusy(true); setError(""); setMessage("");
+    try {
+      const response = await fetch("/api/users/me", { method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "same-origin", body: JSON.stringify({ displayName }) });
+      const result = (await response.json()) as { error?: string; displayName?: string };
+      if (!response.ok) throw new Error(result.error ?? "Could not update profile.");
+      setProfile((current) => current ? { ...current, displayName: result.displayName ?? displayName } : current);
+      setMessage("Profile name updated."); router.refresh();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not update profile."); }
+    finally { setBusy(false); }
+  }
+
+  async function requestEmailChange() {
+    setBusy(true); setError(""); setMessage("");
+    try {
+      const auth = getAuth(getFirebaseClientApp());
+      if (!auth.currentUser) throw new Error("Your Firebase session is missing. Sign in again.");
+      await verifyBeforeUpdateEmail(auth.currentUser, newEmail.trim());
+      setMessage("Verification link sent to the new address. Open that email, complete verification, then click 'Refresh verified account' below.");
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not send email verification."); }
+    finally { setBusy(false); }
+  }
+
+  async function refreshVerifiedAccount() {
+    setBusy(true); setError(""); setMessage("");
+    try {
+      const auth = getAuth(getFirebaseClientApp());
+      if (!auth.currentUser) throw new Error("Your Firebase session is missing. Sign in again.");
+      await reload(auth.currentUser);
+      await syncSession(auth.currentUser);
+      const response = await fetch("/api/users/me", { credentials: "same-origin" });
+      const result = (await response.json()) as { user?: Profile; error?: string };
+      if (!response.ok || !result.user) throw new Error(result.error ?? "Could not reload profile.");
+      setProfile(result.user); setDisplayName(result.user.displayName ?? ""); setNewEmail(""); setMessage("Verified account details refreshed."); router.refresh();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not refresh account details."); }
+    finally { setBusy(false); }
+  }
+
+  async function sendPhoneCode() {
+    setBusy(true); setError(""); setMessage("");
+    try {
+      const auth = getAuth(getFirebaseClientApp());
+      if (!auth.currentUser) throw new Error("Your Firebase session is missing. Sign in again.");
+      if (!verifierRef.current) verifierRef.current = new RecaptchaVerifier(auth, "profile-recaptcha-container", { size: "invisible" });
+      const confirmation = await linkWithPhoneNumber(auth.currentUser, newPhone.trim(), verifierRef.current);
+      setPhoneConfirmation(confirmation); setMessage("SMS sent. Enter the code to link this phone number to your account.");
+    } catch (cause) {
+      verifierRef.current?.clear(); verifierRef.current = null;
+      setError(cause instanceof Error ? cause.message : "Could not send phone verification.");
+    } finally { setBusy(false); }
+  }
+
+  async function verifyPhoneCode() {
+    if (!phoneConfirmation) return;
+    setBusy(true); setError(""); setMessage("");
+    try {
+      await phoneConfirmation.confirm(smsCode.trim());
+      const auth = getAuth(getFirebaseClientApp());
+      if (!auth.currentUser) throw new Error("Your Firebase session is missing. Sign in again.");
+      await syncSession(auth.currentUser);
+      const response = await fetch("/api/users/me", { credentials: "same-origin" });
+      const result = (await response.json()) as { user?: Profile; error?: string };
+      if (!response.ok || !result.user) throw new Error(result.error ?? "Could not reload profile.");
+      setProfile(result.user); setPhoneConfirmation(null); setSmsCode(""); setNewPhone(""); setMessage("Phone number verified and linked."); router.refresh();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not verify phone number."); }
+    finally { setBusy(false); }
+  }
+
+  async function deleteAccount() {
+    const confirmed = window.confirm("Delete your account? Your account will be deactivated immediately and scheduled for permanent deletion after 30 days. Any active paid subscription must be cancelled first.");
+    if (!confirmed) return;
+    setBusy(true); setError(""); setMessage("");
+    try {
+      const response = await fetch("/api/users/me", { method: "DELETE", credentials: "same-origin" });
+      const result = (await response.json()) as { error?: string; hardDeleteAt?: string };
+      if (!response.ok) throw new Error(result.error ?? "Could not schedule account deletion.");
+      try { await fetch("/api/auth/session", { method: "DELETE", credentials: "same-origin" }); } catch { /* The deletion route has already cleared the session cookie. */ }
+      router.replace("/login?account=deletion-scheduled"); router.refresh();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not schedule account deletion."); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div className="space-y-6">
+      {error && <div role="alert" className="rounded-xl border border-destructive/40 bg-destructive/10 p-3 text-sm leading-6 text-destructive">{error}</div>}
+      {message && <div role="status" className="flex items-start gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm leading-6 text-emerald-200"><CheckCircle2 className="mt-0.5 size-4 shrink-0" />{message}</div>}
+      <section className="rounded-2xl border border-border bg-card p-5 sm:p-6">
+        <h2 className="text-lg font-semibold">Profile details</h2>
+        <p className="mt-1 text-sm text-muted-foreground">Your role is assigned by the server, never by the browser.</p>
+        <form onSubmit={saveName} className="mt-5 space-y-4">
+          <div className="space-y-2"><Label htmlFor="profile-name">Display name</Label><Input id="profile-name" value={displayName} onChange={(event) => setDisplayName(event.target.value)} maxLength={80} required disabled={busy || !profile} /></div>
+          <div className="grid gap-4 sm:grid-cols-2"><div className="space-y-1"><span className="text-sm font-medium">Email</span><p className="break-all text-sm text-muted-foreground">{profile?.email ?? "Not linked"}</p></div><div className="space-y-1"><span className="text-sm font-medium">Phone</span><p className="text-sm text-muted-foreground">{profile?.phone ?? "Not linked"}</p></div></div>
+          <div className="space-y-1"><span className="text-sm font-medium">Role</span><p className="text-sm text-muted-foreground">{profile?.role === "ADMIN" ? "Administrator" : "User"}</p></div>
+          <Button type="submit" disabled={busy || !profile}>{busy ? <LoaderCircle className="size-4 animate-spin" /> : <Save className="size-4" />} Save name</Button>
+        </form>
+      </section>
+
+      <section className="rounded-2xl border border-border bg-card p-5 sm:p-6">
+        <h2 className="text-lg font-semibold">Change email</h2>
+        <p className="mt-1 text-sm leading-6 text-muted-foreground">Firebase sends a verification link before the new email is accepted. Use the refresh button after completing that link.</p>
+        <div className="mt-4 flex flex-col gap-3 sm:flex-row"><Input type="email" autoComplete="email" value={newEmail} onChange={(event) => setNewEmail(event.target.value)} placeholder="new-address@example.com" disabled={busy} /><Button type="button" variant="outline" onClick={requestEmailChange} disabled={busy || !newEmail.trim()}><MailCheck className="size-4" /> Send verification</Button></div>
+        <Button type="button" variant="outline" className="mt-3" onClick={refreshVerifiedAccount} disabled={busy}><CheckCircle2 className="size-4" /> Refresh verified account</Button>
+      </section>
+
+      <section className="rounded-2xl border border-border bg-card p-5 sm:p-6">
+        <h2 className="text-lg font-semibold">Link a phone number</h2>
+        <p className="mt-1 text-sm leading-6 text-muted-foreground">Verify by SMS before the number is linked. A number already tied to another Firebase account cannot be linked.</p>
+        <div className="mt-4 flex flex-col gap-3 sm:flex-row"><Input type="tel" autoComplete="tel" value={newPhone} onChange={(event) => setNewPhone(event.target.value)} placeholder="+919876543210" disabled={busy || Boolean(phoneConfirmation)} /><Button type="button" variant="outline" onClick={sendPhoneCode} disabled={busy || !newPhone.trim() || Boolean(phoneConfirmation)}><Phone className="size-4" /> Send OTP</Button></div>
+        {phoneConfirmation && <div className="mt-3 flex flex-col gap-3 sm:flex-row"><Input inputMode="numeric" autoComplete="one-time-code" value={smsCode} onChange={(event) => setSmsCode(event.target.value)} placeholder="SMS verification code" disabled={busy} /><Button type="button" onClick={verifyPhoneCode} disabled={busy || !smsCode.trim()}>Verify phone</Button></div>}
+        <div id="profile-recaptcha-container" />
+      </section>
+
+      <section className="rounded-2xl border border-border bg-card p-5 sm:p-6">
+        <h2 className="text-lg font-semibold">Linked sign-in providers</h2>
+        <p className="mt-1 text-sm text-muted-foreground">Providers currently attached to your Firebase account.</p>
+        <div className="mt-4 space-y-2">{profile?.linkedProviders.map((provider) => <div key={provider.providerId} className="flex items-center gap-3 rounded-xl border border-border p-3 text-sm"><ShieldCheck className="size-4 text-primary" /><span className="font-medium">{provider.providerId}</span><span className="ml-auto break-all text-right text-muted-foreground">{provider.email ?? provider.phoneNumber ?? "Linked"}</span></div>)}{profile && profile.linkedProviders.length === 0 && <p className="text-sm text-muted-foreground">No sign-in providers were returned.</p>}</div>
+      </section>
+
+      <section className="rounded-2xl border border-destructive/30 bg-card p-5 sm:p-6">
+        <h2 className="text-lg font-semibold">Delete account</h2>
+        <p className="mt-1 text-sm leading-6 text-muted-foreground">This immediately deactivates this account and schedules permanent deletion after 30 days. The daily cleanup task must be configured in deployment. Paid subscription cancellation is attempted first where applicable.</p>
+        <Button type="button" variant="destructive" className="mt-4" onClick={deleteAccount} disabled={busy}><Trash2 className="size-4" /> Delete my account</Button>
+      </section>
+    </div>
+  );
+}
