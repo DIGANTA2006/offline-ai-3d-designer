@@ -1,0 +1,66 @@
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Build outputs
+dist/
+build/
+*.egg-info/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Project specific
+output/
+_backup/
+*.log
+*.key
+*.pfx
+*.p12
+*.crt
+.env
+.env.local
+*.pem
+
+# Certificates and keys
+*.cer
+*.der
+*.p7b
+*.p7c
+*.p12
+*.pfx
+
+# Llama.cpp models (large binaries)
+vendor/llama.cpp/*.bin
+vendor/llama.cpp/*.gguf
+vendor/llama.cpp/llama-server*
+
+# PyInstaller
+*.spec
+
+# Test outputs
+.coverage
+htmlcov/
+.pytest_cache/
+*.prof
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*~
+
+# Local config overrides
+config/local.toml
