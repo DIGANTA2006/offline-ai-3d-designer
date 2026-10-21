@@ -1,9 +1,10 @@
 /**
  * Client for communicating with the Python CAD microservice.
- * All secrets/API keys stay on the server; this client only calls our own API routes.
+ * Browser code must only call the same-origin Next.js proxy. The proxy adds the
+ * verified user id and the server-only CAD service credentials.
  */
 
-const CAD_SERVICE_URL = process.env.CAD_SERVICE_URL ?? "http://127.0.0.1:8000";
+const CAD_PROXY_BASE_URL = "/api/cad";
 
 export interface OcrRequest {
   fileBase64: string;
@@ -34,7 +35,6 @@ export interface OcrResponse {
 export interface GenerationRequest {
   spec: ExtractedSpec;
   jobId: string;
-  userId: string;
 }
 
 export interface GenerationResponse {
@@ -59,7 +59,6 @@ export interface HealthResponse {
 // New text-to-cad types
 export interface TextToCadRequest {
   text: string;
-  userId: string;
   unitSystem: string;
   exportFormats: string[];
 }
@@ -77,7 +76,7 @@ export interface TextToCadResponse {
  * Call the CAD service OCR endpoint.
  */
 export async function callOcrEndpoint(request: OcrRequest): Promise<OcrResponse> {
-  const response = await fetch(`${CAD_SERVICE_URL}/api/v1/ocr/extract`, {
+  const response = await fetch(`${CAD_PROXY_BASE_URL}/ocr/extract`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(request),
@@ -95,7 +94,7 @@ export async function callOcrEndpoint(request: OcrRequest): Promise<OcrResponse>
  * Call the CAD service generation endpoint.
  */
 export async function callGenerationEndpoint(request: GenerationRequest): Promise<GenerationResponse> {
-  const response = await fetch(`${CAD_SERVICE_URL}/api/v1/generate`, {
+  const response = await fetch(`${CAD_PROXY_BASE_URL}/generate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(request),
@@ -113,7 +112,7 @@ export async function callGenerationEndpoint(request: GenerationRequest): Promis
  * Convert natural language to CAD model.
  */
 export async function callTextToCadEndpoint(request: TextToCadRequest): Promise<TextToCadResponse> {
-  const response = await fetch(`${CAD_SERVICE_URL}/api/v1/text-to-cad`, {
+  const response = await fetch(`${CAD_PROXY_BASE_URL}/text-to-cad`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(request),
@@ -132,7 +131,7 @@ export async function callTextToCadEndpoint(request: TextToCadRequest): Promise<
  */
 export async function checkCadServiceHealth(): Promise<HealthResponse> {
   try {
-    const response = await fetch(`${CAD_SERVICE_URL}/health`, { method: "GET" });
+    const response = await fetch(`${CAD_PROXY_BASE_URL}/health`, { method: "GET" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return response.json();
   } catch {

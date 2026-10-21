@@ -27,7 +27,8 @@ python -m venv .venv
 # source .venv/bin/activate  # Linux/Mac
 
 # Install dependencies
-pip install -r requirements.txt
+python -m pip install --upgrade pip
+pip install -e ".[dev]"
 ```
 
 ### Command Line Usage
@@ -83,18 +84,19 @@ The GUI provides:
 ```
 Offline AI 3D Designer/
 ├── src/ai3d_designer/
-│   ├── cli/main.py          # Command-line interface
-│   ├── gui/app.py           # Tkinter GUI
-│   ├── spec/models.py       # Pydantic data models
-│   ├── geometry/engine.py   # build123d geometry engine
-│   └── export/exporter.py   # STEP/STL export with validation
+│   ├── cli/                 # Command-line interface
+│   ├── gui/                 # Desktop GUI
+│   ├── core/spec/           # Pydantic CAD specification models
+│   ├── core/geometry/       # build123d geometry engine
+│   ├── core/export/         # STEP/STL export and validation
+│   └── core/nlp/            # Local-LLM and rule-based parsing
 ├── tests/
 │   ├── test_spec.py         # Spec model tests
 │   └── test_geometry.py     # Geometry engine tests
 ├── output/                  # Generated files (created automatically)
 ├── run_gui.py               # GUI launcher
 ├── run.bat                  # Windows batch launcher
-├── requirements.txt         # Python dependencies
+├── requirements.in           # Pinned desktop dependencies
 └── pyproject.toml           # Project configuration
 ```
 
@@ -116,7 +118,7 @@ python -m pytest tests/test_geometry.py -v
 - pydantic (data validation)
 - numpy (numerical operations)
 
-See `requirements.txt` for complete list.
+See `pyproject.toml` for the installable package and optional development dependencies; `requirements.in` and `requirements.lock` are the pinned Windows environment inputs.
 
 ## License
 

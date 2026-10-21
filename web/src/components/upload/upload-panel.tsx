@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { ArrowRight, Loader2, CheckCircle2, AlertCircle, FileText, Box } from "lucide-react";
+import { ArrowRight, Loader2, CheckCircle2, AlertCircle, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { FileDropZone } from "./file-drop-zone";

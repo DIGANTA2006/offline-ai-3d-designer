@@ -3,7 +3,7 @@ Tests for the spec module.
 """
 
 import pytest
-from ai3d_designer.spec.models import (
+from ai3d_designer.core.spec.models import (
     PartSpec, FeatureSpec, ParameterSpec,
     PrimitiveType, OperationType, UnitSystem
 )

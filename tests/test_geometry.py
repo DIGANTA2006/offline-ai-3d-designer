@@ -3,11 +3,11 @@ Tests for the geometry module.
 """
 
 import pytest
-from ai3d_designer.spec.models import (
+from ai3d_designer.core.spec.models import (
     PartSpec, FeatureSpec, ParameterSpec,
     PrimitiveType, OperationType, UnitSystem
 )
-from ai3d_designer.geometry.engine import GeometryEngine, create_part_from_spec
+from ai3d_designer.core.geometry.engine import GeometryEngine, create_part_from_spec
 
 
 def test_geometry_engine_creation():

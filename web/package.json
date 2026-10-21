@@ -16,6 +16,10 @@
     "@prisma/client": true,
     "@prisma/engines": true
   },
+  "overrides": {
+    "@grpc/grpc-js": "1.14.6",
+    "postcss": "8.5.23"
+  },
   "dependencies": {
     "@prisma/client": "^6.19.0",
     "@radix-ui/react-label": "^2.1.17",

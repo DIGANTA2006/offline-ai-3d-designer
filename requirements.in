@@ -17,3 +17,4 @@ tqdm==4.66.5
 psutil==7.0.0
 pywin32==308
 appdirs==1.4.4
+cryptography>=42.0.0

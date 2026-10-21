@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth/server";
-import { validateFiles, MAX_FILE_SIZE, MAX_FILES_PER_UPLOAD } from "@/lib/upload/validation";
+import { validateFiles } from "@/lib/upload/validation";
 import { prisma } from "@/lib/prisma";
 import { v4 as uuidv4 } from "uuid";
 import { put } from "@vercel/blob";

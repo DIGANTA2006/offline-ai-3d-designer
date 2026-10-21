@@ -23,24 +23,30 @@ export async function getCurrentUser(): Promise<SafeUser | null> {
   const sessionCookie = cookieStore.get(SESSION_COOKIE_NAME)?.value;
   if (!sessionCookie) return null;
 
+  const auth = getFirebaseAdminAuth();
+  let firebaseUid: string;
   try {
-    const decoded = await getFirebaseAdminAuth().verifySessionCookie(sessionCookie, true);
-    return await prisma.user.findFirst({
-      where: { firebaseUid: decoded.uid, deletedAt: null },
-      select: {
-        id: true,
-        firebaseUid: true,
-        email: true,
-        phone: true,
-        displayName: true,
-        photoURL: true,
-        role: true,
-        createdAt: true,
-      },
-    });
+    firebaseUid = (await auth.verifySessionCookie(sessionCookie, true)).uid;
   } catch {
+    // Expired, invalid, or revoked cookies mean the request is unauthenticated.
     return null;
   }
+
+  // Deliberately keep the database query outside the cookie-validation catch.
+  // A PostgreSQL outage must surface as a server error, not masquerade as logout.
+  return prisma.user.findFirst({
+    where: { firebaseUid, deletedAt: null },
+    select: {
+      id: true,
+      firebaseUid: true,
+      email: true,
+      phone: true,
+      displayName: true,
+      photoURL: true,
+      role: true,
+      createdAt: true,
+    },
+  });
 }
 
 export async function requireUser(): Promise<SafeUser> {

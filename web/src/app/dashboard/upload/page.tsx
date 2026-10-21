@@ -1,7 +1,6 @@
 import { requireUser } from "@/lib/auth/server";
 import { prisma } from "@/lib/prisma";
 import { UploadPanel } from "@/components/upload/upload-panel";
-import { ProjectStatus } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
 

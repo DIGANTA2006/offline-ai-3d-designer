@@ -457,4 +457,7 @@ def parse_natural_language(description: str, use_llm: bool = False, **kwargs) ->
         return engine.parse(description)
     else:
         parser = RuleBasedParser()
-        return parser.parse(description)
+        unit_system = kwargs.get("unit_system", UnitSystem.MM)
+        if isinstance(unit_system, str):
+            unit_system = UnitSystem(unit_system)
+        return parser.parse(description, unit_system=unit_system)

@@ -29,7 +29,7 @@ export async function POST(request: Request) {
 
     const email = firebaseUser.email?.trim().toLowerCase() ?? null;
     const initialAdminEmail = process.env.INITIAL_ADMIN_EMAIL?.trim().toLowerCase();
-    const bootstrapAdmin = Boolean(email && initialAdminEmail && email === initialAdminEmail);
+    const bootstrapAdmin = Boolean(firebaseUser.emailVerified && email && initialAdminEmail && email === initialAdminEmail);
     const existing = await prisma.user.findUnique({ where: { firebaseUid: firebaseUser.uid } });
     if (existing?.deletedAt) {
       return NextResponse.json({ error: "This account is scheduled for deletion. Contact support to restore it." }, { status: 410 });

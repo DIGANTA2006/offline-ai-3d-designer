@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState, DragEvent, ChangeEvent } from "react";
-import { Upload, FileText, Image, AlertTriangle, CheckCircle2, XCircle, Loader2 } from "lucide-react";
+import { Upload, FileText, Image as ImageIcon, AlertTriangle, CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { validateFiles, formatFileSize, type ValidatedFile } from "@/lib/upload/validation";
@@ -31,7 +31,7 @@ export function FileDropZone({ onFilesSelected, maxFiles = 10, disabled = false,
   const getFileIcon = (type: string) => {
     switch (type) {
       case "pdf": return <FileText className="size-5 text-red-500" />;
-      case "image": return <Image className="size-5 text-blue-500" />;
+      case "image": return <ImageIcon className="size-5 text-blue-500" />;
       default: return <FileText className="size-5 text-gray-500" />;
     }
   };

@@ -41,12 +41,15 @@ git push origin main
 
 # 2. Go to Railway.app → New Project → Deploy from GitHub
 #    - Select your repo
-#    - Root Directory: python-backend
-#    - It auto-detects Dockerfile
+#    - Root Directory: repository root (leave blank/default)
+#    - Dockerfile Path: python-backend/Dockerfile (build context must include src/)
 
 # 3. Set Environment Variables in Railway:
+#    APP_ENV=production
+#    CAD_SERVICE_TOKEN=<same strong random token as Vercel>
 #    CORS_ORIGINS=https://your-app.vercel.app
-#    PORT=8000
+#    Do not set PORT manually; Railway injects it at runtime.
+
 
 # 4. Get your Railway URL: https://cad-api-xxxx.railway.app
 ```
@@ -57,17 +60,19 @@ git push origin main
 # 1. Go to Vercel → Import Project → Select GitHub repo
 # 2. Configure:
 #    - Framework Preset: Next.js
-#    - Root Directory: web
+#    - Root Directory: repository root (leave blank/default)
 #    - Build Command: cd web && npm run build
 #    - Output Directory: web/.next
-#    - Install Command: cd web && npm install
+#    - Install Command: cd web && npm ci
 
 # 3. Set Environment Variables in Vercel:
 #    (Copy from web/.env.example and fill in)
 #    - NEXT_PUBLIC_FIREBASE_* (from Firebase Console)
 #    - FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY
-#    - DATABASE_URL (PostgreSQL from Supabase/Neon/Railway)
+#    - DATABASE_URL (Supabase pooled connection for the Vercel runtime)
+#    - DIRECT_URL (Supabase direct/session connection for Prisma migrations)
 #    - CAD_SERVICE_URL=https://your-railway-url.railway.app
+#    - CAD_SERVICE_TOKEN (same value as Railway; generate locally with Python secrets.token_hex(32))
 #    - INITIAL_ADMIN_EMAIL=your-email@example.com
 #    - CRON_SECRET= (generate: openssl rand -hex 32)
 #    - BLOB_READ_WRITE_TOKEN (from Vercel Blob storage)
@@ -79,8 +84,9 @@ git push origin main
 
 After both deploy:
 1. Copy Railway URL → Vercel `CAD_SERVICE_URL` env var
-2. Add Vercel URL → Railway `CORS_ORIGINS` env var
-3. Redeploy both
+2. Set the same `CAD_SERVICE_TOKEN` in Vercel and Railway; keep it server-only.
+3. Set Railway `CORS_ORIGINS` to the exact Vercel origin only if calling the backend directly from a browser.
+4. Redeploy both services
 
 ---
 
