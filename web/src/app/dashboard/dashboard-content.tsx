@@ -1,5 +1,6 @@
 import Link from "next/link";
 import {
+  ArrowRight,
   Box,
   Clock3,
   FileUp,
@@ -7,21 +8,37 @@ import {
   LayoutDashboard,
   Plus,
   Settings2,
+  ShieldCheck,
   Sparkles,
   Workflow,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { SignOutButton } from "@/components/sign-out-button";
 
-const recentProjects = [
-  { name: "Desk clock enclosure", detail: "STEP / STL · Python CAD engine", status: "Existing sample" },
-  { name: "Mounting bracket", detail: "Parametric model · Draft", status: "UI preview" },
-  { name: "Bearing spacer", detail: "Fit checks · Not generated", status: "Planned" },
-];
+type ProjectPreview = {
+  id: string;
+  name: string;
+  status: "DRAFT" | "QUEUED" | "PROCESSING" | "SUCCEEDED" | "FAILED";
+  updatedAt: Date;
+};
 
-export default function DashboardContent({ user }: { user: { displayName: string | null; email: string | null; role: "USER" | "ADMIN" } }) {
+type DashboardProps = {
+  user: { displayName: string | null; email: string | null; role: "USER" | "ADMIN" };
+  projects: ProjectPreview[];
+  stats: { totalProjects: number; activeJobs: number; completedProjects: number };
+};
+
+function statusClass(status: ProjectPreview["status"]): string {
+  if (status === "SUCCEEDED") return "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300";
+  if (status === "FAILED") return "border-destructive/30 bg-destructive/10 text-destructive";
+  if (status === "PROCESSING" || status === "QUEUED") return "border-primary/30 bg-primary/10 text-primary";
+  return "border-border bg-muted text-muted-foreground";
+}
+
+export default function DashboardContent({ user, projects, stats }: DashboardProps) {
   return (
     <main className="min-h-screen bg-background">
       <div className="flex min-h-screen">
@@ -32,17 +49,18 @@ export default function DashboardContent({ user }: { user: { displayName: string
           </Link>
           <p className="mb-3 mt-10 px-3 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Workspace</p>
           <nav className="space-y-1">
-            <div className="flex items-center gap-3 rounded-xl bg-primary/10 px-3 py-2.5 text-sm font-medium text-primary"><LayoutDashboard className="size-4" /> Overview</div>
-            <div className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground"><FolderKanban className="size-4" /> Projects</div>
-            <div className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground"><Workflow className="size-4" /> Pipeline jobs</div>
+            <Link href="/dashboard" className="flex items-center gap-3 rounded-xl bg-primary/10 px-3 py-2.5 text-sm font-medium text-primary"><LayoutDashboard className="size-4" /> Overview</Link>
+            <Link href="/dashboard/projects" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"><FolderKanban className="size-4" /> Projects</Link>
+            <Link href="/dashboard/projects" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"><Workflow className="size-4" /> CAD jobs</Link>
           </nav>
           <p className="mb-3 mt-8 px-3 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Account</p>
           <nav className="space-y-1">
-            <div className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground"><Settings2 className="size-4" /> Settings</div>
+            <Link href="/profile" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"><Settings2 className="size-4" /> Profile & settings</Link>
+            {user.role === "ADMIN" && <Link href="/admin" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"><ShieldCheck className="size-4" /> Admin panel</Link>}
           </nav>
           <div className="mt-auto rounded-2xl border border-border bg-background p-4">
-            <p className="text-sm font-semibold">Phase 1 foundation</p>
-            <p className="mt-2 text-xs leading-5 text-muted-foreground">Your account is active. Project generation and usage meters will be connected in later phases.</p>
+            <p className="text-sm font-semibold">CAD workspace</p>
+            <p className="mt-2 text-xs leading-5 text-muted-foreground">Text-to-CAD is available when the protected Python service is configured. Drawing OCR and image-to-3D are not yet implemented.</p>
           </div>
         </aside>
 
@@ -64,58 +82,54 @@ export default function DashboardContent({ user }: { user: { displayName: string
           <div className="mx-auto max-w-7xl space-y-8 p-5 sm:p-8">
             <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
               <div>
-                <div className="inline-flex items-center gap-2 rounded-full border border-primary/25 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary"><Sparkles className="size-3.5" /> CAD workspace preview</div>
+                <div className="inline-flex items-center gap-2 rounded-full border border-primary/25 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary"><Sparkles className="size-3.5" /> CAD workspace</div>
                 <h2 className="mt-4 text-3xl font-semibold tracking-tight">Build your next part.</h2>
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">Start from a written description or engineering drawing. The upload and generation pipeline will be connected in Phase 3.</p>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">Describe a dimensioned part to generate STEP and STL files through the configured Python CAD engine. Review every output before manufacturing.</p>
               </div>
-              <Button asChild><Link href="/login"><Plus className="size-4" /> New project</Link></Button>
+              <Button asChild><Link href="/dashboard/projects/new"><Plus className="size-4" /> New project <ArrowRight className="size-4" /></Link></Button>
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              {[
-                { label: "Projects", value: "—", detail: "Connected in Phase 7", icon: FolderKanban },
-                { label: "Generations this month", value: "—", detail: "Usage tracking in Phase 6—7", icon: Sparkles },
-                { label: "Successful exports", value: "—", detail: "Linked to CAD service later", icon: Box },
-                { label: "Pipeline queue", value: "Ready for integration", detail: "FastAPI added in Phase 3", icon: Clock3 },
-              ].map((item) => {
-                const Icon = item.icon;
-                return <Card key={item.label}><CardContent className="p-5"><div className="flex items-center justify-between"><span className="text-sm text-muted-foreground">{item.label}</span><Icon className="size-4 text-primary" /></div><p className="mt-4 text-xl font-semibold">{item.value}</p><p className="mt-1 text-xs text-muted-foreground">{item.detail}</p></CardContent></Card>;
-              })}
+              <StatCard label="Projects" value={String(stats.totalProjects)} detail="Your saved workspaces" icon={<FolderKanban className="size-4 text-primary" />} />
+              <StatCard label="Active CAD jobs" value={String(stats.activeJobs)} detail="Queued or processing" icon={<Clock3 className="size-4 text-primary" />} />
+              <StatCard label="Generated projects" value={String(stats.completedProjects)} detail="STEP/STL generation completed" icon={<Box className="size-4 text-primary" />} />
+              <StatCard label="Create a part" value="Text → CAD" detail="Dimensioned descriptions" icon={<Sparkles className="size-4 text-primary" />} />
             </div>
 
             <div className="grid gap-5 xl:grid-cols-[1.4fr_0.6fr]">
               <Card>
-                <CardHeader className="flex-row items-center justify-between">
-                  <div><CardTitle>Recent projects</CardTitle><p className="mt-1 text-sm text-muted-foreground">Illustrative entries only; no records have been loaded.</p></div>
-                  <Button variant="outline" size="sm" disabled>View history</Button>
+                <CardHeader className="flex-row items-center justify-between gap-4">
+                  <div><CardTitle>Recent projects</CardTitle><p className="mt-1 text-sm text-muted-foreground">Only projects actually saved to your account are shown.</p></div>
+                  <Button variant="outline" size="sm" asChild><Link href="/dashboard/projects">View all</Link></Button>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  {recentProjects.map((project) => (
-                    <div key={project.name} className="flex items-center justify-between gap-4 rounded-xl border border-border bg-background/60 p-4">
+                  {projects.map((project) => (
+                    <Link key={project.id} href={`/dashboard/projects/${project.id}`} className="flex items-center justify-between gap-4 rounded-xl border border-border bg-background/60 p-4 transition-colors hover:border-primary/50">
                       <div className="flex min-w-0 items-center gap-3">
                         <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-secondary text-muted-foreground"><Box className="size-5" /></span>
-                        <div className="min-w-0"><p className="truncate text-sm font-semibold">{project.name}</p><p className="mt-1 truncate text-xs text-muted-foreground">{project.detail}</p></div>
+                        <div className="min-w-0"><p className="truncate text-sm font-semibold">{project.name}</p><p className="mt-1 truncate text-xs text-muted-foreground">Updated {project.updatedAt.toLocaleDateString("en-IN")}</p></div>
                       </div>
-                      <span className="shrink-0 rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground">{project.status}</span>
-                    </div>
+                      <span className={`shrink-0 rounded-full border px-2.5 py-1 text-xs ${statusClass(project.status)}`}>{project.status}</span>
+                    </Link>
                   ))}
+                  {projects.length === 0 && <div className="rounded-xl border border-dashed border-border p-8 text-center"><Box className="mx-auto size-8 text-muted-foreground" /><p className="mt-3 font-medium">No projects yet</p><p className="mt-1 text-sm text-muted-foreground">Create your first dimensioned part to start a real CAD job.</p><Button asChild className="mt-4"><Link href="/dashboard/projects/new">Create project</Link></Button></div>}
                 </CardContent>
               </Card>
 
               <Card>
-                <CardHeader><CardTitle>Start a workflow</CardTitle><p className="text-sm text-muted-foreground">Choose the source you have.</p></CardHeader>
+                <CardHeader><CardTitle>Start a workflow</CardTitle><p className="text-sm text-muted-foreground">Choose an implemented action.</p></CardHeader>
                 <CardContent className="space-y-3">
-                  <div className="rounded-xl border border-border bg-background/60 p-4">
-                    <FileUp className="size-5 text-primary" />
-                    <p className="mt-3 text-sm font-semibold">Upload a drawing</p>
-                    <p className="mt-1 text-xs leading-5 text-muted-foreground">PDF, PNG, JPG, with DXF support to be evaluated.</p>
-                    <Button className="mt-4 w-full" variant="outline" disabled>Upload in Phase 3</Button>
-                  </div>
                   <div className="rounded-xl border border-border bg-background/60 p-4">
                     <Sparkles className="size-5 text-primary" />
                     <p className="mt-3 text-sm font-semibold">Describe a part</p>
-                    <p className="mt-1 text-xs leading-5 text-muted-foreground">Turn dimensions and constraints into a parametric specification.</p>
-                    <Button className="mt-4 w-full" variant="outline" disabled>Generate in Phase 3</Button>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">Create a project, generate geometry, and save STEP/STL exports.</p>
+                    <Button className="mt-4 w-full" asChild><Link href="/dashboard/projects/new">New project</Link></Button>
+                  </div>
+                  <div className="rounded-xl border border-border bg-background/60 p-4">
+                    <FileUp className="size-5 text-primary" />
+                    <p className="mt-3 text-sm font-semibold">Store an engineering drawing</p>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">Secure file storage is available. Automated OCR and drawing-to-CAD conversion are not implemented yet.</p>
+                    <Button className="mt-4 w-full" variant="outline" asChild><Link href="/dashboard/upload">Upload drawing</Link></Button>
                   </div>
                 </CardContent>
               </Card>
@@ -123,11 +137,15 @@ export default function DashboardContent({ user }: { user: { displayName: string
 
             <div className="flex items-start gap-3 rounded-2xl border border-border bg-card p-4 text-sm leading-6 text-muted-foreground">
               <Workflow className="mt-0.5 size-5 shrink-0 text-primary" />
-              <p><strong className="text-foreground">Engineering safety:</strong> generated geometry, inferred dimensions, fits, and tolerances must be reviewed by a qualified person before a part is manufactured. Account authentication is active; the model-generation service will be connected in Phase 3.</p>
+              <p><strong className="text-foreground">Engineering safety:</strong> this MVP supports the primitives and dimensions understood by the configured parser. Inspect the model, units, features, and exports; generated geometry is not a substitute for professional design review.</p>
             </div>
           </div>
         </section>
       </div>
     </main>
   );
+}
+
+function StatCard({ label, value, detail, icon }: { label: string; value: string; detail: string; icon: ReactNode }) {
+  return <Card><CardContent className="p-5"><div className="flex items-center justify-between"><span className="text-sm text-muted-foreground">{label}</span>{icon}</div><p className="mt-4 text-xl font-semibold">{value}</p><p className="mt-1 text-xs text-muted-foreground">{detail}</p></CardContent></Card>;
 }

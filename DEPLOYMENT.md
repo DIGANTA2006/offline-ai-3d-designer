@@ -73,9 +73,10 @@ git push origin main
 #    - DIRECT_URL (Supabase direct/session connection for Prisma migrations)
 #    - CAD_SERVICE_URL=https://your-railway-url.railway.app
 #    - CAD_SERVICE_TOKEN (same value as Railway; generate locally with Python secrets.token_hex(32))
-#    - INITIAL_ADMIN_EMAIL=your-email@example.com
+#    - INITIAL_ADMIN_EMAIL=your-email@example.com (must match a verified Firebase email)
 #    - CRON_SECRET= (generate: openssl rand -hex 32)
-#    - BLOB_READ_WRITE_TOKEN (from Vercel Blob storage)
+#    - BLOB_READ_WRITE_TOKEN (existing public assets only, if used)
+#    - PRIVATE_BLOB_READ_WRITE_TOKEN (from a separate Vercel Blob store set to Private)
 
 # 4. Deploy!
 ```
@@ -109,7 +110,8 @@ After both deploy:
 | `CAD_SERVICE_URL` | ✅ | Your Railway/Render URL |
 | `INITIAL_ADMIN_EMAIL` | ✅ | Your admin email |
 | `CRON_SECRET` | ✅ | `openssl rand -hex 32` |
-| `BLOB_READ_WRITE_TOKEN` | ✅ | Vercel Blob Storage |
+| `BLOB_READ_WRITE_TOKEN` | Optional | Existing public assets only |
+| `PRIVATE_BLOB_READ_WRITE_TOKEN` | Yes | Separate Vercel Blob store configured with Private access |
 | `NEXT_PUBLIC_APP_URL` | ✅ | Your Vercel URL |
 
 ### Railway (Python Backend)
@@ -122,6 +124,12 @@ After both deploy:
 
 ---
 
+
+### Private user files (important)
+
+Create a **separate Vercel Blob store with access set to Private** and configure its token in Vercel as `PRIVATE_BLOB_READ_WRITE_TOKEN`. The web application passes that token explicitly when saving CAD exports and drawing uploads; do not place it in a `NEXT_PUBLIC_*` variable and never share it in support messages. The current server upload endpoint accepts up to 3 MiB per batch to stay below the Vercel Function body limit. Larger files need a dedicated authenticated direct-upload flow.
+
+Files uploaded before this patch to the previous **public** Blob store remain publicly readable by URL. Changing code does not convert existing objects to private. Review that store and delete or migrate sensitive legacy uploads separately.
 ## Local Development
 
 ### Terminal 1: Python Backend

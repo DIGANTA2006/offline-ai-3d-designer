@@ -1,133 +1,117 @@
+import { put } from "@vercel/blob";
 import { NextResponse } from "next/server";
-import { requireUser } from "@/lib/auth/server";
+import { randomUUID } from "node:crypto";
+import { getCurrentUser } from "@/lib/auth/server";
+import { isSameOriginRequest } from "@/lib/security/same-origin";
 import { validateFiles } from "@/lib/upload/validation";
 import { prisma } from "@/lib/prisma";
-import { v4 as uuidv4 } from "uuid";
-import { put } from "@vercel/blob";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/**
- * POST /api/upload
- * Accepts multipart/form-data with files.
- * Validates, stores in Vercel Blob (or local fallback), creates Project + ProjectVersion records.
- * Returns projectId and version for the client to poll status.
- */
+// Vercel Functions have a 4.5 MB request-body limit. Leave space for multipart headers.
+const MAX_BATCH_BYTES = 3 * 1024 * 1024;
+
 export async function POST(request: Request) {
-  const user = await requireUser();
-
-  // Check subscription limits (free tier: 3 generations/month, 5 MB per file)
-  const subscription = await prisma.subscription.findUnique({ where: { userId: user.id } });
-  const isPro = subscription?.tier === "PRO" && subscription?.status === "ACTIVE";
-  const freeFileSizeLimit = 5 * 1024 * 1024; // 5 MB
-  const freeMonthlyGenerations = 3;
-
-  if (!isPro) {
-    // Check monthly generation count
-    const periodStart = new Date();
-    periodStart.setDate(1);
-    periodStart.setHours(0, 0, 0, 0);
-    const usage = await prisma.usageRecord.findUnique({
-      where: { userId_action_periodStart: { userId: user.id, action: "generation", periodStart } },
-    });
-    if (usage && usage.count >= freeMonthlyGenerations) {
-      return NextResponse.json(
-        { error: "Free tier limit reached. Upgrade to Pro for unlimited generations." },
-        { status: 403 }
-      );
-    }
+  if (!isSameOriginRequest(request)) {
+    return NextResponse.json({ error: "Request origin could not be verified." }, { status: 403 });
   }
 
+  let user;
+  try {
+    user = await getCurrentUser();
+  } catch (error) {
+    console.error("Upload API could not resolve the current user.", error);
+    return NextResponse.json({ error: "Authentication or database service is unavailable." }, { status: 503 });
+  }
+  if (!user) return NextResponse.json({ error: "Sign in before uploading files." }, { status: 401 });
+
+  const privateBlobToken = process.env.PRIVATE_BLOB_READ_WRITE_TOKEN?.trim();
+  if (!privateBlobToken) {
+    return NextResponse.json({ error: "Private file storage is not configured. Connect a private Vercel Blob store first." }, { status: 503 });
+  }
+  const contentLength = Number(request.headers.get("content-length") ?? 0);
+  if (contentLength > MAX_BATCH_BYTES + 64 * 1024) {
+    return NextResponse.json({ error: "This upload route accepts up to 3 MiB total per batch. Larger files require the secure direct-upload flow." }, { status: 413 });
+  }
+
+  let projectId: string | null = null;
   try {
     const formData = await request.formData();
-    const files = formData.getAll("files") as File[];
-
-    if (!files.length) {
-      return NextResponse.json({ error: "No files provided" }, { status: 400 });
+    const values = formData.getAll("files");
+    if (!values.length || values.some((value) => typeof value === "string" || !(value instanceof File))) {
+      return NextResponse.json({ error: "Upload one or more files using the files field." }, { status: 400 });
+    }
+    const files = values as File[];
+    const totalSize = files.reduce((total, file) => total + file.size, 0);
+    if (totalSize > MAX_BATCH_BYTES) {
+      return NextResponse.json({ error: "This upload route accepts up to 3 MiB total per batch." }, { status: 413 });
     }
 
-    // Validate files
     const { valid, rejected } = validateFiles(files);
     if (!valid.length) {
-      return NextResponse.json(
-        { error: "All files rejected", rejected: rejected.map((r) => ({ name: r.file.name, reason: r.reason })) },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "No supported files were found.", rejected: rejected.map((item) => ({ name: item.file.name, reason: item.reason })) }, { status: 400 });
     }
 
-    // Enforce free tier per-file size limit
-    if (!isPro) {
-      const oversized = valid.filter((v) => v.size > freeFileSizeLimit);
-      if (oversized.length) {
-        return NextResponse.json(
-          { error: "Free tier limited to 5 MB per file. Upgrade to Pro for 25 MB files." },
-          { status: 403 }
-        );
-      }
-    }
-
-    // Create project
     const project = await prisma.project.create({
       data: {
         userId: user.id,
-        name: valid[0].file.name.replace(/\.[^.]+$/, ""),
-        description: `Uploaded ${valid.length} file(s)`,
-        status: "QUEUED",
+        name: valid[0].file.name.replace(/\.[^.]+$/, "").slice(0, 80) || "Engineering drawing upload",
+        description: `Stored ${valid.length} source file(s). Automated drawing OCR and drawing-to-CAD generation are not implemented yet.`,
+        status: "DRAFT",
       },
+      select: { id: true },
     });
+    projectId = project.id;
 
-    // Upload files to blob storage and create version records
-    const uploadedFiles: Array<{ url: string; name: string; type: string; size: number }> = [];
-    for (const v of valid) {
-      const blob = await put(`projects/${project.id}/${uuidv4()}-${v.file.name}`, v.file, {
-        access: "public",
+    const uploadedFiles: Array<{ pathname: string; name: string; type: string; size: number; contentType: string }> = [];
+    for (const item of valid) {
+      const originalName = item.file.name.replace(/[\\/\x00-\x1f]/g, "_").slice(0, 120) || "drawing";
+      const blob = await put(`projects/${user.id}/${project.id}/source/${randomUUID()}-${originalName}`, item.file, {
+        access: "private",
+        token: privateBlobToken,
         addRandomSuffix: true,
+        contentType: item.file.type || "application/octet-stream",
       });
-      uploadedFiles.push({ url: blob.url, name: v.file.name, type: v.type, size: v.size });
+      uploadedFiles.push({ pathname: blob.pathname, name: originalName, type: item.type, size: item.size, contentType: item.file.type || "application/octet-stream" });
     }
 
-    // Create initial version with source file references
     const version = await prisma.projectVersion.create({
       data: {
         projectId: project.id,
         version: 1,
-        sourceFileName: uploadedFiles.map((f) => f.name).join(", "),
-        spec: { uploadedFiles, rejected: rejected.map((r) => ({ name: r.file.name, reason: r.reason })) },
+        sourceFileName: uploadedFiles.map((file) => file.name).join(", "),
+        spec: { uploadedFiles, rejected: rejected.map((item) => ({ name: item.file.name, reason: item.reason })) },
       },
+      select: { id: true, version: true },
     });
 
-    // Increment usage counter
-    const periodStart = new Date();
-    periodStart.setDate(1);
-    periodStart.setHours(0, 0, 0, 0);
-    await prisma.usageRecord.upsert({
-      where: { userId_action_periodStart: { userId: user.id, action: "generation", periodStart } },
-      update: { count: { increment: 1 } },
-      create: { userId: user.id, action: "generation", periodStart, count: 1 },
-    });
-
-    // Log audit
     await prisma.auditLog.create({
       data: {
         userId: user.id,
         agent: "upload",
-        provider: "vercel-blob",
+        provider: "vercel-private-blob",
         action: "files_uploaded",
         status: "success",
-        details: { projectId: project.id, versionId: version.id, fileCount: valid.length },
+        details: { projectId: project.id, versionId: version.id, fileCount: uploadedFiles.length },
       },
-    });
+    }).catch((error) => console.error("Upload succeeded but audit logging failed.", error));
 
     return NextResponse.json({
       projectId: project.id,
       versionId: version.id,
       version: version.version,
-      uploadedFiles: uploadedFiles.map((f) => ({ name: f.name, url: f.url, type: f.type })),
-      rejected: rejected.map((r) => ({ name: r.file.name, reason: r.reason })),
-    });
+      uploadedFiles: uploadedFiles.map(({ name, type, size }) => ({ name, type, size })),
+      rejected: rejected.map((item) => ({ name: item.file.name, reason: item.reason })),
+      processingAvailable: false,
+      message: "Files were stored privately. Automatic drawing OCR and drawing-to-CAD conversion are not implemented yet.",
+    }, { status: 201 });
   } catch (error) {
-    console.error("Upload error:", error);
-    return NextResponse.json({ error: "Upload failed. Please try again." }, { status: 500 });
+    console.error("Private drawing upload failed.", error);
+    if (projectId) {
+      try { await prisma.project.update({ where: { id: projectId }, data: { status: "FAILED" } }); }
+      catch (updateError) { console.error("Could not mark failed upload project.", updateError); }
+    }
+    return NextResponse.json({ error: "Upload failed. Check private Blob storage configuration and deployment logs." }, { status: 500 });
   }
 }

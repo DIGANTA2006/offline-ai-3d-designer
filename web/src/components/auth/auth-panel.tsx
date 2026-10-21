@@ -8,8 +8,10 @@ import {
   RecaptchaVerifier,
   createUserWithEmailAndPassword,
   getAuth,
+  sendEmailVerification,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
+  signOut,
   signInWithPhoneNumber,
   signInWithPopup,
   updateProfile,
@@ -27,6 +29,14 @@ function explainAuthError(error: unknown): string {
   const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
   const messages: Record<string, string> = {
     "auth/invalid-credential": "Email/password or sign-in details were not accepted.",
+    "auth/invalid-api-key": "Firebase rejected this app's API key. Check the web API key and its API restrictions.",
+    "auth/operation-not-allowed": "This sign-in method is disabled. Enable it in Firebase Console under Authentication and Sign-in method.",
+    "auth/unauthorized-domain": "This site's domain is not authorized. Add the exact Vercel hostname under Firebase Authentication Settings and Authorized domains.",
+    "auth/app-not-authorized": "Firebase rejected this application's configuration. Check the API key, Firebase project and authorized domain.",
+    "auth/popup-blocked": "The browser blocked the Google sign-in popup. Allow popups or use email/password.",
+    "auth/invalid-app-credential": "Firebase could not verify this app. Check authorized domains and phone reCAPTCHA settings.",
+    "auth/missing-app-credential": "Phone verification is missing a valid reCAPTCHA credential. Refresh and retry phone verification.",
+    "auth/quota-exceeded": "Firebase has exhausted the quota for this authentication request. Check Firebase usage and try later.",
     "auth/invalid-email": "Enter a valid email address.",
     "auth/user-disabled": "This account has been disabled.",
     "auth/user-not-found": "No account was found for those details.",
@@ -109,7 +119,19 @@ export function AuthPanel({ mode }: Props) {
       const credential = mode === "signup"
         ? await createUserWithEmailAndPassword(auth, email.trim(), password)
         : await signInWithEmailAndPassword(auth, email.trim(), password);
-      if (mode === "signup" && name.trim()) await updateProfile(credential.user, { displayName: name.trim() });
+      if (mode === "signup") {
+        if (name.trim()) await updateProfile(credential.user, { displayName: name.trim() });
+        await sendEmailVerification(credential.user);
+        await signOut(auth);
+        setSuccess("Account created. Check your inbox for the verification link, verify the address, then sign in. The server grants admin access only to a verified email matching INITIAL_ADMIN_EMAIL.");
+        return;
+      }
+      if (!credential.user.emailVerified) {
+        await sendEmailVerification(credential.user);
+        await signOut(auth);
+        setSuccess("Your email is not verified. We sent a verification link. Verify your address, then sign in again.");
+        return;
+      }
       await finishSignIn(await credential.user.getIdToken(true));
     } catch (cause) {
       setError(explainAuthError(cause));

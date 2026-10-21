@@ -14,9 +14,10 @@ export const ALLOWED_MIME_TYPES = [
 
 export const ALLOWED_EXTENSIONS = [".pdf", ".png", ".jpg", ".jpeg", ".webp", ".dxf"] as const;
 
-export const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB per file
+// The current server upload handler is bounded below Vercel's 4.5 MB function limit.
+export const MAX_FILE_SIZE = 3 * 1024 * 1024; // 3 MiB per file
 export const MAX_FILES_PER_UPLOAD = 10;
-export const MAX_TOTAL_SIZE = 100 * 1024 * 1024; // 100 MB total per batch
+export const MAX_TOTAL_SIZE = 3 * 1024 * 1024; // 3 MiB total per batch
 
 export type UploadFileType = "pdf" | "image" | "dxf";
 
@@ -53,7 +54,7 @@ export function validateFile(file: File): { ok: boolean; reason?: string; type?:
     return { ok: false, reason: `Unsupported file type: ${file.type || "unknown"}. Allowed: PDF, PNG, JPG, WEBP, DXF` };
   }
   if (file.size > MAX_FILE_SIZE) {
-    return { ok: false, reason: `File exceeds 25 MB limit: ${(file.size / 1024 / 1024).toFixed(1)} MB` };
+    return { ok: false, reason: `File exceeds 3 MiB limit: ${(file.size / 1024 / 1024).toFixed(1)} MB` };
   }
   return { ok: true, type };
 }

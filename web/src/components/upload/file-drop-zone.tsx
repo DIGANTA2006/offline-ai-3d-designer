@@ -79,9 +79,6 @@ export function FileDropZone({ onFilesSelected, maxFiles = 10, disabled = false,
     setIsDragActive(false);
   }, []);
 
-  const onClick = useCallback(() => {
-    if (!disabled) inputRef.current?.click();
-  }, [disabled]);
 
   const onChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
@@ -112,7 +109,6 @@ export function FileDropZone({ onFilesSelected, maxFiles = 10, disabled = false,
   return (
     <div className="space-y-4">
       <div
-        ref={inputRef}
         className={cn(
           "relative rounded-2xl border-2 border-dashed transition-colors",
           isDragActive
@@ -123,9 +119,15 @@ export function FileDropZone({ onFilesSelected, maxFiles = 10, disabled = false,
         onDrop={onDrop}
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
-        onClick={onClick}
+
         role="button"
         tabIndex={disabled ? -1 : 0}
+        onKeyDown={(event) => {
+          if (!disabled && (event.key === "Enter" || event.key === " ")) {
+            event.preventDefault();
+            inputRef.current?.click();
+          }
+        }}
         aria-label="Drop zone for file upload"
       >
         <input
@@ -144,7 +146,7 @@ export function FileDropZone({ onFilesSelected, maxFiles = 10, disabled = false,
             {isDragActive ? "Drop files here" : "Drag & drop files here, or click to browse"}
           </p>
           <p className="mt-1 text-sm text-muted-foreground">
-            PDF, PNG, JPG, WEBP, DXF • Max {maxFiles} files • 25 MB each
+            PDF, PNG, JPG, WEBP, DXF • Max {maxFiles} files • 3 MiB total per batch
           </p>
         </div>
       </div>

@@ -9,6 +9,9 @@ import os
 import tempfile
 import traceback
 import secrets
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from fastapi import Depends, FastAPI, File, UploadFile, Form, Header, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -111,13 +114,14 @@ class TextToCadResponse(BaseModel):
 
 
 def require_cad_service_token(authorization: Optional[str] = Header(default=None)) -> None:
-    """Require the shared web-to-CAD token in production; allow local development without one."""
+    """Require the shared web-to-CAD token; only explicit development/test may omit it."""
+    app_env = os.environ.get("APP_ENV", "").strip().lower()
     expected = os.environ.get("CAD_SERVICE_TOKEN", "").strip()
-    is_production = os.environ.get("APP_ENV", "").strip().lower() == "production"
+    is_development = app_env in {"development", "dev", "test"}
     if not expected:
-        if is_production:
-            raise HTTPException(status_code=503, detail="CAD_SERVICE_TOKEN is not configured on the CAD service.")
-        return
+        if is_development:
+            return
+        raise HTTPException(status_code=503, detail="CAD_SERVICE_TOKEN is not configured on the CAD service.")
 
     scheme, separator, supplied = (authorization or "").partition(" ")
     if not separator or scheme.lower() != "bearer" or not supplied or not secrets.compare_digest(supplied, expected):
@@ -206,10 +210,12 @@ app.add_middleware(
 async def health():
     # Keep health checks public, but never advertise a CAD runtime that cannot load.
     cad_available = cad_runtime_is_available()
-    is_production = os.environ.get("APP_ENV", "").strip().lower() == "production"
+    app_env = os.environ.get("APP_ENV", "").strip().lower()
+    is_development = app_env in {"development", "dev", "test"}
     token_configured = bool(os.environ.get("CAD_SERVICE_TOKEN", "").strip())
-    status = "healthy" if cad_available and (not is_production or token_configured) else "degraded"
-    return HealthResponse(status=status, cadAvailable=cad_available and (not is_production or token_configured))
+    ready = cad_available and (is_development or token_configured)
+    status = "healthy" if ready else "degraded"
+    return HealthResponse(status=status, cadAvailable=ready)
 
 
 @app.post("/api/v1/ocr/extract", response_model=OcrResponse, dependencies=[Depends(require_cad_service_token)])
@@ -291,7 +297,7 @@ async def text_to_cad(request: TextToCadRequest):
         traceback.print_exc()
         return TextToCadResponse(
             success=False,
-            error=f"Generation failed: {str(e)}",
+            error="CAD generation failed. Check the service logs and try a simpler dimensioned description.",
         )
 
 

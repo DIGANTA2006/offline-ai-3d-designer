@@ -27,7 +27,8 @@ function getCadServiceBaseUrl(): string | null {
 
   try {
     const url = new URL(configured);
-    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    const loopbackHost = ["localhost", "127.0.0.1", "::1"].includes(url.hostname);
+    if (url.protocol !== "https:" && !(process.env.NODE_ENV !== "production" && url.protocol === "http:" && loopbackHost)) return null;
     return url.toString().replace(/\/+$/, "");
   } catch {
     return null;
@@ -44,6 +45,15 @@ async function handleCadProxy(request: Request): Promise<Response> {
       status: 405,
       headers: { Allow: route.method },
     });
+  }
+
+  // The project-creation endpoint applies quota checks and persists outputs.
+  // Disable alternate paths that would otherwise bypass project persistence and quotas.
+  if (routeName !== "health") {
+    return NextResponse.json(
+      { error: "Direct CAD endpoints are disabled. Use POST /api/projects to create a saved, quota-managed CAD project." },
+      { status: 410 },
+    );
   }
 
   let userId: string | undefined;

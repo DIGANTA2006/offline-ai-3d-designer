@@ -27,8 +27,10 @@ export async function getCurrentUser(): Promise<SafeUser | null> {
   let firebaseUid: string;
   try {
     firebaseUid = (await auth.verifySessionCookie(sessionCookie, true)).uid;
-  } catch {
-    // Expired, invalid, or revoked cookies mean the request is unauthenticated.
+  } catch (error) {
+    // Log the error code only. Never log session-cookie or token contents.
+    const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "unknown";
+    console.warn("Firebase session cookie validation failed.", { code });
     return null;
   }
 
