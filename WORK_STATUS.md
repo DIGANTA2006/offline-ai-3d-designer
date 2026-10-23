@@ -1,6 +1,21 @@
 # Work Status
 
-Updated: 21 October 2026 (local verification)
+Updated: 23 October 2026 (CAD reliability feature branch; CI validation in progress)
+
+## CAD engine reliability review
+- Branch: `feat/cad-engine-reliability-upgrade-20261023` (based on the deployed `main`; this branch is not merged).
+- Geometry: canonical engine now normalizes explicit per-parameter units, validates feature dependency DAGs, supports profile extrusion/revolution/loft/sweep, and rejects invalid/empty boolean results.
+- Rule parser: dimensions normalize to mm; supported boxes/cylinders can have a specified centered through-bore; tubes require outer and inner dimensions/wall thickness; ambiguous multiple-hole layouts and missing dimensions are rejected.
+- Exports: STEP/STL paths now share canonical exporters; STL validation treats open surfaces, invalid manifold status, degenerate faces and non-positive volume as errors.
+- Image meshes: closed watertight heightfield helper with tests; image-depth is explicitly approximate and not a substitute for exact multi-view reconstruction.
+- Slicing: removed dummy preview G-code success path. Real slicing requires CuraEngine and printer/extruder definitions. G-code structure/bounds checks remain heuristic.
+- Print UI: approval action now explicitly says simulation-only; no physical printer connection has been implemented.
+- Regression automation: `.github/workflows/cad-engine-tests.yml` compiles Python modules and runs tests for geometry, parser, image meshes, export validation and slicing. Check the latest feature-branch Actions run before considering the code ready.
+- Not completed in this pass: OCR/technical-drawing dimension extraction, exact image-to-parametric CAD, general-purpose CAD understanding, automatic supports/repair for all meshes, printer-host transport (OctoPrint/Klipper/USB), and runtime testing against the user's actual printer/profile. These require dedicated implementations and hardware/representative-drawing tests.
+
+---
+
+
 
 | Area | Status | Evidence / next action |
 | --- | --- | --- |
