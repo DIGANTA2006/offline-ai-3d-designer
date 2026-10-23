@@ -18,6 +18,7 @@ export default function NewProjectPage() {
   const [unitSystem, setUnitSystem] = useState<UnitSystem>("mm");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [requiresPlan, setRequiresPlan] = useState(false);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -27,6 +28,7 @@ export default function NewProjectPage() {
     }
     setBusy(true);
     setError("");
+    setRequiresPlan(false);
     try {
       const response = await fetch("/api/projects", {
         method: "POST",
@@ -39,6 +41,7 @@ export default function NewProjectPage() {
         router.replace("/login");
         return;
       }
+      if (response.status === 402) setRequiresPlan(true);
       if (!response.ok || !payload.projectId) {
         throw new Error(payload.error ?? `Project generation failed (HTTP ${response.status}).`);
       }
@@ -61,7 +64,7 @@ export default function NewProjectPage() {
           <CardHeader><CardTitle>Part specification</CardTitle><CardDescription>The server runs the Python CAD engine and saves the generated STEP/STL files to private storage.</CardDescription></CardHeader>
           <CardContent>
             <form onSubmit={submit} className="space-y-5">
-              {error && <div role="alert" className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
+              {error && <div role="alert" className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}{requiresPlan && <span className="mt-2 block"><Link className="font-semibold underline" href="/dashboard/billing">View Pro plan and subscribe</Link></span>}</div>}
               <div className="space-y-2"><Label htmlFor="project-name">Project name (optional)</Label><Input id="project-name" maxLength={80} value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Mounting bracket" disabled={busy} /></div>
               <div className="space-y-2"><Label htmlFor="unit-system">Input unit</Label><select id="unit-system" value={unitSystem} onChange={(event) => setUnitSystem(event.target.value as UnitSystem)} disabled={busy} className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"><option value="mm">Millimeters (mm)</option><option value="cm">Centimeters (cm)</option><option value="in">Inches (in)</option><option value="m">Meters (m)</option></select></div>
               <div className="space-y-2"><Label htmlFor="part-description">Describe the part</Label><textarea id="part-description" required minLength={5} maxLength={4000} rows={7} value={description} onChange={(event) => setDescription(event.target.value)} disabled={busy} className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" placeholder="Create a 40x20x10 mm box with a 5 mm hole through the center" /><p className="text-xs leading-5 text-muted-foreground">Start with explicit dimensions. The current parser supports a limited set of primitives and patterns; unsupported descriptions will return an error instead of pretending a model was generated.</p></div>

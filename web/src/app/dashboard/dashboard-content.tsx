@@ -3,6 +3,7 @@ import {
   ArrowRight,
   Box,
   Clock3,
+  CreditCard,
   FileUp,
   FolderKanban,
   LayoutDashboard,
@@ -73,6 +74,7 @@ export default function DashboardContent({ user, projects, stats }: DashboardPro
             <div className="flex items-center gap-2">
               <ThemeToggle />
               <span className="hidden max-w-48 truncate text-sm text-muted-foreground xl:inline">{user.displayName ?? user.email ?? "Signed in"}</span>
+              <Button variant="outline" asChild><Link href="/dashboard/billing"><CreditCard className="mr-1 size-4" /> Billing & plan</Link></Button>
               <Button variant="outline" asChild><Link href="/profile">Profile</Link></Button>
               {user.role === "ADMIN" && <Button variant="outline" asChild><Link href="/admin">Admin</Link></Button>}
               <SignOutButton />
