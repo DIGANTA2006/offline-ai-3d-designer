@@ -301,7 +301,7 @@ def generate_cad(request: GenerationRequest):
             detail="No reviewed dimensioned description was supplied. Edit the OCR text into an explicit part description first.",
         )
     if not re.search(
-        r"\\b(box|block|cube|rectangular|plate|slab|cylinder|rod|shaft|pin|pipe|tube|sphere|ball|cone|conical|torus|donut|ring|wedge|ramp|triangle)\\b",
+        r"\b(box|block|cube|rectangular|plate|slab|cylinder|rod|shaft|pin|pipe|tube|sphere|ball|cone|conical|torus|donut|ring|wedge|ramp|triangle)\b",
         prompt,
         re.IGNORECASE,
     ):
