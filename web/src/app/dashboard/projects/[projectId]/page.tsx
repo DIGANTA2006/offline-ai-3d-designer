@@ -30,6 +30,61 @@ export default async function ProjectDetailPage({ params }: Props) {
       })
     : [];
 
+  const versionSpec = version?.spec && typeof version.spec === "object" && !Array.isArray(version.spec)
+    ? version.spec as Record<string, unknown>
+    : {};
+  const ocrResultValue = versionSpec.ocrResult;
+  const ocrResult = ocrResultValue && typeof ocrResultValue === "object" && !Array.isArray(ocrResultValue)
+    ? ocrResultValue as Record<string, unknown>
+    : null;
+  const ocrSpecValue = ocrResult?.spec;
+  const ocrSpec = ocrSpecValue && typeof ocrSpecValue === "object" && !Array.isArray(ocrSpecValue)
+    ? ocrSpecValue as Record<string, unknown>
+    : null;
+  const ocrDimensionsValue = ocrSpec?.dimensions;
+  const ocrDimensions = ocrDimensionsValue && typeof ocrDimensionsValue === "object" && !Array.isArray(ocrDimensionsValue)
+    ? ocrDimensionsValue as Record<string, unknown>
+    : {};
+  const dimensionCandidates = Array.isArray(ocrDimensions.candidates)
+    ? ocrDimensions.candidates.flatMap((value) => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+        const item = value as Record<string, unknown>;
+        if (typeof item.raw !== "string") return [];
+        return [{
+          raw: item.raw,
+          value: typeof item.value === "number" ? item.value : null,
+          unit: typeof item.unit === "string" ? item.unit : "unspecified",
+          kind: typeof item.kind === "string" ? item.kind : "dimension",
+          tolerance: typeof item.tolerance === "string" ? item.tolerance : null,
+        }];
+      })
+    : [];
+  const dimensionTriples = Array.isArray(ocrDimensions.dimensionTriples)
+    ? ocrDimensions.dimensionTriples.flatMap((value) => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+        const item = value as Record<string, unknown>;
+        const values = item.values;
+        if (!Array.isArray(values) || !values.every((entry) => typeof entry === "number")) return [];
+        return [{
+          values: values as number[],
+          unit: typeof item.unit === "string" ? item.unit : "unspecified",
+          raw: typeof item.raw === "string" ? item.raw : values.join(" × "),
+          interpretation: typeof item.interpretation === "string" ? item.interpretation : "Confirm axis order.",
+        }];
+      })
+    : [];
+  const ocrAnnotations = Array.isArray(ocrSpec?.annotations)
+    ? ocrSpec.annotations.filter((value): value is string => typeof value === "string")
+    : [];
+  const ocrRawText = typeof ocrSpec?.rawText === "string" ? ocrSpec.rawText : "";
+  const ocrError = typeof ocrResult?.error === "string" ? ocrResult.error : "OCR did not return a result.";
+  const ocrSucceeded = ocrResult?.success === true && ocrSpec !== null;
+  const rawConfidence = ocrSpec?.confidence;
+  const ocrConfidence = typeof rawConfidence === "number" && Number.isFinite(rawConfidence)
+    ? Math.round(Math.min(1, Math.max(0, rawConfidence)) * 100)
+    : null;
+  const ocrSourceFileName = typeof versionSpec.ocrSourceFileName === "string" ? versionSpec.ocrSourceFileName : null;
+
   return (
     <main className="min-h-screen bg-background px-4 py-8 sm:px-8">
       <div className="mx-auto max-w-4xl">
