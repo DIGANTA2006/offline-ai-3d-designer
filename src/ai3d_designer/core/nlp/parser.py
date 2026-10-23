@@ -679,6 +679,13 @@ class RuleBasedParser:
 
 def parse_natural_language(description: str, use_llm: bool = False, **kwargs) -> ParseResult:
     """Main entry point for parsing natural language to PartSpec."""
+    if not isinstance(description, str) or not description.strip():
+        return ParseResult(success=False, error="Empty description")
+    if len(description) > RuleBasedParser.MAX_DESCRIPTION_LENGTH:
+        return ParseResult(
+            success=False,
+            error=f"Description exceeds the {RuleBasedParser.MAX_DESCRIPTION_LENGTH}-character parser limit.",
+        )
     if use_llm:
         engine = NLPEngine(**kwargs)
         return engine.parse(description)
