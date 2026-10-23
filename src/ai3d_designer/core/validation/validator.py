@@ -3,6 +3,7 @@ Validation module for geometry and specification validation.
 """
 
 from typing import List, Dict, Any, Optional
+from math import isfinite
 from dataclasses import dataclass
 from enum import Enum
 
@@ -132,7 +133,18 @@ class SpecValidator:
                     ))
                 else:
                     param = feature.parameters[param_name]
-                    if param.value <= 0:
+                    if not isfinite(float(param.value)):
+                        issues.append(ValidationIssue(
+                            severity=ValidationSeverity.ERROR,
+                            code=f"FEATURE_NON_FINITE_PARAM_{param_name.upper()}",
+                            message=f"Parameter '{param_name}' must be finite, got {param.value}",
+                            feature_id=feature.id,
+                            field=f"parameters.{param_name}",
+                            suggestion="Use a finite numeric value."
+                        ))
+                    elif param.value < 0 or (param.value == 0 and not (
+                        feature.type == PrimitiveType.CONE and param_name == "radius_top"
+                    )):
                         issues.append(ValidationIssue(
                             severity=ValidationSeverity.ERROR,
                             code=f"FEATURE_INVALID_PARAM_{param_name.upper()}",
@@ -141,7 +153,7 @@ class SpecValidator:
                             field=f"parameters.{param_name}",
                             suggestion=f"Set {param_name} to a positive value"
                         ))
-                    elif param.value < self.MIN_FEATURE_SIZE:
+                    elif param.value > 0 and param.value < self.MIN_FEATURE_SIZE:
                         issues.append(ValidationIssue(
                             severity=ValidationSeverity.WARNING,
                             code=f"FEATURE_SMALL_PARAM_{param_name.upper()}",
@@ -214,6 +226,25 @@ class GeometryValidator:
                 ))
                 return ValidationResult(is_valid=False, issues=issues)
             
+            # Ask OpenCascade whether the B-rep is topologically valid when supported.
+            try:
+                validity = getattr(part, "is_valid", None)
+                if callable(validity):
+                    validity = validity()
+                if validity is False:
+                    issues.append(ValidationIssue(
+                        severity=ValidationSeverity.ERROR,
+                        code="GEOM_INVALID_BREP",
+                        message="CAD kernel reports an invalid boundary representation.",
+                        suggestion="Review boolean operations, profile wires, and coincident faces."
+                    ))
+            except Exception as exc:
+                issues.append(ValidationIssue(
+                    severity=ValidationSeverity.WARNING,
+                    code="GEOM_VALIDITY_CHECK_ERROR",
+                    message=f"Could not query CAD-kernel validity: {exc}",
+                ))
+
             # Check volume
             try:
                 volume = part.volume
