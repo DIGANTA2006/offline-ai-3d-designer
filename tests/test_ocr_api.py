@@ -18,7 +18,33 @@ def test_health_reports_real_ocr_runtime_availability(monkeypatch, ocr_available
     result = asyncio.run(cad_service.health())
 
     assert result.cadAvailable is True
+    assert result.cadRuntimeAvailable is True
+    assert result.serviceTokenConfigured is True
     assert result.ocrAvailable is ocr_available
+
+
+@pytest.mark.parametrize(
+    ("runtime_available", "token_configured"),
+    [(False, True), (True, False)],
+)
+def test_health_distinguishes_cad_runtime_failure_from_missing_service_token(
+    monkeypatch, runtime_available, token_configured
+):
+    monkeypatch.setattr(cad_service, "cad_runtime_is_available", lambda: runtime_available)
+    monkeypatch.setattr(cad_service, "is_ocr_available", lambda: True)
+    monkeypatch.setenv("APP_ENV", "production")
+    if token_configured:
+        monkeypatch.setenv("CAD_SERVICE_TOKEN", "unit-test-only-token")
+    else:
+        monkeypatch.delenv("CAD_SERVICE_TOKEN", raising=False)
+
+    result = asyncio.run(cad_service.health())
+
+    assert result.status == "degraded"
+    assert result.cadAvailable is False
+    assert result.cadRuntimeAvailable is runtime_available
+    assert result.serviceTokenConfigured is token_configured
+    assert result.ocrAvailable is True
 
 
 def test_generation_requires_user_review_before_model_creation():
