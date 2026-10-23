@@ -442,7 +442,7 @@ class RuleBasedParser:
         number = self._NUMBER
         unit = rf"(?P<unit>{self._UNIT})?"
         patterns = (
-            rf"(?<![\w.])(?P<value>{number})\s*{unit}\s*(?:diameter\s+)?hole\b",
+            rf"(?<![\w.])(?P<value>{number})\s*{unit}\s*(?:diameter\s+)?(?:through\s+)?hole\b",
             rf"\bhole\s*(?:of\s*)?(?:(?:diameter|dia)\s*)?(?P<value>{number})\s*{unit}(?!\w)",
             rf"\b(?:diameter|dia)\s*(?P<value>{number})\s*{unit}\s+hole\b",
         )
