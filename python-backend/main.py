@@ -6,6 +6,7 @@ import uuid
 import base64
 import io
 import os
+import re
 import tempfile
 import traceback
 import secrets
@@ -298,6 +299,18 @@ def generate_cad(request: GenerationRequest):
         raise HTTPException(
             status_code=422,
             detail="No reviewed dimensioned description was supplied. Edit the OCR text into an explicit part description first.",
+        )
+    if not re.search(
+        r"\\b(box|block|cube|rectangular|plate|slab|cylinder|rod|shaft|pin|pipe|tube|sphere|ball|cone|conical|torus|donut|ring|wedge|ramp|triangle)\\b",
+        prompt,
+        re.IGNORECASE,
+    ):
+        return GenerationResponse(
+            success=False,
+            jobId=job_id,
+            error="Specify the primary shape explicitly (for example, box, plate, cylinder, tube, sphere or cone) along with its required dimensions.",
+            validationErrors=["The service will not infer a shape from dimension triplets alone."],
+            isApproximation=True,
         )
 
     try:
