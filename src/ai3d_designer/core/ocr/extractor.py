@@ -22,7 +22,7 @@ except (ImportError, OSError):
     pytesseract = None
 
 MAX_FILE_BYTES = 10 * 1024 * 1024
-MAX_PDF_PAGES = 5
+MAX_PDF_PAGES = 3
 MAX_IMAGE_PIXELS = 40_000_000
 MAX_OCR_EDGE = 3000
 ALLOWED_MIME_TYPES = {
@@ -200,7 +200,7 @@ def _run_tesseract(image: Image.Image) -> OcrPageResult:
             lang="eng",
             config="--oem 1 --psm 11",
             output_type=pytesseract.Output.DICT,
-            timeout=25,
+            timeout=10,
         )
     except Exception as exc:
         if isinstance(exc, getattr(pytesseract, "TesseractNotFoundError", type(None))):
