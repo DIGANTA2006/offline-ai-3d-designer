@@ -1,6 +1,6 @@
 # Work Status — Offline AI 3D Designer
 
-Updated: 23 October 2026
+Updated: 23 October 2026 — current PR checks passed
 
 ## Current repository state
 
@@ -8,7 +8,7 @@ Updated: 23 October 2026
 - Feature branch: `feat/cad-engine-reliability-upgrade-20261023`.
 - Pull request: [#3 — Improve CAD engine reliability and safe slicing](https://github.com/DIGANTA2006/offline-ai-3d-designer/pull/3).
 - PR is **open and Draft**, not merged. Production and `main` remain unchanged by this feature branch.
-- Code-tested HEAD before the handoff-document refresh: `8be700b0f435425313b6adef37f4f089b585142d`. The most recent branch commit may be documentation-only; check Actions for the current head before relying on statuses.
+- Current branch HEAD: `116db7064d7ab893600f05829a3efffa6e238d9a`. The source code was tested at `8be700b0f435425313b6adef37f4f089b585142d`; later commits only refreshed documentation. The latest PR checks on current HEAD all passed.
 - Full current state and next steps: [`NEXT_SESSION_HANDOFF.md`](NEXT_SESSION_HANDOFF.md).
 
 ## Implemented on the feature branch
@@ -27,9 +27,9 @@ Updated: 23 October 2026
 
 | Check | Result | Evidence |
 | --- | --- | --- |
-| Python compile + CAD regression suite | PASS — 75 tests | [CAD Engine Tests](https://github.com/DIGANTA2006/offline-ai-3d-designer/actions/runs/39957241049) |
-| Web lint, TypeScript and production build | PASS | [Web Frontend Checks](https://github.com/DIGANTA2006/offline-ai-3d-designer/actions/runs/39957243077) |
-| CodeQL Python + JavaScript/TypeScript analysis | PASS — SARIF had no reported results for either language | [CodeQL Advanced](https://github.com/DIGANTA2006/offline-ai-3d-designer/actions/runs/39957242980) |
+| Python compile + CAD regression suite | PASS — 75 tests, current PR HEAD | [CAD Engine Tests](https://github.com/DIGANTA2006/offline-ai-3d-designer/actions/runs/39957963730) |
+| Web lint, TypeScript and production build | PASS, current PR HEAD | [Web Frontend Checks](https://github.com/DIGANTA2006/offline-ai-3d-designer/actions/runs/39957963698) |
+| CodeQL Python + JavaScript/TypeScript analysis | PASS, current PR HEAD; both SARIF artifacts contain 0 results | [CodeQL Advanced](https://github.com/DIGANTA2006/offline-ai-3d-designer/actions/runs/39957963530) |
 
 Because GitHub Code Scanning upload is unavailable for the current private-repository configuration, CodeQL SARIF is retained as downloadable Actions artifacts instead of appearing in the repository Security tab. The workflow gates high/critical security findings and regex-DoS/regex-injection findings. A passed CodeQL job means analysis and this gate completed; it is not a guarantee of absence of all vulnerabilities.
 
