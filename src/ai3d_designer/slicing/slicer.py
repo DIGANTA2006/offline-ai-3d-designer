@@ -519,7 +519,7 @@ class Slicer:
                     elif command == "G91":
                         absolute_xyz = False
                     elif command == "G92":
-                        reset_e = re.search(r"(?<![A-Z])E\\s*(-?(?:\\d+(?:\\.\\d*)?|\\.\\d+))", line)
+                        reset_e = re.search(r"(?<![A-Z])E\s*(-?(?:\d+(?:\.\d*)?|\.\d+))", line)
                         if reset_e:
                             extrusion_position = float(reset_e.group(1))
                     elif command == "G28":
