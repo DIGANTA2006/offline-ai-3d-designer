@@ -396,3 +396,43 @@ def test_zero_top_radius_is_valid_for_a_pointed_cone():
     ))
     result = create_part_from_spec(spec)
     assert result.volume > 0
+
+
+def test_revolution_profile_uses_radius_height_plane():
+    spec = PartSpec(name="turned_sleeve", unit_system=UnitSystem.MM)
+    spec.add_feature(FeatureSpec(
+        id="revolve_sleeve",
+        type=PrimitiveType.REVOLUTION,
+        name="sleeve",
+        parameters={},
+        metadata={
+            "profile": {
+                "unit": "mm",
+                "points": [[5, 0], [10, 0], [10, 20], [5, 20]],
+            }
+        },
+        operation=OperationType.UNION,
+    ))
+    part = create_part_from_spec(spec)
+    assert part.volume > 0
+    assert part.bounding_box().size.Z == pytest.approx(20.0, abs=0.1)
+
+
+def test_loft_accepts_offset_polygon_sections():
+    spec = PartSpec(name="tapered_loft", unit_system=UnitSystem.MM)
+    spec.add_feature(FeatureSpec(
+        id="loft",
+        type=PrimitiveType.LOFT,
+        name="loft",
+        parameters={},
+        metadata={
+            "profiles": [
+                {"unit": "mm", "z": 0, "points": [[0, 0], [20, 0], [20, 20], [0, 20]]},
+                {"unit": "mm", "z": 10, "points": [[5, 5], [15, 5], [15, 15], [5, 15]]},
+            ]
+        },
+        operation=OperationType.UNION,
+    ))
+    part = create_part_from_spec(spec)
+    assert part.volume > 0
+    assert part.bounding_box().size.Z == pytest.approx(10.0, abs=0.1)
