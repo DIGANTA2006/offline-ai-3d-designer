@@ -115,7 +115,7 @@ class SpecValidator:
             PrimitiveType.SPHERE: ["radius"],
             PrimitiveType.CONE: ["radius_bottom", "radius_top", "height"],
             PrimitiveType.TORUS: ["major_radius", "minor_radius"],
-            PrimitiveType.WEDGE: ["width", "depth", "height", "xmin", "zmin", "xmax", "zmax"],
+            PrimitiveType.WEDGE: ["width", "depth", "height"],
         }
 
         # Check every supplied value for finiteness, including optional parameters.
@@ -216,6 +216,20 @@ class SpecValidator:
                         feature_id=feature.id,
                         field="parameters",
                     ))
+
+        if feature.type == PrimitiveType.WEDGE:
+            for lower_name, upper_name in (("xmin", "xmax"), ("zmin", "zmax")):
+                lower = feature.parameters.get(lower_name)
+                upper = feature.parameters.get(upper_name)
+                if lower and upper and math.isfinite(lower.value) and math.isfinite(upper.value):
+                    if lower.to_mm() >= upper.to_mm():
+                        issues.append(ValidationIssue(
+                            severity=ValidationSeverity.ERROR,
+                            code="WEDGE_INVALID_EXTENTS",
+                            message=f"Wedge {lower_name} must be less than {upper_name}.",
+                            feature_id=feature.id,
+                            field="parameters",
+                        ))
 
         return issues
 
