@@ -520,7 +520,7 @@ class AI3DDesignerGUI:
         self.validate_gcode_btn = ttk.Button(slice_action_frame, text="Validate G-code", command=self._on_validate_gcode, state=tk.DISABLED)
         self.validate_gcode_btn.pack(side=tk.LEFT, padx=5)
         
-        self.approve_print_btn = ttk.Button(slice_action_frame, text="Approve & Print", command=self._on_approve_print, state=tk.DISABLED)
+        self.approve_print_btn = ttk.Button(slice_action_frame, text="Approve Print (simulation only)", command=self._on_approve_print, state=tk.DISABLED)
         self.approve_print_btn.pack(side=tk.LEFT, padx=5)
         
         if not SLICING_AVAILABLE:
@@ -1001,7 +1001,7 @@ class AI3DDesignerGUI:
                     
                     self.root.after(0, lambda: self._set_status("Ready - Sliced successfully"))
                     self.root.after(0, lambda: self.validate_gcode_btn.config(state=tk.NORMAL))
-                    self.root.after(0, lambda: self.approve_print_btn.config(state=tk.NORMAL))
+                    self.root.after(0, lambda: self.approve_print_btn.config(state=tk.DISABLED))
                 else:
                     for err in result.errors:
                         self.root.after(0, lambda e=err: self._slice_log(f"ERROR: {e}"))
@@ -1017,86 +1017,99 @@ class AI3DDesignerGUI:
         threading.Thread(target=slice_thread, daemon=True).start()
         
     def _on_validate_gcode(self):
-        """Validate the generated G-code."""
+        """Validate G-code and check every motion coordinate against the configured bed."""
         if not self.current_gcode_path or not Path(self.current_gcode_path).exists():
             messagebox.showwarning("Warning", "No G-code file to validate")
             return
-            
+
+        # Revalidation is required before every simulation approval.
+        self.approve_print_btn.config(state=tk.DISABLED)
         self.validate_gcode_btn.config(state=tk.DISABLED)
         self.progress.start()
         self._set_status("Validating G-code...")
-        
+
         def validate_thread():
             try:
                 result = self.slicer.validate_gcode(self.current_gcode_path)
-                
-                if result["valid"]:
-                    stats = result["stats"]
-                    self.root.after(0, lambda: self._slice_log("G-code validation PASSED"))
-                    self.root.after(0, lambda: self._slice_log(f"  Lines: {stats['total_lines']}"))
-                    self.root.after(0, lambda: self._slice_log(f"  G-commands: {stats['g_commands']}"))
-                    self.root.after(0, lambda: self._slice_log(f"  M-commands: {stats['m_commands']}"))
-                    self.root.after(0, lambda: self._slice_log(f"  Has homing: {stats['has_home']}"))
-                    self.root.after(0, lambda: self._slice_log(f"  Has temperature: {stats['has_temp']}"))
-                    self.root.after(0, lambda: self._slice_log(f"  Has extrusion: {stats['has_extrusion']}"))
-                    self.root.after(0, lambda: self._slice_log(f"  Bounds: X{stats['min_x']:.1f}-{stats['max_x']:.1f} Y{stats['min_y']:.1f}-{stats['max_y']:.1f} Z{stats['min_z']:.1f}-{stats['max_z']:.1f}"))
-                    
-                    # Check bed bounds
-                    bed_x = self.slice_settings_vars["bed_x_var"].get()
-                    bed_y = self.slice_settings_vars["bed_y_var"].get()
-                    if stats['max_x'] > bed_x or stats['max_y'] > bed_y:
-                        self.root.after(0, lambda: self._slice_log(f"  WARNING: Model exceeds bed size ({bed_x}x{bed_y})!"))
+                if not result.get("valid"):
+                    error = result.get("error", "Unknown G-code validation error.")
+                    self.root.after(0, lambda error=error: self._slice_log(f"G-code validation FAILED: {error}"))
+                    self.root.after(0, lambda: self._set_status("Validation failed"))
+                    return
+
+                stats = result["stats"]
+                bed_x = float(self.slice_settings_vars["bed_x_var"].get())
+                bed_y = float(self.slice_settings_vars["bed_y_var"].get())
+                bed_z = float(self.slice_settings_vars["bed_z_var"].get())
+                self.root.after(0, lambda: self._slice_log("G-code structure validation PASSED (heuristic; not a firmware safety certification)"))
+                self.root.after(0, lambda: self._slice_log(f"  Lines: {stats['total_lines']}"))
+                self.root.after(0, lambda: self._slice_log(f"  G-commands: {stats['g_commands']}"))
+                self.root.after(0, lambda: self._slice_log(f"  M-commands: {stats['m_commands']}"))
+                self.root.after(0, lambda: self._slice_log(f"  Has homing: {stats['has_home']}"))
+                self.root.after(0, lambda: self._slice_log(f"  Has temperature commands: {stats['has_temp']}"))
+                self.root.after(0, lambda: self._slice_log(f"  Has positive extrusion: {stats['has_extrusion']}"))
+                self.root.after(0, lambda: self._slice_log(f"  Bounds: X{stats['min_x']:.1f}-{stats['max_x']:.1f} Y{stats['min_y']:.1f}-{stats['max_y']:.1f} Z{stats['min_z']:.1f}-{stats['max_z']:.1f}"))
+
+                bounds_ok = (
+                    stats["min_x"] >= 0
+                    and stats["min_y"] >= 0
+                    and stats["min_z"] >= 0
+                    and stats["max_x"] <= bed_x
+                    and stats["max_y"] <= bed_y
+                    and stats["max_z"] <= bed_z
+                )
+                if bounds_ok:
+                    self.root.after(0, lambda: self._slice_log("Configured build-volume bounds check PASSED."))
+                    self.root.after(0, lambda: self.approve_print_btn.config(state=tk.NORMAL))
+                    self.root.after(0, lambda: self._set_status("Validated — simulation approval available"))
                 else:
-                    self.root.after(0, lambda: self._slice_log(f"G-code validation FAILED: {result.get('error')}"))
-                    
-                self.root.after(0, lambda: self._set_status("Ready - Validation complete"))
-                
-            except Exception as e:
-                self.root.after(0, lambda: self._slice_log(f"Validation error: {str(e)}"))
+                    self.root.after(0, lambda: self._slice_log(
+                        f"ERROR: G-code coordinates are outside the configured bed or include negative positions. "
+                        f"Expected X 0–{bed_x:g}, Y 0–{bed_y:g}, Z 0–{bed_z:g} mm."
+                    ))
+                    self.root.after(0, lambda: self.approve_print_btn.config(state=tk.DISABLED))
+                    self.root.after(0, lambda: self._set_status("Build-volume check failed"))
+            except Exception as exc:
+                self.root.after(0, lambda exc=exc: self._slice_log(f"Validation error: {exc}"))
+                self.root.after(0, lambda: self.approve_print_btn.config(state=tk.DISABLED))
+                self.root.after(0, lambda: self._set_status("Validation error"))
             finally:
                 self.root.after(0, lambda: self.validate_gcode_btn.config(state=tk.NORMAL))
                 self.root.after(0, lambda: self.progress.stop())
-                
+
         threading.Thread(target=validate_thread, daemon=True).start()
-        
+
     def _on_approve_print(self):
-        """Show print approval dialog and simulate print start."""
+        """Record a simulation-only approval; no printer transport is implemented."""
         if not self.current_gcode_path or not Path(self.current_gcode_path).exists():
-            messagebox.showwarning("Warning", "No valid G-code to print")
+            messagebox.showwarning("Warning", "No validated G-code file is available.")
             return
-            
-        # Show approval dialog
+
         result = messagebox.askyesno(
-            "Print Approval",
-            f"Ready to print:\n\n"
-            f"File: {Path(self.current_gcode_path).name}\n"
-            f"Printer: Generic FDM\n\n"
-            f"Please ensure:\n"
-            f"  \u2713 Printer is connected and calibrated\n"
-            f"  \u2713 Bed is clean and leveled\n"
-            f"  \u2713 Filament is loaded\n"
-            f"  \u2713 Nozzle is clean\n\n"
-            f"Start print now?"
+            "Simulation Only — No Printer Connection",
+            f"Record a simulation-only approval for:\n\n"
+            f"File: {Path(self.current_gcode_path).name}\n\n"
+            "This application does not currently send G-code to a physical printer. "
+            "No printer commands will be sent and no print will start.\n\n"
+            "Have you independently reviewed this G-code in a slicer and confirmed "
+            "that the printer profile, firmware, temperatures, and start/end code are correct?\n\n"
+            "Record simulation approval?",
         )
-        
+
         if result:
-            self._log("Print approved by user!")
-            self._slice_log("=== PRINT APPROVED ===")
-            self._slice_log("Sending to printer... (simulated)")
-            
-            # In a real implementation, this would send to OctoPrint, Duet, etc.
-            # For now, we'll just show success
+            self._log("Simulation approval recorded. No printer connection or command is active.")
+            self._slice_log("=== SIMULATION APPROVAL RECORDED ===")
             messagebox.showinfo(
-                "Print Started",
-                "Print job sent to printer!\n\n"
+                "Simulation Approval Recorded",
+                "Approval was recorded in this session only.\n\n"
                 f"File: {Path(self.current_gcode_path).name}\n\n"
-                "Monitor your printer for the first layer."
+                "No print job was dispatched. Review the G-code in your slicer and "
+                "send it to your printer using the manufacturer's or printer-host's verified workflow.",
             )
-            self._log("Print job dispatched")
         else:
-            self._log("Print cancelled by user")
-            self._slice_log("=== PRINT CANCELLED ===")
-        
+            self._log("Simulation approval cancelled.")
+            self._slice_log("=== SIMULATION APPROVAL CANCELLED ===")
+
     def _open_output_folder(self):
         """Open output folder in file explorer."""
         output_dir = Path(self.output_dir_var.get())
