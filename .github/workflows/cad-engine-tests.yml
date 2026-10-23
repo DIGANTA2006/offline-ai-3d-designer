@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      PYTHONPATH: src
+      PYTHONPATH: src:python-backend
     steps:
       - name: Checkout
         uses: actions/checkout@v5
