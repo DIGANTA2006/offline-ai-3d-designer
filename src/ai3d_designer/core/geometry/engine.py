@@ -204,7 +204,8 @@ class GeometryEngine:
                     self._profile_wire(profile, default_unit=self.unit_system, label=f"{feature.id}.profiles[{i}]")
                     for i, profile in enumerate(profiles)
                 ]
-                return loft(sections=wires)
+                # build123d's loft operation consumes Faces/Sketches, not bare Wires.
+                return loft(sections=[Face(wire) for wire in wires])
             case PrimitiveType.SWEEP:
                 profile = self._profile_wire(
                     feature.metadata.get("profile"), default_unit=self.unit_system,
