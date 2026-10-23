@@ -54,7 +54,9 @@ def create_box_spec(name: str, width: float, depth: float, height: float,
     )
     spec.add_feature(box_feature)
     
-    if hole_diameter and hole_diameter > 0:
+    if hole_diameter is not None:
+        if hole_diameter <= 0 or hole_diameter >= min(width, depth):
+            raise ValueError("A centered through-hole diameter must be positive and smaller than both box width and depth.")
         hole_feature = FeatureSpec(
             id="hole_center",
             type=PrimitiveType.CYLINDER,
@@ -63,8 +65,10 @@ def create_box_spec(name: str, width: float, depth: float, height: float,
                 "radius": ParameterSpec(name="radius", value=hole_diameter / 2),
                 "height": ParameterSpec(name="height", value=height + 2),
             },
-            position=[width/2, depth/2, -1],
+            # build123d box/cylinder primitives are centered on the local origin.
+            position=[0.0, 0.0, 0.0],
             operation=OperationType.DIFFERENCE,
+            parent_id=box_feature.id,
         )
         spec.add_feature(hole_feature)
     
