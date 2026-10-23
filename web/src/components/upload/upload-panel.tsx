@@ -48,7 +48,7 @@ export function UploadPanel() {
         throw new Error(data.error ?? `Upload failed (HTTP ${response.status}).`);
       }
       setProgress(100);
-      setSuccess(`Stored ${data.uploadedFiles?.length ?? 0} file(s) privately. Automated drawing OCR and CAD generation are not implemented yet.`);
+      setSuccess(`Stored ${data.uploadedFiles?.length ?? 0} file(s) privately. Open this project to analyze supported drawings with OCR and review the extracted text before CAD generation.`);
       router.push(`/dashboard/projects/${data.projectId}`);
       router.refresh();
     } catch (cause) {
