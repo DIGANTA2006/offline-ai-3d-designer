@@ -493,11 +493,11 @@ class RuleBasedParser:
                 rf"\b(?:length|long)\s*(?:of|=|:)?\s*(?P<num>{number})\s*(?P<unit>{unit})?",
             ],
             "outer_diameter": [
-                rf"(?P<num>{number})\s*(?P<unit>{unit})?\s*(?:outer|outside|external)\s*(?:diameter|diam|dia|od)\b",
+                rf"(?P<num>{number})\s*(?P<unit>{unit})?\s*(?:outer|outside|external|od)\s*(?:diameter|diam|dia)?\b",
                 rf"\b(?:outer|outside|external|od)\s*(?:diameter|diam|dia)?\s*(?:of|=|:)?\s*(?P<num>{number})\s*(?P<unit>{unit})?",
             ],
             "inner_diameter": [
-                rf"(?P<num>{number})\s*(?P<unit>{unit})?\s*(?:inner|inside|internal)\s*(?:diameter|diam|dia|id)\b",
+                rf"(?P<num>{number})\s*(?P<unit>{unit})?\s*(?:inner|inside|internal|id)\s*(?:diameter|diam|dia)?\b",
                 rf"\b(?:inner|inside|internal|id)\s*(?:diameter|diam|dia)?\s*(?:of|=|:)?\s*(?P<num>{number})\s*(?P<unit>{unit})?",
             ],
             "wall_thickness": [
