@@ -11,47 +11,29 @@ from typing import Optional, Tuple
 import trimesh
 from PIL import Image
 
-# Try to import MiDaS
+# Use PyTorch Hub normally; never monkey-patch global repository trust policy.
 try:
     import torch.hub
     MIDAS_AVAILABLE = True
 except ImportError:
     MIDAS_AVAILABLE = False
 
-# Monkey-patch torch.hub to auto-trust known repos BEFORE any imports
-import torch.hub as hub
-_original_check = hub._check_repo_is_trusted
-
-def _auto_trust_repo(repo, *args, **kwargs):
-    """Auto-trust known repositories used by MiDaS and its dependencies."""
-    trusted_patterns = [
-        "intel-isl",
-        "rwightman",
-        "MiDaS",
-        "gen-efficientnet",
-        "pytorch-image-models",
-    ]
-    repo_str = str(repo).lower()
-    for pattern in trusted_patterns:
-        if pattern.lower() in repo_str:
-            return True
-    return _original_check(repo, *args, **kwargs)
-
-hub._check_repo_is_trusted = _auto_trust_repo
+from .mesh import build_closed_heightfield
 
 
 class ImageTo3DConverter:
     """Convert 2D images to 3D models using depth estimation."""
     
-    def __init__(self, model_type: str = "MiDaS_small", trust_repo: bool = True):
+    def __init__(self, model_type: str = "MiDaS_small", trust_repo: bool = False):
         """
         Initialize the converter.
         
         Args:
             model_type: MiDaS model type - "DPT_Large", "DPT_Hybrid", or "MiDaS_small"
-            trust_repo: Whether to trust the intel-isl/MiDaS repository (handled globally)
+            trust_repo: Explicit opt-in to execute code from the MiDaS source repository on first download.
         """
         self.model_type = model_type
+        self.trust_repo = trust_repo
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = None
         self.transform = None
@@ -62,13 +44,17 @@ class ImageTo3DConverter:
         if not MIDAS_AVAILABLE:
             raise RuntimeError("MiDaS not available. Install torch and torchvision.")
         
-        # Load MiDaS model (trust_repo handled by global monkey-patch)
-        self.model = torch.hub.load("intel-isl/MiDaS", self.model_type, trust_repo=True)
+        if not self.trust_repo:
+            raise RuntimeError(
+                "Loading MiDaS may download and execute code from the intel-isl/MiDaS repository. "
+                "Review that source and explicitly opt in with trust_repo=True before using image-to-3D."
+            )
+        self.model = torch.hub.load("intel-isl/MiDaS", self.model_type, trust_repo=self.trust_repo)
         self.model.to(self.device)
         self.model.eval()
         
         # Load transforms
-        midas_transforms = torch.hub.load("intel-isl/MiDaS", "transforms", trust_repo=True)
+        midas_transforms = torch.hub.load("intel-isl/MiDaS", "transforms", trust_repo=self.trust_repo)
         if self.model_type == "DPT_Large" or self.model_type == "DPT_Hybrid":
             self.transform = midas_transforms.dpt_transform
         else:
