@@ -325,22 +325,81 @@ class RuleBasedParser:
                     error="Could not identify a supported primitive. Try a dimensioned box, cylinder, sphere, cone, torus, or wedge.",
                 )
 
+            hole_mentioned = bool(re.search(r"\b(?:holes?|bores?)\b", text))
+            tube_mentioned = bool(re.search(r"\b(?:tube|pipe)\b", text))
+            count_match = re.search(r"\b(\d+)\s+holes?\b", text)
+            word_counts = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "eight": 8}
+            word_count_match = re.search(r"\b(two|three|four|five|six|eight)\s+holes?\b", text)
+            hole_count = int(count_match.group(1)) if count_match else (
+                word_counts[word_count_match.group(1)] if word_count_match else 1
+            )
+            if hole_mentioned and hole_count > 1:
+                return ParseResult(
+                    success=False,
+                    error="Multiple-hole patterns need explicit hole coordinates/spacing. No guessed hole pattern was generated.",
+                )
+
+            if tube_mentioned and prim_type != PrimitiveType.CYLINDER:
+                return ParseResult(success=False, error="Tube/pipe hollowing is supported only for a dimensioned cylindrical tube.")
+
+            if tube_mentioned:
+                outer_diameter = dims.get("outer_diameter")
+                if outer_diameter is None:
+                    outer_diameter = dims.get("diameter")
+                if outer_diameter is None and dims.get("radius") is not None:
+                    outer_diameter = dims["radius"] * 2.0
+                inner_diameter = dims.get("inner_diameter")
+                if inner_diameter is None and dims.get("wall_thickness") is not None and outer_diameter is not None:
+                    inner_diameter = outer_diameter - (2.0 * dims["wall_thickness"])
+                if outer_diameter is None:
+                    return ParseResult(success=False, error="A tube/pipe needs an explicit outer diameter or radius.")
+                if inner_diameter is None:
+                    return ParseResult(success=False, error="A tube/pipe needs an explicit inner diameter or wall thickness; a solid cylinder would be a misleading result.")
+                if not 0 < inner_diameter < outer_diameter:
+                    return ParseResult(success=False, error="Tube dimensions must satisfy 0 < inner diameter < outer diameter.")
+                dims["outer_diameter"] = outer_diameter
+                dims["diameter"] = outer_diameter
+                dims["inner_diameter"] = inner_diameter
+                hole_mentioned = True
+                dims["hole_diameter"] = inner_diameter
+
+            if hole_mentioned and prim_type not in (PrimitiveType.BOX, PrimitiveType.CYLINDER):
+                return ParseResult(
+                    success=False,
+                    error="Through-holes are currently supported only for dimensioned boxes and cylinders. No approximate substitute was generated.",
+                )
+            if hole_mentioned and dims.get("hole_diameter") is None:
+                return ParseResult(success=False, error="A hole/bore requires an explicit diameter.")
+
             base_feature = self._build_feature(prim_type, dims)
             features = [base_feature]
 
-            if prim_type == PrimitiveType.BOX and dims.get("hole_diameter"):
+            if hole_mentioned:
                 hole_diameter = dims["hole_diameter"]
-                box_height = dims.get("height", 10.0)
-                # build123d primitives are centered on their origin. A cylinder
-                # centered at [0,0,0] and taller than the box makes a true through-hole.
+                if prim_type == PrimitiveType.BOX:
+                    width, depth, height = (
+                        base_feature.parameters["width"].value,
+                        base_feature.parameters["depth"].value,
+                        base_feature.parameters["height"].value,
+                    )
+                    if hole_diameter >= min(width, depth):
+                        return ParseResult(success=False, error="Hole diameter must be smaller than both box width and depth.")
+                    cutter_height = height + max(2.0, height * 0.1)
+                else:
+                    outer_radius = base_feature.parameters["radius"].value
+                    if hole_diameter >= 2.0 * outer_radius:
+                        return ParseResult(success=False, error="Bore diameter must be smaller than the cylinder diameter.")
+                    cutter_height = base_feature.parameters["height"].value + max(
+                        2.0, base_feature.parameters["height"].value * 0.1
+                    )
                 features.append(
                     FeatureSpec(
-                        id="center_hole",
+                        id="through_bore",
                         type=PrimitiveType.CYLINDER,
-                        name="Through Hole",
+                        name="Through Hole" if not tube_mentioned else "Tube Bore",
                         parameters={
                             "radius": ParameterSpec(name="radius", value=hole_diameter / 2.0, unit=UnitSystem.MM),
-                            "height": ParameterSpec(name="height", value=box_height + max(2.0, box_height * 0.1), unit=UnitSystem.MM),
+                            "height": ParameterSpec(name="height", value=cutter_height, unit=UnitSystem.MM),
                         },
                         position=[0.0, 0.0, 0.0],
                         rotation=[0.0, 0.0, 0.0],
