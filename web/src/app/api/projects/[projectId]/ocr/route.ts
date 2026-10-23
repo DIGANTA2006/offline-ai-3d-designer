@@ -128,16 +128,16 @@ export async function POST(request: Request, { params }: Context) {
     try { body = JSON.parse(rawBody); } catch { throw new RouteError("A valid JSON body is required.", 400); }
     if (!body || typeof body !== "object" || Array.isArray(body)) throw new RouteError("A JSON object is required.", 400);
     const fileIndex = (body as Record<string, unknown>).fileIndex;
-    if (!Number.isSafeInteger(fileIndex) || (fileIndex as number) < 0) {
+    if (typeof fileIndex !== "number" || !Number.isSafeInteger(fileIndex) || fileIndex < 0) {
       throw new RouteError("fileIndex must be a non-negative integer.", 400);
     }
 
     const storedSpec = version.spec as Record<string, unknown>;
     const sourceFiles = storedSpec.uploadedFiles;
-    if (!Array.isArray(sourceFiles) || (fileIndex as number) >= sourceFiles.length) {
+    if (!Array.isArray(sourceFiles) || fileIndex >= sourceFiles.length) {
       throw new RouteError("Source drawing not found.", 404);
     }
-    const source = sourceFiles[fileIndex as number] as Partial<StoredSource>;
+    const source = sourceFiles[fileIndex] as Partial<StoredSource>;
     if (typeof source.pathname !== "string" || typeof source.name !== "string") {
       throw new RouteError("Stored source metadata is invalid.", 422);
     }
@@ -151,7 +151,21 @@ export async function POST(request: Request, { params }: Context) {
     const blob = await get(source.pathname, { access: "private", token: blobToken });
     if (!blob || blob.statusCode !== 200 || !blob.stream) throw new RouteError("Source drawing could not be read from private storage.", 404);
     const bytes = await readLimitedStream(blob.stream, MAX_SOURCE_BYTES);
-    const mimeType = (source.contentType || blob.blob.contentType || "application/octet-stream").split(";", 1)[0].trim().toLowerCase();
+    let mimeType = (source.contentType || blob.blob.contentType || "application/octet-stream").split(";", 1)[0].trim().toLowerCase();
+    if (mimeType === "application/octet-stream") {
+      const extension = source.name.toLowerCase().split(".").pop();
+      const extensionMime: Record<string, string> = {
+        pdf: "application/pdf",
+        png: "image/png",
+        jpg: "image/jpeg",
+        jpeg: "image/jpeg",
+        bmp: "image/bmp",
+        tif: "image/tiff",
+        tiff: "image/tiff",
+        webp: "image/webp",
+      };
+      mimeType = extensionMime[extension ?? ""] ?? mimeType;
+    }
 
     let endpoint: URL;
     try { endpoint = getCadEndpoint(); }
