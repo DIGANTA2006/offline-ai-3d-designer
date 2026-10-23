@@ -84,6 +84,21 @@ export default async function ProjectDetailPage({ params }: Props) {
     ? Math.round(Math.min(1, Math.max(0, rawConfidence)) * 100)
     : null;
   const ocrSourceFileName = typeof versionSpec.ocrSourceFileName === "string" ? versionSpec.ocrSourceFileName : null;
+  const ocrTolerancesValue = ocrSpec?.tolerances;
+  const ocrTolerances = ocrTolerancesValue && typeof ocrTolerancesValue === "object" && !Array.isArray(ocrTolerancesValue)
+    ? ocrTolerancesValue as Record<string, unknown>
+    : {};
+  const numericTolerances = Array.isArray(ocrTolerances.numericCandidates)
+    ? ocrTolerances.numericCandidates.filter((value): value is string => typeof value === "string")
+    : [];
+  const fitCandidates = Array.isArray(ocrSpec?.fits)
+    ? ocrSpec.fits.filter((value): value is string => typeof value === "string")
+    : [];
+  const threadCandidates = Array.isArray(ocrSpec?.threads)
+    ? ocrSpec.threads.filter((value): value is string => typeof value === "string")
+    : [];
+  const detectedMaterial = typeof ocrSpec?.material === "string" ? ocrSpec.material : null;
+  const detectedSurfaceFinish = typeof ocrSpec?.surfaceFinish === "string" ? ocrSpec.surfaceFinish : null;
 
   return (
     <main className="min-h-screen bg-background px-4 py-8 sm:px-8">
