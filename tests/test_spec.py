@@ -125,3 +125,12 @@ def test_operation_type_enum():
     assert OperationType.UNION.value == "union"
     assert OperationType.DIFFERENCE.value == "difference"
     assert OperationType.INTERSECTION.value == "intersection"
+
+
+def test_parameter_spec_rejects_non_finite_values_and_bounds():
+    with pytest.raises(ValueError, match="finite"):
+        ParameterSpec(name="width", value=float("nan"))
+    with pytest.raises(ValueError, match="finite"):
+        ParameterSpec(name="width", value=1.0, max_value=float("inf"))
+    with pytest.raises(ValueError, match="cannot exceed"):
+        ParameterSpec(name="width", value=5.0, min_value=10.0, max_value=2.0)
