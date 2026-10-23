@@ -70,78 +70,74 @@ def _build_watertight_heightfield(heights: np.ndarray, scale_x: float, scale_y: 
 
 
 class ImageTo3DConverter:
-    """Convert 2D images to 3D models using depth estimation."""
-    
+    """Generate an approximate height-field relief from a single image."""
+
     def __init__(self, model_type: str = "MiDaS_small", trust_repo: bool = True):
-        """
-        Initialize the converter.
-        
-        Args:
-            model_type: MiDaS model type - "DPT_Large", "DPT_Hybrid", or "MiDaS_small"
-            trust_repo: Whether to trust the intel-isl/MiDaS repository (handled globally)
-        """
+        if not MIDAS_AVAILABLE or torch is None:
+            raise RuntimeError(
+                "MiDaS depth estimation is unavailable. Install a compatible torch/torchvision "
+                "build and cache the model before using this feature."
+            )
         self.model_type = model_type
+        self.trust_repo = trust_repo
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = None
         self.transform = None
         self._load_model()
-    
-    def _load_model(self):
-        """Load MiDaS model for depth estimation."""
-        if not MIDAS_AVAILABLE:
-            raise RuntimeError("MiDaS not available. Install torch and torchvision.")
-        
-        # Load MiDaS model (trust_repo handled by global monkey-patch)
-        self.model = torch.hub.load("intel-isl/MiDaS", self.model_type, trust_repo=True)
-        self.model.to(self.device)
-        self.model.eval()
-        
-        # Load transforms
-        midas_transforms = torch.hub.load("intel-isl/MiDaS", "transforms", trust_repo=True)
-        if self.model_type == "DPT_Large" or self.model_type == "DPT_Hybrid":
+
+    def _load_model(self) -> None:
+        """Load only the fixed MiDaS repository without modifying global trust checks."""
+        if torch is None:
+            raise RuntimeError("PyTorch is not installed.")
+        try:
+            self.model = torch.hub.load(
+                "intel-isl/MiDaS", self.model_type, trust_repo=self.trust_repo
+            )
+            self.model.to(self.device)
+            self.model.eval()
+            midas_transforms = torch.hub.load(
+                "intel-isl/MiDaS", "transforms", trust_repo=self.trust_repo
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                "Could not load MiDaS. Check the installed torch/torchvision versions and "
+                "model availability; remote model code is not trusted globally."
+            ) from exc
+        if self.model_type in {"DPT_Large", "DPT_Hybrid"}:
             self.transform = midas_transforms.dpt_transform
         else:
             self.transform = midas_transforms.small_transform
-    
+
     def estimate_depth(self, image_path: str) -> np.ndarray:
-        """
-        Estimate depth map from image.
-        
-        Args:
-            image_path: Path to input image
-            
-        Returns:
-            Depth map as numpy array (normalized 0-1)
-        """
-        # Load image
-        img = cv2.imread(image_path)
-        if img is None:
-            raise ValueError(f"Could not load image: {image_path}")
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        
-        # Transform
-        input_batch = self.transform(img).to(self.device)
-        
-        # Predict
-        with torch.no_grad():
+        """Estimate normalized relative depth; values are not metric measurements."""
+        if torch is None or self.model is None or self.transform is None:
+            raise RuntimeError("MiDaS model is not initialized.")
+        try:
+            with Image.open(image_path) as source:
+                image = np.asarray(source.convert("RGB"))
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"Could not load image: {exc}") from exc
+
+        input_batch = self.transform(image).to(self.device)
+        with torch.inference_mode():
             prediction = self.model(input_batch)
             prediction = torch.nn.functional.interpolate(
                 prediction.unsqueeze(1),
-                size=img.shape[:2],
+                size=image.shape[:2],
                 mode="bicubic",
                 align_corners=False,
             ).squeeze()
-        
-        depth_map = prediction.cpu().numpy()
-        
-        # Normalize to 0-1
-        depth_min = depth_map.min()
-        depth_max = depth_map.max()
+        depth_map = prediction.detach().cpu().numpy().astype(np.float64)
+        if not np.isfinite(depth_map).all():
+            raise ValueError("Depth estimator returned non-finite values.")
+        depth_min = float(depth_map.min())
+        depth_max = float(depth_map.max())
         if depth_max > depth_min:
             depth_map = (depth_map - depth_min) / (depth_max - depth_min)
-        
+        else:
+            depth_map = np.zeros_like(depth_map)
         return depth_map
-    
+
     def depth_to_mesh(
         self, 
         depth_map: np.ndarray, 
