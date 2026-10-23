@@ -491,9 +491,36 @@ class RuleBasedParser:
                 rf"(?P<num>{number})\s*(?P<unit>{unit})?\s*(?:long|length)\b",
                 rf"\b(?:length|long)\s*(?:of|=|:)?\s*(?P<num>{number})\s*(?P<unit>{unit})?",
             ],
+            "outer_diameter": [
+                rf"(?P<num>{number})\s*(?P<unit>{unit})?\s*(?:outer|outside|external)\s*(?:diameter|diam|dia|od)\b",
+                rf"\b(?:outer|outside|external|od)\s*(?:diameter|diam|dia)?\s*(?:of|=|:)?\s*(?P<num>{number})\s*(?P<unit>{unit})?",
+            ],
+            "inner_diameter": [
+                rf"(?P<num>{number})\s*(?P<unit>{unit})?\s*(?:inner|inside|internal)\s*(?:diameter|diam|dia|id)\b",
+                rf"\b(?:inner|inside|internal|id)\s*(?:diameter|diam|dia)?\s*(?:of|=|:)?\s*(?P<num>{number})\s*(?P<unit>{unit})?",
+            ],
+            "wall_thickness": [
+                rf"(?P<num>{number})\s*(?P<unit>{unit})?\s*wall\s*thickness\b",
+                rf"\bwall\s*thickness\s*(?:of|=|:)?\s*(?P<num>{number})\s*(?P<unit>{unit})?",
+            ],
+            "major_radius": [
+                rf"(?P<num>{number})\s*(?P<unit>{unit})?\s*major\s*radius\b",
+                rf"\bmajor\s*radius\s*(?:of|=|:)?\s*(?P<num>{number})\s*(?P<unit>{unit})?",
+            ],
+            "minor_radius": [
+                rf"(?P<num>{number})\s*(?P<unit>{unit})?\s*minor\s*radius\b",
+                rf"\bminor\s*radius\s*(?:of|=|:)?\s*(?P<num>{number})\s*(?P<unit>{unit})?",
+            ],
+            "radius_top": [
+                rf"(?P<num>{number})\s*(?P<unit>{unit})?\s*(?:top|upper)\s*radius\b",
+                rf"\b(?:top|upper)\s*radius\s*(?:of|=|:)?\s*(?P<num>{number})\s*(?P<unit>{unit})?",
+            ],
         }
         for key, patterns in scalar_rules.items():
             capture(key, patterns)
+
+        if "plate" in text and "height" not in dims and "wall_thickness" in dims:
+            dims["height"] = dims["wall_thickness"]
 
         if "hole" in text or "bore" in text:
             hole_patterns = [
