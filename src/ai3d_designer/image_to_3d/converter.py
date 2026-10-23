@@ -4,7 +4,6 @@ Image to 3D conversion module using depth estimation (MiDaS) and mesh generation
 """
 import os
 import tempfile
-import torch
 import cv2
 import numpy as np
 from pathlib import Path
@@ -12,11 +11,13 @@ from typing import Optional, Tuple
 import trimesh
 from PIL import Image
 
-# Use PyTorch Hub normally; never monkey-patch global repository trust policy.
+# Torch is optional for local lithophane/mesh utilities. Depth inference requires it.
 try:
+    import torch
     import torch.hub
     MIDAS_AVAILABLE = True
 except ImportError:
+    torch = None
     MIDAS_AVAILABLE = False
 
 from .mesh import build_closed_heightfield
@@ -33,6 +34,8 @@ class ImageTo3DConverter:
             model_type: MiDaS model type - "DPT_Large", "DPT_Hybrid", or "MiDaS_small"
             trust_repo: Explicit opt-in to execute code from the MiDaS source repository on first download.
         """
+        if not MIDAS_AVAILABLE or torch is None:
+            raise RuntimeError("Depth-based image conversion requires torch and torchvision; local lithophane generation does not.")
         self.model_type = model_type
         self.trust_repo = trust_repo
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
