@@ -34,9 +34,9 @@
 The message `OCR not yet implemented. Use /api/v1/text-to-cad for natural language input.` comes from the legacy backend implementation on `main`. The feature branch contains the OCR pipeline, but a Vercel Preview must not call the existing Production Railway service.
 
 1. In Railway, create a **separate Preview service/environment** connected to branch `feat/cad-engine-reliability-upgrade-20261023`. Keep the existing Production service connected to `main`.
-2. Set the service root directory to the **repository root** (not `python-backend`), so the Docker build can copy the shared `src/` package. Select the Dockerfile builder and path `python-backend/Dockerfile`. Do not use Nixpacks for this deployment: the Dockerfile installs the system-level Tesseract OCR executable plus the Python OCR dependencies.
+2. Set the service root directory to the **repository root** (not `python-backend`), so the Docker build can copy the shared `src/` package. In **Railway → Service → Settings → Build**, choose the Dockerfile builder and set Dockerfile path to `python-backend/Dockerfile`. Do not rely on the tracked `python-backend/railway.toml` alone for a new service: Railway's Config as Code is deprecated for new services. See [Railway's current Config as Code notice](https://docs.railway.com/config-as-code). Do not use Railpack/Nixpacks for this service: the Dockerfile installs Tesseract, Python OCR dependencies, and CAD runtime dependencies.
 3. Configure the Preview Railway service with `APP_ENV=production` and a new random `CAD_SERVICE_TOKEN`. Keep the token server-side only. Let Railway inject `PORT`.
-4. Open the Preview backend's `/health` URL. It must return JSON with both `"cadAvailable": true` and `"ocrAvailable": true`. If `ocrAvailable` is false or missing, do not continue—the service is not running the OCR-capable build.
+4. Open the Preview backend's `/health` URL. Confirm `"status": "healthy"`, `"cadAvailable": true`, `"cadRuntimeAvailable": true`, `"serviceTokenConfigured": true`, and `"ocrAvailable": true`. The Docker build now fails before deployment if either `build123d` or the OCR runtime cannot import. If `cadRuntimeAvailable` is false, inspect Railway build logs for `CAD runtime import check failed`; if `serviceTokenConfigured` is false, configure a server-only `CAD_SERVICE_TOKEN` on the backend. Do not proceed while the service reports `degraded`.
 5. In **Vercel → Project → Settings → Environment Variables**, add `CAD_SERVICE_URL_PREVIEW` and `CAD_SERVICE_TOKEN_PREVIEW` scoped to **Preview**. Use the new Railway Preview URL and the matching token from step 3. Do not replace Production's `CAD_SERVICE_URL` or `CAD_SERVICE_TOKEN`.
 6. Redeploy the Vercel Preview from the feature branch. The Preview routes now require the Preview-specific variables and check backend OCR readiness before accepting an OCR request.
 
@@ -201,9 +201,16 @@ curl -X POST http://localhost:8000/api/v1/text-to-cad \
 
 ### OCR still returns "OCR not yet implemented"
 - This response is from the legacy backend on `main`; do not work around it by pointing Preview at Production.
-- Check the dedicated Preview Railway service's `/health` endpoint; it must report `ocrAvailable: true`.
-- Confirm Railway used Dockerfile builder with path `python-backend/Dockerfile`, which installs Tesseract and OCR dependencies.
-- In Vercel Preview variables, set `CAD_SERVICE_URL_PREVIEW` and `CAD_SERVICE_TOKEN_PREVIEW`, then redeploy the Preview deployment.
+- Confirm the Vercel Preview deployment commit includes the latest OCR routing fix, not just the earlier `fix: isolate Vercel Preview CAD backend configuration` commit. Redeploy the latest feature-branch tip after checks pass.
+- Check the dedicated Preview Railway service's `/health` endpoint; it must report `status: "healthy"`, `cadAvailable: true`, `cadRuntimeAvailable: true`, `serviceTokenConfigured: true`, and `ocrAvailable: true`.
+- In Railway Build settings, use repository-root build context and Dockerfile path `python-backend/Dockerfile`; check the build log for the Docker smoke-test line `CAD_RUNTIME_AVAILABLE=true OCR_AVAILABLE=true`.
+- In Vercel Preview variables, set `CAD_SERVICE_URL_PREVIEW` and `CAD_SERVICE_TOKEN_PREVIEW`, then redeploy the latest Preview.
+- The Next.js OCR route now checks the backend health contract first. If an older backend is reached, it should return a clear readiness error rather than sending the drawing to the mock endpoint.
+
+### `cadAvailable: false` or status is degraded
+- Read the diagnostic fields: `cadRuntimeAvailable` distinguishes a build123d import failure from `serviceTokenConfigured: false`.
+- If CAD runtime is false, inspect Railway logs for `CAD runtime import check failed`. The Dockerfile installs the project package without the desktop-only dependencies and executes a build-time import smoke test.
+- If the token is not configured, add a new strong `CAD_SERVICE_TOKEN` on Railway and the matching server-only `CAD_SERVICE_TOKEN_PREVIEW` in Vercel Preview.
 
 ### "CAD Service Unavailable"
 - Check Railway logs: `railway logs`
