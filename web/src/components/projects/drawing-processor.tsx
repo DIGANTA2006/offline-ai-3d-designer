@@ -34,18 +34,19 @@ type Props = { projectId: string; sourceFiles: SourceFile[] };
 
 export function DrawingProcessor({ projectId, sourceFiles }: Props) {
   const router = useRouter();
-  const [selectedIndex, setSelectedIndex] = useState<number>(sourceFiles[0]?.index ?? 0);
+  const ocrSourceFiles = sourceFiles.filter((file) => /\\.(pdf|png|jpe?g|bmp|tiff?|webp)$/i.test(file.name));
+  const [selectedIndex, setSelectedIndex] = useState<number>(ocrSourceFiles[0]?.index ?? -1);
   const [results, setResults] = useState<Record<number, OCRSpec>>(() => Object.fromEntries(
-    sourceFiles.flatMap((file) => file.ocrResult ? [[file.index, file.ocrResult]] : []),
+    ocrSourceFiles.flatMap((file) => file.ocrResult ? [[file.index, file.ocrResult]] : []),
   ));
   const [reviewedDescription, setReviewedDescription] = useState(
-    sourceFiles[0]?.ocrResult?.rawText ?? "",
+    ocrSourceFiles[0]?.ocrResult?.rawText ?? "",
   );
   const [analyzing, setAnalyzing] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const selected = useMemo(() => sourceFiles.find((file) => file.index === selectedIndex), [sourceFiles, selectedIndex]);
+  const selected = useMemo(() => ocrSourceFiles.find((file) => file.index === selectedIndex), [ocrSourceFiles, selectedIndex]);
   const currentResult = results[selectedIndex] ?? null;
 
   function changeSource(value: string) {
@@ -127,6 +128,9 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
   }
 
   if (!sourceFiles.length) return null;
+  if (!ocrSourceFiles.length) return (
+    <Card className="mt-5"><CardHeader><CardTitle>Drawing OCR unavailable for these files</CardTitle><CardDescription>Source files remain privately stored. OCR currently accepts PDF, PNG, JPEG, BMP, TIFF and WebP drawings.</CardDescription></CardHeader></Card>
+  );
 
   return (
     <Card className="mt-5">
@@ -138,7 +142,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
         <div className="space-y-2">
           <label htmlFor="drawing-source" className="text-sm font-medium">Source drawing</label>
           <select id="drawing-source" value={selectedIndex} onChange={(event) => changeSource(event.target.value)} disabled={analyzing || generating} className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
-            {sourceFiles.map((file) => <option key={file.index} value={file.index}>{file.name}</option>)}
+            {ocrSourceFiles.map((file) => <option key={file.index} value={file.index}>{file.name}</option>)}
           </select>
           <div className="flex flex-wrap gap-2">
             <Button type="button" variant="outline" onClick={analyze} disabled={analyzing || generating}>
