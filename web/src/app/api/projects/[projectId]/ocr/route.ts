@@ -4,6 +4,7 @@ import type { Prisma } from "@prisma/client";
 import { getCurrentUser } from "@/lib/auth/server";
 import { isSameOriginRequest } from "@/lib/security/same-origin";
 import { prisma } from "@/lib/prisma";
+import { getCadServiceConfig } from "@/lib/cad-service-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -72,18 +73,63 @@ async function readLimitedStream(stream: ReadableStream<Uint8Array>, limit: numb
 }
 
 function getCadEndpoint(): URL {
-  const raw = process.env.CAD_SERVICE_URL?.trim();
-  if (!raw) throw new RouteError("CAD_SERVICE_URL is not configured.", 503);
-  let base: URL;
   try {
-    base = new URL(raw);
+    return new URL("/api/v1/ocr/extract", getCadServiceConfig().baseUrl);
+  } catch (error) {
+    throw new RouteError(error instanceof Error ? error.message : "CAD service configuration is invalid.", 503);
+  }
+}
+
+async function assertOcrReady(endpoint: URL): Promise<void> {
+  const healthUrl = new URL("/health", endpoint);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5_000);
+  let response: Response;
+  try {
+    response = await fetch(healthUrl, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new RouteError("Timed out checking the CAD backend's OCR readiness.", 503);
+    }
+    throw new RouteError("Could not reach the CAD backend health endpoint. Verify the Preview backend URL and deployment.", 503);
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  const declaredLength = Number(response.headers.get("content-length") ?? 0);
+  if (declaredLength > 16 * 1024) throw new RouteError("CAD backend health response is unexpectedly large.", 502);
+  const responseText = await response.text();
+  if (Buffer.byteLength(responseText, "utf8") > 16 * 1024) {
+    throw new RouteError("CAD backend health response is unexpectedly large.", 502);
+  }
+  let health: unknown;
+  try {
+    health = JSON.parse(responseText);
   } catch {
-    throw new RouteError("CAD_SERVICE_URL is invalid.", 503);
+    throw new RouteError("CAD backend returned an invalid health response.", 502);
   }
-  if (base.protocol !== "https:" && !(process.env.NODE_ENV !== "production" && base.protocol === "http:" && ["localhost", "127.0.0.1", "::1"].includes(base.hostname))) {
-    throw new RouteError("The production CAD service must use HTTPS.", 503);
+  if (!response.ok || !health || typeof health !== "object" || Array.isArray(health)) {
+    throw new RouteError("CAD backend health check failed. Verify the backend deployment and logs.", 503);
   }
-  return new URL("/api/v1/ocr/extract", base);
+
+  const capability = (health as Record<string, unknown>).ocrAvailable;
+  if (typeof capability !== "boolean") {
+    throw new RouteError(
+      "The connected CAD backend is an older build and does not report OCR readiness. Deploy the feature branch to a separate Railway Preview service and set Vercel Preview's CAD_SERVICE_URL_PREVIEW to that service. Keep Production's CAD_SERVICE_URL unchanged.",
+      503,
+    );
+  }
+  if (capability !== true) {
+    throw new RouteError(
+      "The connected CAD backend reports OCR unavailable. Redeploy the feature branch using python-backend/Dockerfile, which installs Tesseract and the OCR dependencies, then confirm /health returns ocrAvailable=true.",
+      503,
+    );
+  }
 }
 
 export async function POST(request: Request, { params }: Context) {
@@ -173,8 +219,15 @@ export async function POST(request: Request, { params }: Context) {
       if (error instanceof RouteError) throw error;
       throw new RouteError("CAD service is not configured.", 503);
     }
-    const serviceToken = process.env.CAD_SERVICE_TOKEN?.trim();
-    if (!serviceToken) throw new RouteError("CAD_SERVICE_TOKEN is not configured on the web deployment.", 503);
+    let serviceToken: string | undefined;
+    try {
+      serviceToken = getCadServiceConfig().token;
+    } catch (error) {
+      throw new RouteError(error instanceof Error ? error.message : "CAD service configuration is invalid.", 503);
+    }
+    if (!serviceToken) throw new RouteError("CAD service token is not configured on the web deployment.", 503);
+
+    await assertOcrReady(endpoint);
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), OCR_TIMEOUT_MS);
