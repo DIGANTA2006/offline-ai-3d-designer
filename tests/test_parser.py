@@ -104,3 +104,14 @@ def test_unpositioned_multiple_holes_are_not_guessed():
 
     assert result.success is False
     assert "explicit hole coordinates" in (result.error or "").lower()
+
+
+def test_plate_with_explicit_thickness():
+    result = RuleBasedParser().parse("A 100 x 50 mm plate, 5 mm thick")
+
+    assert result.success, result.error
+    assert result.spec is not None
+    feature = result.spec.features[0]
+    assert feature.parameters["width"].value == 100
+    assert feature.parameters["depth"].value == 50
+    assert feature.parameters["height"].value == 5
