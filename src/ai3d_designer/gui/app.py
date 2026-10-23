@@ -923,7 +923,11 @@ class AI3DDesignerGUI:
             messagebox.showwarning("Warning", "Please specify G-code output path")
             return
             
+        # Disable actions tied to any previous G-code while a new slice runs.
         self.slice_btn.config(state=tk.DISABLED)
+        self.validate_gcode_btn.config(state=tk.DISABLED)
+        self.approve_print_btn.config(state=tk.DISABLED)
+        self.current_gcode_path = None
         self.progress.start()
         self._set_status("Slicing...")
         self._slice_log(f"Slicing: {stl_path}")
