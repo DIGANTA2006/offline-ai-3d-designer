@@ -1,477 +1,441 @@
+"""Production-oriented CuraEngine adapter.
 
+This module never fabricates placeholder G-code. A slice succeeds only if CuraEngine
+produces a non-empty file that passes basic structural and extrusion checks. These
+checks do not replace reviewing the slicer preview and printer-specific settings.
 """
-Slicing module for 3D printing - integrates with CuraEngine or provides basic slicing.
-"""
+from __future__ import annotations
+
+import math
 import os
+import re
+import shutil
 import subprocess
-import json
 import tempfile
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Dict, Any, List
-from dataclasses import dataclass, asdict
+from typing import Any, Optional
+
 import trimesh
-import numpy as np
+
 
 @dataclass
 class SliceSettings:
-    """3D printing slice settings."""
-    # Printer
+    """FDM print settings. Dimensions are millimeters and speeds are mm/s."""
+
     printer_name: str = "Generic"
     bed_size_x: float = 220.0
     bed_size_y: float = 220.0
     bed_size_z: float = 250.0
-    
-    # Quality
     layer_height: float = 0.2
     initial_layer_height: float = 0.2
     wall_thickness: float = 1.2
     top_bottom_thickness: float = 0.8
-    
-    # Infill
     infill_density: float = 20.0
-    infill_pattern: str = "grid"  # grid, lines, triangles, cubic, gyroid
-    
-    # Speed
+    infill_pattern: str = "grid"
     print_speed: float = 50.0
     infill_speed: float = 50.0
     wall_speed: float = 30.0
     travel_speed: float = 150.0
     initial_layer_speed: float = 20.0
-    
-    # Temperature
     nozzle_temp: float = 200.0
     bed_temp: float = 60.0
     initial_layer_bed_temp: float = 60.0
-    
-    # Material
+    nozzle_diameter: float = 0.4
     filament_diameter: float = 1.75
     flow_rate: float = 100.0
-    
-    # Adhesion
-    adhesion_type: str = "brim"  # none, skirt, brim, raft
+    adhesion_type: str = "brim"
     brim_width: float = 8.0
     brim_line_count: int = 5
-    
-    # Support
     support_enabled: bool = False
     support_pattern: str = "zigzag"
     support_density: float = 15.0
     support_z_distance: float = 0.2
     support_xy_distance: float = 0.7
-    
-    # Retraction
     retraction_enabled: bool = True
     retraction_distance: float = 5.0
     retraction_speed: float = 40.0
-    
-    # Cooling
     fan_enabled: bool = True
     fan_speed: float = 100.0
     fan_speed_max: float = 100.0
-    
-    # Advanced
     enable_prime_tower: bool = False
     wipe_tower_enabled: bool = False
-    
-    def to_cura_json(self) -> Dict[str, Any]:
-        """Convert to CuraEngine JSON format."""
+
+    def validate(self) -> list[str]:
+        """Return actionable validation errors before calling the external slicer."""
+        errors: list[str] = []
+        positive = {
+            "bed_size_x": self.bed_size_x,
+            "bed_size_y": self.bed_size_y,
+            "bed_size_z": self.bed_size_z,
+            "layer_height": self.layer_height,
+            "initial_layer_height": self.initial_layer_height,
+            "wall_thickness": self.wall_thickness,
+            "top_bottom_thickness": self.top_bottom_thickness,
+            "print_speed": self.print_speed,
+            "infill_speed": self.infill_speed,
+            "wall_speed": self.wall_speed,
+            "travel_speed": self.travel_speed,
+            "initial_layer_speed": self.initial_layer_speed,
+            "nozzle_diameter": self.nozzle_diameter,
+            "filament_diameter": self.filament_diameter,
+        }
+        for name, value in positive.items():
+            if not math.isfinite(float(value)) or value <= 0:
+                errors.append(f"{name} must be a finite number greater than zero.")
+        if self.layer_height > 1.0 or self.initial_layer_height > 1.0:
+            errors.append("Layer heights over 1.0 mm are rejected; verify the printer and nozzle profile.")
+        for name, value in {
+            "infill_density": self.infill_density,
+            "support_density": self.support_density,
+            "flow_rate": self.flow_rate,
+            "fan_speed": self.fan_speed,
+            "fan_speed_max": self.fan_speed_max,
+        }.items():
+            upper = 200.0 if name == "flow_rate" else 100.0
+            if not math.isfinite(float(value)) or not 0 <= value <= upper:
+                errors.append(f"{name} must be between 0 and {upper:g}.")
+        for name, value, upper in (
+            ("nozzle_temp", self.nozzle_temp, 400),
+            ("bed_temp", self.bed_temp, 200),
+            ("initial_layer_bed_temp", self.initial_layer_bed_temp, 200),
+        ):
+            if not math.isfinite(float(value)) or not 0 <= value <= upper:
+                errors.append(f"{name} must be between 0 and {upper} °C.")
+        for name, value in {
+            "brim_width": self.brim_width,
+            "retraction_distance": self.retraction_distance,
+            "retraction_speed": self.retraction_speed,
+            "support_z_distance": self.support_z_distance,
+            "support_xy_distance": self.support_xy_distance,
+        }.items():
+            if not math.isfinite(float(value)) or value < 0:
+                errors.append(f"{name} must be a finite non-negative number.")
+        if not isinstance(self.brim_line_count, int) or self.brim_line_count < 0:
+            errors.append("brim_line_count must be a non-negative integer.")
+        if self.infill_pattern not in {"grid", "lines", "triangles", "cubic", "gyroid"}:
+            errors.append("Unsupported infill_pattern.")
+        if self.adhesion_type not in {"none", "skirt", "brim", "raft"}:
+            errors.append("Unsupported adhesion_type.")
+        if self.support_pattern not in {"zigzag", "grid", "triangles", "concentric"}:
+            errors.append("Unsupported support_pattern.")
+        return errors
+
+    def to_cura_json(self) -> dict[str, Any]:
+        """Compatibility method returning flat setting overrides, not a definition JSON."""
         return {
-            "machine_settings": {
-                "machine_width": {"value": self.bed_size_x},
-                "machine_depth": {"value": self.bed_size_y},
-                "machine_height": {"value": self.bed_size_z},
-            },
-            "quality": {
-                "layer_height": {"value": self.layer_height},
-                "initial_layer_height": {"value": self.initial_layer_height},
-                "wall_thickness": {"value": self.wall_thickness},
-                "top_bottom_thickness": {"value": self.top_bottom_thickness},
-            },
-            "infill": {
-                "infill_sparse_density": {"value": self.infill_density},
-                "infill_pattern": {"value": self.infill_pattern},
-            },
-            "speed": {
-                "speed_print": {"value": self.print_speed},
-                "speed_infill": {"value": self.infill_speed},
-                "speed_wall": {"value": self.wall_speed},
-                "speed_travel": {"value": self.travel_speed},
-                "speed_initial_layer": {"value": self.initial_layer_speed},
-            },
-            "temperature": {
-                "material_print_temperature": {"value": self.nozzle_temp},
-                "material_bed_temperature": {"value": self.bed_temp},
-                "material_bed_temperature_layer_0": {"value": self.initial_layer_bed_temp},
-            },
-            "material": {
-                "material_diameter": {"value": self.filament_diameter},
-                "material_flow": {"value": self.flow_rate},
-            },
-            "adhesion": {
-                "adhesion_type": {"value": self.adhesion_type},
-                "brim_width": {"value": self.brim_width},
-                "brim_line_count": {"value": self.brim_line_count},
-            },
-            "support": {
-                "support_enable": {"value": self.support_enabled},
-                "support_pattern": {"value": self.support_pattern},
-                "support_density": {"value": self.support_density},
-                "support_z_distance": {"value": self.support_z_distance},
-                "support_xy_distance": {"value": self.support_xy_distance},
-            },
-            "retraction": {
-                "retraction_enable": {"value": self.retraction_enabled},
-                "retraction_amount": {"value": self.retraction_distance},
-                "retraction_speed": {"value": self.retraction_speed},
-            },
-            "cooling": {
-                "cool_fan_enabled": {"value": self.fan_enabled},
-                "cool_fan_speed": {"value": self.fan_speed},
-                "cool_fan_speed_max": {"value": self.fan_speed_max},
-            }
+            "layer_height": self.layer_height,
+            "layer_height_0": self.initial_layer_height,
+            "wall_thickness": self.wall_thickness,
+            "top_bottom_thickness": self.top_bottom_thickness,
+            "infill_sparse_density": self.infill_density,
+            "infill_pattern": self.infill_pattern,
+            "speed_print": self.print_speed,
+            "speed_infill": self.infill_speed,
+            "speed_wall": self.wall_speed,
+            "speed_travel": self.travel_speed,
+            "speed_layer_0": self.initial_layer_speed,
+            "material_print_temperature": self.nozzle_temp,
+            "material_bed_temperature": self.bed_temp,
+            "material_bed_temperature_layer_0": self.initial_layer_bed_temp,
+            "machine_nozzle_size": self.nozzle_diameter,
+            "material_diameter": self.filament_diameter,
+            "material_flow": self.flow_rate,
+            "adhesion_type": self.adhesion_type,
+            "brim_width": self.brim_width,
+            "brim_line_count": self.brim_line_count,
+            "support_enable": self.support_enabled,
+            "support_structure": self.support_pattern,
+            "support_density": self.support_density,
+            "support_top_distance": self.support_z_distance,
+            "support_xy_distance": self.support_xy_distance,
+            "retraction_enable": self.retraction_enabled,
+            "retraction_amount": self.retraction_distance,
+            "retraction_speed": self.retraction_speed,
+            "cool_fan_enabled": self.fan_enabled,
+            "cool_fan_speed": self.fan_speed,
+            "cool_fan_speed_max": self.fan_speed_max,
         }
 
 
 @dataclass
 class SliceResult:
-    """Result of slicing operation."""
+    """Slicer result; success means real, structurally checked G-code was produced."""
+
     success: bool
     gcode_path: Optional[str] = None
-    print_time: Optional[float] = None  # seconds
-    filament_used: Optional[float] = None  # grams
+    print_time: Optional[float] = None
+    filament_used: Optional[float] = None
     layers: Optional[int] = None
-    warnings: List[str] = None
-    errors: List[str] = None
-    
-    def __post_init__(self):
-        if self.warnings is None:
-            self.warnings = []
-        if self.errors is None:
-            self.errors = []
+    warnings: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
 
 
 class Slicer:
-    """3D printing slicer - uses CuraEngine if available, otherwise basic slicing."""
-    
+    """CuraEngine wrapper. No fallback generates fake or partial print G-code."""
+
     def __init__(self, cura_engine_path: Optional[str] = None):
-        """
-        Initialize slicer.
-        
-        Args:
-            cura_engine_path: Path to CuraEngine executable. If None, tries to find it.
-        """
         self.cura_engine_path = cura_engine_path or self._find_cura_engine()
-        self.cura_available = self.cura_engine_path is not None
-        
-        # Default settings
+        self.cura_available = bool(self.cura_engine_path)
         self.settings = SliceSettings()
-    
-    def _find_cura_engine(self) -> Optional[str]:
-        """Try to find CuraEngine executable."""
-        # Common locations
-        possible_paths = [
-            "CuraEngine",
-            "curaengine",
-            r"C:\Program Files\UltiMaker Cura 5.x\CuraEngine.exe",
-            r"C:\Program Files\Ultimaker Cura 5.x\CuraEngine.exe",
-            r"C:\Program Files\Cura\CuraEngine.exe",
-            "/usr/bin/CuraEngine",
-            "/usr/local/bin/CuraEngine",
-        ]
-        
-        for path in possible_paths:
+
+    @staticmethod
+    def _find_cura_engine() -> Optional[str]:
+        """Find CuraEngine on PATH or in common Windows installation folders."""
+        for executable in ("CuraEngine", "curaengine", "CuraEngine.exe"):
+            found = shutil.which(executable)
+            if found:
+                try:
+                    result = subprocess.run([found, "--version"], capture_output=True, timeout=5, check=False)
+                    if result.returncode == 0:
+                        return found
+                except (OSError, subprocess.TimeoutExpired):
+                    continue
+
+        candidates: list[Path] = []
+        for root in (Path("C:/Program Files"), Path("C:/Program Files (x86)")):
+            if root.exists():
+                candidates.extend(root.glob("UltiMaker Cura*/CuraEngine.exe"))
+                candidates.extend(root.glob("Ultimaker Cura*/CuraEngine.exe"))
+                candidates.extend(root.glob("Cura*/CuraEngine.exe"))
+        for candidate in candidates:
             try:
-                result = subprocess.run([path, "--version"], capture_output=True, timeout=5)
+                result = subprocess.run([str(candidate), "--version"], capture_output=True, timeout=5, check=False)
                 if result.returncode == 0:
-                    return path
-            except (FileNotFoundError, subprocess.TimeoutExpired):
+                    return str(candidate)
+            except (OSError, subprocess.TimeoutExpired):
                 continue
-        
         return None
-    
+
     def slice(
         self,
         stl_path: str,
         output_path: str,
         settings: Optional[SliceSettings] = None,
-        printer_definition: Optional[str] = None
+        printer_definition: Optional[str] = None,
     ) -> SliceResult:
-        """
-        Slice an STL file to G-code.
-        
-        Args:
-            stl_path: Path to input STL file
-            output_path: Path to output G-code file
-            settings: Slice settings (uses defaults if None)
-            printer_definition: Path to printer definition JSON (for CuraEngine)
-            
-        Returns:
-            SliceResult with outcome
-        """
-        if settings is None:
-            settings = self.settings
-        
-        if self.cura_available:
-            return self._slice_with_cura(stl_path, output_path, settings, printer_definition)
-        else:
-            return self._slice_basic(stl_path, output_path, settings)
-    
-    def _slice_with_cura(
-        self,
-        stl_path: str,
-        output_path: str,
-        settings: SliceSettings,
-        printer_definition: Optional[str]
-    ) -> SliceResult:
-        """Slice using CuraEngine."""
+        """Slice an STL using CuraEngine and an actual Cura printer definition."""
+        settings = settings or self.settings
+        errors = settings.validate()
+        if errors:
+            return SliceResult(success=False, errors=errors)
+        model_path = Path(stl_path).expanduser()
+        if not model_path.is_file():
+            return SliceResult(success=False, errors=[f"Input STL does not exist: {model_path}"])
+        if not self.cura_available or not self.cura_engine_path:
+            return SliceResult(
+                success=False,
+                errors=[
+                    "CuraEngine was not found. Install CuraEngine and configure a compatible printer/extruder definition JSON. No placeholder G-code was generated."
+                ],
+            )
+
+        definition_text = printer_definition or os.environ.get("CURA_PRINTER_DEFINITION", "")
+        definition_path = Path(definition_text).expanduser() if definition_text else None
+        if definition_path is None or not definition_path.is_file():
+            return SliceResult(
+                success=False,
+                errors=[
+                    "Select a valid Cura printer definition JSON (plus any required extruder definition). Printer-specific start/end G-code and firmware settings are required; no G-code was generated."
+                ],
+            )
+
         try:
-            # Build command
-            cmd = [
-                self.cura_engine_path,
+            mesh = trimesh.load(str(model_path), force="mesh")
+            if not isinstance(mesh, trimesh.Trimesh) or mesh.is_empty or len(mesh.faces) == 0:
+                return SliceResult(success=False, errors=["STL is empty or could not be loaded as a triangle mesh."])
+            if not bool(mesh.is_watertight):
+                return SliceResult(success=False, errors=["STL mesh is not watertight. Repair it before slicing."])
+            if not mesh.is_volume or not math.isfinite(float(mesh.volume)) or float(mesh.volume) <= 0:
+                return SliceResult(success=False, errors=["STL mesh has invalid or non-positive volume."])
+            extents = mesh.extents
+            if not all(math.isfinite(float(value)) for value in extents):
+                return SliceResult(success=False, errors=["STL bounding box contains non-finite dimensions."])
+            if extents[0] > settings.bed_size_x or extents[1] > settings.bed_size_y or extents[2] > settings.bed_size_z:
+                return SliceResult(
+                    success=False,
+                    errors=[
+                        f"Model dimensions ({extents[0]:.1f} x {extents[1]:.1f} x {extents[2]:.1f} mm) exceed configured build volume ({settings.bed_size_x:.1f} x {settings.bed_size_y:.1f} x {settings.bed_size_z:.1f} mm)."
+                    ],
+                )
+        except Exception as exc:
+            return SliceResult(success=False, errors=[f"Could not validate STL: {exc}"])
+
+        destination = Path(output_path).expanduser()
+        temporary_output: Optional[Path] = None
+        try:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                prefix=f".{destination.stem}-",
+                suffix=".gcode",
+                dir=str(destination.parent),
+                delete=False,
+            ) as temp_file:
+                temporary_output = Path(temp_file.name)
+
+            command = [
+                str(self.cura_engine_path),
                 "slice",
                 "-v",
-                "-o", output_path,
-                "-l", stl_path,
+                "-j", str(definition_path.resolve()),
+                "-l", str(model_path.resolve()),
+                "-o", str(temporary_output),
             ]
-            
-            # Add settings as JSON
-            settings_json = settings.to_cura_json()
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-                json.dump(settings_json, f)
-                settings_file = f.name
-            
-            cmd.extend(["-j", settings_file])
-            
-            if printer_definition:
-                cmd.extend(["-j", printer_definition])
-            
-            # Run slicing
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-            
-            # Clean up temp file
-            os.unlink(settings_file)
-            
+            for key, value in settings.to_cura_json().items():
+                command.extend(["-s", f"{key}={self._cura_value(value)}"])
+
+            try:
+                result = subprocess.run(command, capture_output=True, text=True, timeout=300, check=False)
+            except subprocess.TimeoutExpired:
+                return SliceResult(success=False, errors=["CuraEngine slicing timed out after 300 seconds."])
             if result.returncode != 0:
+                detail = (result.stderr or result.stdout or "no diagnostic output").strip()
+                return SliceResult(success=False, errors=[f"CuraEngine failed (exit {result.returncode}): {detail[-2500:]}"])
+            if not temporary_output.is_file() or temporary_output.stat().st_size == 0:
+                return SliceResult(success=False, errors=["CuraEngine returned success but produced no G-code file."])
+
+            validation = self.validate_gcode(str(temporary_output))
+            if not validation.get("valid"):
                 return SliceResult(
                     success=False,
-                    errors=[f"CuraEngine failed: {result.stderr}"]
+                    errors=[f"Generated G-code failed structural validation: {validation.get('error', 'unknown error')}"],
                 )
-            
-            # Parse output for stats
-            print_time, filament_used, layers = self._parse_cura_output(result.stdout)
-            
+
+            os.replace(temporary_output, destination)
+            output_text = (result.stdout or "") + "\n" + (result.stderr or "")
+            print_time, filament_used, layers = self._parse_cura_output(output_text)
+            warnings: list[str] = []
+            if not mesh.is_winding_consistent:
+                warnings.append("Input mesh orientation was not consistent; inspect the sliced preview carefully.")
             return SliceResult(
                 success=True,
-                gcode_path=output_path,
+                gcode_path=str(destination),
                 print_time=print_time,
                 filament_used=filament_used,
-                layers=layers
+                layers=layers or validation["stats"]["layers"],
+                warnings=warnings,
             )
-            
-        except subprocess.TimeoutExpired:
-            return SliceResult(success=False, errors=["Slicing timed out"])
-        except Exception as e:
-            return SliceResult(success=False, errors=[str(e)])
-    
-    def _parse_cura_output(self, output: str) -> tuple:
-        """Parse CuraEngine output for print statistics."""
-        print_time = None
-        filament_used = None
-        layers = None
-        
-        for line in output.split('\n'):
-            if "Print time:" in line:
-                # Format: "Print time: 1h 30m 45s"
-                try:
-                    time_str = line.split("Print time:")[1].strip()
-                    print_time = self._parse_time_string(time_str)
-                except:
-                    pass
-            elif "Filament used:" in line:
-                # Format: "Filament used: 12.5g"
-                try:
-                    fil_str = line.split("Filament used:")[1].strip().replace('g', '')
-                    filament_used = float(fil_str)
-                except:
-                    pass
-            elif "Layers:" in line:
-                try:
-                    layers = int(line.split("Layers:")[1].strip())
-                except:
-                    pass
-        
+        except Exception as exc:
+            return SliceResult(success=False, errors=[f"Slicing failed safely: {exc}"])
+        finally:
+            try:
+                if temporary_output is not None and temporary_output.exists():
+                    temporary_output.unlink()
+            except OSError:
+                pass
+
+    @staticmethod
+    def _cura_value(value: Any) -> str:
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, float):
+            return f"{value:.6g}"
+        return str(value)
+
+    @staticmethod
+    def _parse_cura_output(output: str) -> tuple[Optional[float], Optional[float], Optional[int]]:
+        """Best-effort parse of CuraEngine statistics."""
+        print_time: Optional[float] = None
+        filament_used: Optional[float] = None
+        layers: Optional[int] = None
+        for line in output.splitlines():
+            time_match = re.search(r"Print time:\s*(.*)", line, re.IGNORECASE)
+            if time_match:
+                print_time = Slicer._parse_time_string(time_match.group(1))
+            filament_match = re.search(r"Filament used:\s*([0-9]+(?:\.[0-9]+)?)\s*g?", line, re.IGNORECASE)
+            if filament_match:
+                filament_used = float(filament_match.group(1))
+            layer_match = re.search(r"(?:Total\s+)?Layers:\s*(\d+)", line, re.IGNORECASE)
+            if layer_match:
+                layers = int(layer_match.group(1))
         return print_time, filament_used, layers
-    
-    def _parse_time_string(self, time_str: str) -> float:
-        """Parse time string like '1h 30m 45s' to seconds."""
+
+    @staticmethod
+    def _parse_time_string(time_string: str) -> Optional[float]:
         total = 0
-        parts = time_str.split()
-        for part in parts:
-            if part.endswith('h'):
-                total += int(part[:-1]) * 3600
-            elif part.endswith('m'):
-                total += int(part[:-1]) * 60
-            elif part.endswith('s'):
-                total += int(part[:-1])
-        return total
-    
-    def _slice_basic(
-        self,
-        stl_path: str,
-        output_path: str,
-        settings: SliceSettings
-    ) -> SliceResult:
-        """
-        Basic slicing fallback (very simple, for demonstration).
-        In production, you'd want a proper slicer or CuraEngine.
-        """
+        matches = list(re.finditer(r"(\d+)\s*([hms])", time_string.lower()))
+        if not matches:
+            return None
+        for match in matches:
+            amount = int(match.group(1))
+            total += amount * {"h": 3600, "m": 60, "s": 1}[match.group(2)]
+        return float(total)
+
+    def validate_gcode(self, gcode_path: str) -> dict[str, Any]:
+        """Heuristic structure check for generated G-code; not a firmware safety check."""
+        path = Path(gcode_path)
+        if not path.is_file():
+            return {"valid": False, "error": "G-code file does not exist."}
         try:
-            # Load mesh
-            mesh = trimesh.load(stl_path)
-            
-            # Basic validation
-            if not mesh.is_watertight:
-                return SliceResult(
-                    success=False,
-                    errors=["Mesh is not watertight - cannot slice reliably"]
-                )
-            
-            # Generate very basic G-code (just for preview)
-            gcode = self._generate_basic_gcode(mesh, settings)
-            
-            with open(output_path, 'w') as f:
-                f.write(gcode)
-            
-            # Estimate
-            bounds = mesh.bounds
-            height = bounds[1, 2] - bounds[0, 2]
-            layers = int(height / settings.layer_height)
-            volume = mesh.volume / 1000.0  # cm³
-            filament_used = volume * 1.24  # PLA density ~1.24 g/cm³
-            print_time = layers * 30  # rough estimate: 30s per layer
-            
-            return SliceResult(
-                success=True,
-                gcode_path=output_path,
-                print_time=print_time,
-                filament_used=filament_used,
-                layers=layers,
-                warnings=["Using basic slicer - for preview only. Install CuraEngine for production."]
-            )
-            
-        except Exception as e:
-            return SliceResult(success=False, errors=[str(e)])
-    
-    def _generate_basic_gcode(self, mesh: trimesh.Trimesh, settings: SliceSettings) -> str:
-        """Generate minimal G-code for preview."""
-        bounds = mesh.bounds
-        center_x = (bounds[0, 0] + bounds[1, 0]) / 2
-        center_y = (bounds[0, 1] + bounds[1, 1]) / 2
-        
-        lines = [
-            "; Basic G-code generated by AI 3D Designer",
-            "; This is a PREVIEW only - not for actual printing!",
-            f"; Model: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces",
-            f"; Bounds: X{bounds[0,0]:.1f}-{bounds[1,0]:.1f} Y{bounds[0,1]:.1f}-{bounds[1,1]:.1f} Z{bounds[0,2]:.1f}-{bounds[1,2]:.1f}",
-            "",
-            "G21 ; Set units to mm",
-            "G90 ; Absolute positioning",
-            "M82 ; Absolute extrusion",
-            "",
-            f"M104 S{settings.nozzle_temp} ; Heat nozzle",
-            f"M140 S{settings.bed_temp} ; Heat bed",
-            "M190 S{settings.bed_temp} ; Wait for bed",
-            "M109 S{settings.nozzle_temp} ; Wait for nozzle",
-            "",
-            "G28 ; Home all axes",
-            "G1 Z0.2 F3000 ; Lift nozzle",
-            "G1 X10 Y10 F3000 ; Move to corner",
-            "G1 Z0 ; Touch bed",
-            "G1 E5 F300 ; Prime nozzle",
-            "G1 X50 E10 F300 ; Wipe",
-            "G92 E0 ; Reset extruder",
-            "",
-            "; === LAYERS ===",
-        ]
-        
-        # Add dummy layers
-        height = bounds[1, 2] - bounds[0, 2]
-        layer_count = int(height / settings.layer_height)
-        for i in range(min(layer_count, 5)):  # Just first 5 layers for preview
-            z = bounds[0, 2] + i * settings.layer_height
-            lines.append(f"; Layer {i+1}/{layer_count} at Z={z:.2f}")
-            lines.append(f"G1 Z{z:.2f} F{settings.print_speed * 60}")
-            # Perimeter
-            lines.append(f"G1 X{bounds[0,0]:.1f} Y{bounds[0,1]:.1f} F{settings.wall_speed * 60}")
-            lines.append(f"G1 X{bounds[1,0]:.1f} Y{bounds[0,1]:.1f} E1")
-            lines.append(f"G1 X{bounds[1,0]:.1f} Y{bounds[1,1]:.1f} E2")
-            lines.append(f"G1 X{bounds[0,0]:.1f} Y{bounds[1,1]:.1f} E3")
-            lines.append(f"G1 X{bounds[0,0]:.1f} Y{bounds[0,1]:.1f} E4")
-        
-        lines.extend([
-            "",
-            "; === END ===",
-            "G1 Z{bounds[1,2] + 10:.1f} F3000 ; Lift nozzle",
-            "G1 X0 Y0 F3000 ; Home XY",
-            "M104 S0 ; Turn off nozzle",
-            "M140 S0 ; Turn off bed",
-            "M84 ; Disable motors",
-        ])
-        
-        return "\n".join(lines)
-    
-    def validate_gcode(self, gcode_path: str) -> Dict[str, Any]:
-        """Basic G-code validation."""
-        try:
-            with open(gcode_path, 'r') as f:
-                lines = f.readlines()
-            
-            stats = {
-                "total_lines": len(lines),
-                "g_commands": 0,
-                "m_commands": 0,
-                "has_home": False,
-                "has_temp": False,
-                "has_extrusion": False,
-                "max_x": 0, "max_y": 0, "max_z": 0,
-                "min_x": 0, "min_y": 0, "min_z": 0,
-            }
-            
-            for line in lines:
-                line = line.strip()
-                if line.startswith('G'):
-                    stats["g_commands"] += 1
-                    if line.startswith('G28'):
-                        stats["has_home"] = True
-                    # Parse coordinates
-                    for axis in ['X', 'Y', 'Z']:
-                        if axis in line:
-                            try:
-                                val = float(line.split(axis)[1].split()[0])
-                                if val > stats[f"max_{axis.lower()}"]:
-                                    stats[f"max_{axis.lower()}"] = val
-                                if val < stats[f"min_{axis.lower()}"]:
-                                    stats[f"min_{axis.lower()}"] = val
-                            except:
-                                pass
-                elif line.startswith('M'):
-                    stats["m_commands"] += 1
-                    if line.startswith('M104') or line.startswith('M109'):
-                        stats["has_temp"] = True
-                if 'E' in line and ('G1' in line or 'G0' in line):
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            return {"valid": False, "error": f"Could not read G-code: {exc}"}
+        lines = text.splitlines()
+        if not lines:
+            return {"valid": False, "error": "G-code file is empty."}
+
+        stats: dict[str, Any] = {
+            "total_lines": len(lines),
+            "g_commands": 0,
+            "m_commands": 0,
+            "has_home": False,
+            "has_temp": False,
+            "has_extrusion": False,
+            "has_layer_marker": False,
+            "layers": 0,
+            "min_x": math.inf, "min_y": math.inf, "min_z": math.inf,
+            "max_x": -math.inf, "max_y": -math.inf, "max_z": -math.inf,
+        }
+        for raw_line in lines:
+            stripped = raw_line.strip()
+            code = stripped.split(";", 1)[0].strip()
+            if re.search(r";\s*(?:LAYER:\s*\d+|LAYER\s+\d+)", stripped, re.IGNORECASE):
+                stats["has_layer_marker"] = True
+                stats["layers"] += 1
+            if not code:
+                continue
+            command_match = re.match(r"([GMT]\d+)\b", code, re.IGNORECASE)
+            if not command_match:
+                continue
+            command = command_match.group(1).upper()
+            if command.startswith("G"):
+                stats["g_commands"] += 1
+                stats["has_home"] = stats["has_home"] or command == "G28"
+            elif command.startswith("M"):
+                stats["m_commands"] += 1
+                stats["has_temp"] = stats["has_temp"] or command in {"M104", "M109", "M140", "M190"}
+            if command in {"G0", "G1", "G2", "G3"}:
+                extrusion = re.search(r"(?:^|\s)E([-+]?(?:\d+\.?\d*|\.\d+))(?=\s|$)", code, re.IGNORECASE)
+                if extrusion and float(extrusion.group(1)) > 0:
                     stats["has_extrusion"] = True
-            
-            return {"valid": True, "stats": stats}
-            
-        except Exception as e:
-            return {"valid": False, "error": str(e)}
+            for axis in ("X", "Y", "Z"):
+                coordinate = re.search(
+                    rf"(?:^|\s){axis}([-+]?(?:\d+\.?\d*|\.\d+))(?=\s|$)",
+                    code, re.IGNORECASE,
+                )
+                if coordinate:
+                    value = float(coordinate.group(1))
+                    stats[f"min_{axis.lower()}"] = min(stats[f"min_{axis.lower()}"], value)
+                    stats[f"max_{axis.lower()}"] = max(stats[f"max_{axis.lower()}"], value)
+
+        for axis in ("x", "y", "z"):
+            if not math.isfinite(stats[f"min_{axis}"]):
+                stats[f"min_{axis}"] = 0.0
+                stats[f"max_{axis}"] = 0.0
+        if stats["g_commands"] == 0:
+            return {"valid": False, "error": "File contains no recognized G-code motion commands."}
+        if not stats["has_extrusion"]:
+            return {"valid": False, "error": "No positive extrusion commands were found."}
+        if not stats["has_layer_marker"]:
+            return {"valid": False, "error": "No layer markers were found; this may not be complete slicer output."}
+        return {"valid": True, "stats": stats}
 
 
-def create_default_printer_definition() -> Dict[str, Any]:
-    """Create a generic printer definition for CuraEngine."""
+def create_default_printer_definition() -> dict[str, Any]:
+    """Return a template hint; this is not a production-ready Cura printer profile."""
     return {
         "id": "generic_fdm_printer",
-        "name": "Generic FDM Printer",
+        "name": "Generic FDM Printer TEMPLATE — complete and verify before use",
         "version": 1,
         "inherits": "fdmprinter",
         "machine_width": {"default_value": 220},
@@ -483,12 +447,3 @@ def create_default_printer_definition() -> Dict[str, Any]:
         "machine_nozzle_size": {"default_value": 0.4},
         "material_diameter": {"default_value": 1.75},
     }
-
-
-if __name__ == "__main__":
-    # Test
-    slicer = Slicer()
-    print(f"CuraEngine available: {slicer.cura_available}")
-    if slicer.cura_available:
-        print(f"CuraEngine path: {slicer.cura_engine_path}")
-    print("Slicing module loaded successfully")
