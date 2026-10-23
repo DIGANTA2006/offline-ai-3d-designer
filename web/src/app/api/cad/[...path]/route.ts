@@ -61,7 +61,7 @@ async function handleCadProxy(request: Request): Promise<Response> {
     }
   }
 
-  let serviceConfig;
+  let serviceConfig: ReturnType<typeof getCadServiceConfig>;
   try {
     serviceConfig = getCadServiceConfig();
   } catch (error) {
