@@ -712,6 +712,16 @@ class AI3DDesignerGUI:
         if self.converter_loading:
             messagebox.showwarning("Warning", "Model is still loading...")
             return
+
+        mode = self.image_mode_var.get()
+        if mode != "lithophane" and self.converter is None:
+            approved = messagebox.askyesno(
+                "Trust the MiDaS model source?",
+                "Single-image depth conversion may download and execute Python code from the official intel-isl/MiDaS repository on first use. "
+                "Only continue if you have reviewed and trust that source. The result is an approximate relief, not exact hidden geometry. Continue?",
+            )
+            if not approved:
+                return
             
         self.convert_image_btn.config(state=tk.DISABLED)
         self.progress.start()
@@ -720,15 +730,13 @@ class AI3DDesignerGUI:
         
         def convert_thread():
             try:
-                # Load converter if needed
-                if self.converter is None:
+                # Lithophane creation uses only the local image; depth conversion needs the model.
+                if mode != "lithophane" and self.converter is None:
                     self.root.after(0, lambda: self._set_status("Downloading/loading MiDaS model..."))
-                    self.root.after(0, lambda: self._log("Loading MiDaS model (first run downloads ~100MB)..."))
-                    self.converter = ImageTo3DConverter("MiDaS_small")  # Fast model
-                    self.root.after(0, lambda: self._log("Model loaded!"))
+                    self.root.after(0, lambda: self._log("Loading the reviewed MiDaS source and model weights (first run may need internet)..."))
+                    self.converter = ImageTo3DConverter("MiDaS_small", trust_repo=True)
+                    self.root.after(0, lambda: self._log("Model loaded."))
                 
-                # Convert
-                mode = self.image_mode_var.get()
                 output_stl = self.output_dir / f"{Path(image_path).stem}_3d.stl"
                 
                 if mode == "lithophane":
@@ -754,6 +762,13 @@ class AI3DDesignerGUI:
                 
                 self.current_mesh = mesh
                 self.current_stl_path = str(output_stl)
+                if mode != "lithophane":
+                    self.root.after(
+                        0,
+                        lambda: self._log(
+                            "IMPORTANT: single-view depth is an approximate relief. It does not recover hidden surfaces, exact dimensions, threads, or tolerances."
+                        ),
+                    )
                 
                 self.root.after(0, lambda: self._log(f"Mesh: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces"))
                 self.root.after(0, lambda: self._log(f"Saved to: {output_stl}"))
