@@ -263,3 +263,119 @@ def test_unit_system_conversion():
     # Both should produce same volume (10mm = 1cm)
     assert abs(part_mm.volume - part_cm.volume) < 0.01
     assert abs(part_mm.volume - 1000.0) < 0.01
+
+def test_explicit_parameter_units_override_part_default_units():
+    spec = PartSpec(name="explicit_units", unit_system=UnitSystem.CM)
+    spec.add_feature(FeatureSpec(
+        id="box_mm",
+        type=PrimitiveType.BOX,
+        name="box",
+        parameters={
+            "width": ParameterSpec(name="width", value=10, unit=UnitSystem.MM),
+            "depth": ParameterSpec(name="depth", value=10, unit=UnitSystem.MM),
+            "height": ParameterSpec(name="height", value=10, unit=UnitSystem.MM),
+        },
+        operation=OperationType.UNION,
+    ))
+
+    part = create_part_from_spec(spec)
+    assert abs(part.volume - 1000.0) < 0.01
+
+
+def test_omitted_parameter_units_inherit_part_default_units():
+    spec = PartSpec(name="inherited_units", unit_system=UnitSystem.CM)
+    spec.add_feature(FeatureSpec(
+        id="box_cm",
+        type=PrimitiveType.BOX,
+        name="box",
+        parameters={
+            "width": ParameterSpec(name="width", value=1),
+            "depth": ParameterSpec(name="depth", value=1),
+            "height": ParameterSpec(name="height", value=1),
+        },
+        operation=OperationType.UNION,
+    ))
+
+    part = create_part_from_spec(spec)
+    assert abs(part.volume - 1000.0) < 0.01
+
+
+def test_positions_are_always_millimeters():
+    spec = PartSpec(name="position_mm", unit_system=UnitSystem.CM)
+    spec.add_feature(FeatureSpec(
+        id="box",
+        type=PrimitiveType.BOX,
+        name="box",
+        parameters={
+            "width": ParameterSpec(name="width", value=10, unit=UnitSystem.MM),
+            "depth": ParameterSpec(name="depth", value=10, unit=UnitSystem.MM),
+            "height": ParameterSpec(name="height", value=10, unit=UnitSystem.MM),
+        },
+        position=[10, 0, 0],
+        operation=OperationType.UNION,
+    ))
+
+    part = create_part_from_spec(spec)
+    assert abs(part.bounding_box().min.X - 5.0) < 0.01
+
+
+def test_extrusion_from_polygon_profile():
+    spec = PartSpec(name="profile_extrusion", unit_system=UnitSystem.MM)
+    spec.add_feature(FeatureSpec(
+        id="extruded_profile",
+        type=PrimitiveType.EXTRUSION,
+        name="rectangular extrusion",
+        parameters={
+            "height": ParameterSpec(name="height", value=10, unit=UnitSystem.MM),
+        },
+        metadata={
+            "profile": {
+                "unit": "mm",
+                "points": [[0, 0], [20, 0], [20, 10], [0, 10]],
+            }
+        },
+        operation=OperationType.UNION,
+    ))
+
+    part = create_part_from_spec(spec)
+    assert part.volume > 0
+    assert abs(part.volume - 2000.0) < 0.1
+
+
+def test_missing_boolean_parent_and_cycles_fail_clearly():
+    spec = PartSpec(name="missing_parent", unit_system=UnitSystem.MM)
+    spec.add_feature(FeatureSpec(
+        id="child",
+        type=PrimitiveType.BOX,
+        name="child",
+        parameters={
+            "width": ParameterSpec(name="width", value=10),
+            "depth": ParameterSpec(name="depth", value=10),
+            "height": ParameterSpec(name="height", value=10),
+        },
+        parent_id="not-present",
+    ))
+    with pytest.raises(ValueError, match="missing parent"):
+        create_part_from_spec(spec)
+
+    cyclic = PartSpec(name="cycle", unit_system=UnitSystem.MM)
+    cyclic.add_feature(FeatureSpec(
+        id="a", type=PrimitiveType.BOX, name="a",
+        parameters={
+            "width": ParameterSpec(name="width", value=10),
+            "depth": ParameterSpec(name="depth", value=10),
+            "height": ParameterSpec(name="height", value=10),
+        },
+        parent_id="b",
+    ))
+    cyclic.add_feature(FeatureSpec(
+        id="b", type=PrimitiveType.BOX, name="b",
+        parameters={
+            "width": ParameterSpec(name="width", value=10),
+            "depth": ParameterSpec(name="depth", value=10),
+            "height": ParameterSpec(name="height", value=10),
+        },
+        parent_id="a",
+    ))
+    with pytest.raises(ValueError, match="cycle"):
+        create_part_from_spec(cyclic)
