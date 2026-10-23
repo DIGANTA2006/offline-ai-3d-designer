@@ -443,3 +443,20 @@ def test_legacy_geometry_import_reexports_canonical_engine():
     from ai3d_designer.core.geometry.engine import create_part_from_spec as core_create_part
 
     assert legacy_create_part is core_create_part
+
+
+def test_engine_rejects_negative_primitive_dimensions():
+    spec = PartSpec(name="negative_box", unit_system=UnitSystem.MM)
+    spec.add_feature(FeatureSpec(
+        id="bad_box",
+        type=PrimitiveType.BOX,
+        name="negative box",
+        parameters={
+            "width": ParameterSpec(name="width", value=-10),
+            "depth": ParameterSpec(name="depth", value=10),
+            "height": ParameterSpec(name="height", value=10),
+        },
+        operation=OperationType.UNION,
+    ))
+    with pytest.raises(ValueError, match="width.*must be positive"):
+        create_part_from_spec(spec)
