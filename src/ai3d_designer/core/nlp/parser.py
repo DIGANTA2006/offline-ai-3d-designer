@@ -269,186 +269,514 @@ class NLPEngine:
 
 
 class RuleBasedParser:
-    """Fallback rule-based parser for simple descriptions without LLM."""
+    """Conservative parser for dimensioned primitive CAD parts.
+
+    This parser deliberately rejects feature requests it cannot represent, rather
+    than silently returning a simplified shape that could be mistaken for a
+    dimensionally accurate engineering model.
+    """
+
+    _NUMBER = r"\d+(?:\.\d+)?"
+    _UNIT = r"""(?:millimeters?|mm|centimeters?|cm|inches?|inch|in\b|meters?|m|["'])"""
+    _TUPLE_PATTERN = re.compile(
+        rf"(?<![\w.])(?P<a>{_NUMBER})\s*(?P<ua>{_UNIT})?\s*(?:x|×|\bby\b)\s*"
+        rf"(?P<b>{_NUMBER})\s*(?P<ub>{_UNIT})?\s*(?:x|×|\bby\b)\s*"
+        rf"(?P<c>{_NUMBER})\s*(?P<uc>{_UNIT})?(?!\w)",
+        re.IGNORECASE,
+    )
+
+    _UNIT_FACTORS = {
+        UnitSystem.MM: 1.0,
+        UnitSystem.CM: 10.0,
+        UnitSystem.INCH: 25.4,
+        UnitSystem.M: 1000.0,
+    }
+
+    _UNSUPPORTED = {
+        "fillet": "fillets",
+        "chamfer": "chamfers",
+        "thread": "threads",
+        "gear": "gears",
+        "helical": "helical features",
+        "lattice": "lattice structures",
+        "impeller": "impellers",
+        "turbine": "turbines",
+        "counterbore": "counterbores",
+        "countersink": "countersinks",
+        "slot": "slots",
+        "pocket": "pockets",
+        "loft": "lofts",
+        "sweep": "sweeps",
+    }
 
     def parse(self, description: str, unit_system: UnitSystem = UnitSystem.MM) -> ParseResult:
-        """Parse using simple pattern matching."""
-        desc_lower = description.lower()
+        """Parse supported, explicitly dimensioned primitive geometry."""
+        if not description or not description.strip():
+            return ParseResult(success=False, error="Enter a part description with dimensions.")
 
         try:
-            # Try to extract dimensions
-            dims = self._extract_dimensions(desc_lower)
+            unit_system = UnitSystem(unit_system)
+        except (TypeError, ValueError):
+            return ParseResult(success=False, error="Choose a supported unit system: mm, cm, in, or m.")
 
-            # Determine primitive type
-            prim_type = self._detect_primitive(desc_lower)
+        text = re.sub(r"\s+", " ", description.strip().lower().replace("×", "x"))
+        for keyword, label in self._UNSUPPORTED.items():
+            if re.search(rf"\b{re.escape(keyword)}\w*\b", text):
+                return ParseResult(
+                    success=False,
+                    error=(
+                        f"This rule-based CAD engine does not yet model {label}. "
+                        "The requested feature was not approximated; use only supported, "
+                        "dimensioned primitives or implement this feature explicitly."
+                    ),
+                )
 
-            if prim_type is None:
-                return ParseResult(success=False, error="Could not determine primitive type")
-
-            # Build feature
-            feature = self._build_feature(prim_type, dims, desc_lower)
-
-            spec = PartSpec(
-                name=self._generate_name(prim_type, desc_lower),
-                description=description,
-                unit_system=unit_system,
-                features=[feature]
+        primitive = self._detect_primitive(text)
+        if primitive is None:
+            return ParseResult(
+                success=False,
+                error="Could not identify a supported primitive. Try a dimensioned box, cylinder, sphere, cone, torus, wedge, pipe, or tube.",
             )
 
+        mentioned = self._mentioned_primitives(text)
+        if len(mentioned) > 1:
+            return ParseResult(
+                success=False,
+                error=(
+                    "This description appears to combine multiple primitive bodies. "
+                    "The rule-based parser will not silently omit a body; describe one supported "
+                    "body and its supported through-hole, or use an explicit PartSpec."
+                ),
+            )
+
+        try:
+            features = self._build_features(primitive, text, unit_system)
+            if not features:
+                return ParseResult(success=False, error="No supported geometric features were produced.")
+            spec = PartSpec(
+                name=self._generate_name(primitive, text),
+                description=description,
+                unit_system=unit_system,
+                features=features,
+                metadata={"generator": "rule-based-v2", "coordinate_convention": "centered_mm"},
+            )
+            from ..validation import validate_spec
+
+            validation = validate_spec(spec)
+            if not validation.is_valid:
+                messages = "; ".join(issue.message for issue in validation.errors)
+                return ParseResult(success=False, error=f"Generated specification is invalid: {messages}")
             return ParseResult(success=True, spec=spec)
+        except (ValueError, TypeError, OverflowError) as exc:
+            return ParseResult(success=False, error=str(exc))
 
-        except Exception as e:
-            return ParseResult(success=False, error=str(e))
+    @classmethod
+    def _unit_from_token(cls, token: Optional[str], default: UnitSystem) -> UnitSystem:
+        unit = (token or "").strip().lower()
+        if not unit:
+            return default
+        if unit in {"mm", "millimeter", "millimeters"}:
+            return UnitSystem.MM
+        if unit in {"cm", "centimeter", "centimeters"}:
+            return UnitSystem.CM
+        if unit in {"in", "inch", "inches", '"', "'"}:
+            return UnitSystem.INCH
+        if unit in {"m", "meter", "meters"}:
+            return UnitSystem.M
+        return default
 
-    def _extract_dimensions(self, text: str) -> Dict[str, float]:
-        """Extract numeric dimensions from text."""
-        dims = {}
+    @classmethod
+    def _to_mm(cls, dimension: tuple[float, UnitSystem]) -> float:
+        value, unit = dimension
+        return value * cls._UNIT_FACTORS[unit]
 
-        # Pattern: number followed by unit or dimension word
-        patterns = [
-            (r'(\d+(?:\.\d+)?)\s*mm', 'mm'),
-            (r'(\d+(?:\.\d+)?)\s*cm', 'cm'),
-            (r'(\d+(?:\.\d+)?)\s*inch', 'in'),
-            (r'(\d+(?:\.\d+)?)\s*in\b', 'in'),
-            (r'(\d+(?:\.\d+)?)\s*[\'"]', 'in'),
-            (r'(\d+(?:\.\d+)?)\s*(?:wide|width|x)', 'width'),
-            (r'(\d+(?:\.\d+)?)\s*(?:deep|depth)', 'depth'),
-            (r'(\d+(?:\.\d+)?)\s*(?:tall|high|height)', 'height'),
-            (r'(\d+(?:\.\d+)?)\s*(?:diam|diameter)', 'diameter'),
-            (r'(\d+(?:\.\d+)?)\s*(?:radius|rad)', 'radius'),
-            (r'(\d+(?:\.\d+)?)\s*(?:long|length)', 'length'),
+    @classmethod
+    def _parameter(cls, name: str, dimension: tuple[float, UnitSystem], description: str = "") -> ParameterSpec:
+        value, unit = dimension
+        return ParameterSpec(name=name, value=value, unit=unit, description=description)
+
+    def _dimension_tuple(
+        self, text: str, default_unit: UnitSystem
+    ) -> Optional[list[tuple[float, UnitSystem]]]:
+        match = self._TUPLE_PATTERN.search(text)
+        if not match:
+            return None
+        tokens = [match.group(f"u{axis}") for axis in ("a", "b", "c")]
+        # A unit written only once at the end of a dimension tuple conventionally
+        # applies to the entire tuple, e.g. 40 x 20 x 10 mm.
+        inherited = next(
+            (self._unit_from_token(token, default_unit) for token in reversed(tokens) if token),
+            default_unit,
+        )
+        return [
+            (float(match.group(axis)), self._unit_from_token(match.group(f"u{axis}"), inherited))
+            for axis in ("a", "b", "c")
         ]
 
-        for pattern, key in patterns:
-            matches = re.findall(pattern, text)
-            if matches:
-                # Take the last match for each key
-                dims[key] = float(matches[-1])
-
-        return dims
-
-    def _detect_primitive(self, text: str) -> Optional[PrimitiveType]:
-        """Detect primitive type from keywords."""
-        keywords = {
-            PrimitiveType.BOX: ["box", "block", "cube", "rectangular", "plate", "slab"],
-            PrimitiveType.CYLINDER: ["cylinder", "rod", "shaft", "pin", "pipe", "tube"],
-            PrimitiveType.SPHERE: ["sphere", "ball", "globe"],
-            PrimitiveType.CONE: ["cone", "conical"],
-            PrimitiveType.TORUS: ["torus", "donut", "ring"],
-            PrimitiveType.WEDGE: ["wedge", "ramp", "triangle"],
-        }
-
-        for prim_type, words in keywords.items():
-            if any(w in text for w in words):
-                return prim_type
-
-        # Default to box if dimensions suggest it (e.g., "40x20x10" or "50 x 30 x 20")
-        # Match patterns like "40x20x10", "50 x 30", "10 by 20 by 30", "10×20×30"
-        box_pattern = r'\d+(?:\.\d+)?\s*[x×]\s*\d+(?:\.\d+)?'
-        by_pattern = r'\d+(?:\.\d+)?\s+by\s+\d+(?:\.\d+)?'
-        if re.search(box_pattern, text) or re.search(by_pattern, text):
-            return PrimitiveType.BOX
-
+    def _find_dimension(
+        self,
+        text: str,
+        labels: list[str],
+        default_unit: UnitSystem,
+    ) -> Optional[tuple[float, UnitSystem]]:
+        number = self._NUMBER
+        unit = rf"(?P<unit>{self._UNIT})?"
+        label = "(?:" + "|".join(labels) + ")"
+        patterns = (
+            rf"(?<![\w.])(?P<value>{number})\s*{unit}\s*{label}\b",
+            rf"\b{label}\s*(?:of\s*)?(?P<value>{number})\s*{unit}(?!\w)",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                value = float(match.group("value"))
+                unit_system = self._unit_from_token(match.group("unit"), default_unit)
+                if value <= 0:
+                    raise ValueError(f"Dimension for {labels[0]} must be greater than zero.")
+                return value, unit_system
         return None
 
-    def _build_feature(self, prim_type: PrimitiveType, dims: Dict[str, float], text: str) -> FeatureSpec:
-        """Build a FeatureSpec from primitive type and dimensions."""
-        params = {}
-        feature_id = prim_type.value + "_main"
-        feature_name = prim_type.value
-
-        if prim_type == PrimitiveType.BOX:
-            width = dims.get('width', dims.get('mm', 40))
-            depth = dims.get('depth', dims.get('mm', 20))
-            height = dims.get('height', dims.get('mm', 10))
-
-            params = {
-                "width": ParameterSpec(name="width", value=width),
-                "depth": ParameterSpec(name="depth", value=depth),
-                "height": ParameterSpec(name="height", value=height),
-            }
-
-            # Check for hole
-            hole_diameter = dims.get('diameter')
-            if hole_diameter is None and 'hole' in text:
-                # Try to find hole size
-                hole_match = re.search(r'(\d+(?:\.\d+)?)\s*mm\s*hole', text)
-                if not hole_match:
-                    hole_match = re.search(r'hole\s*(\d+(?:\.\d+)?)\s*mm', text)
-                if hole_match:
-                    hole_diameter = float(hole_match.group(1))
-
-            if hole_diameter:
-                # Add hole as second feature (will be handled by caller)
-                pass
-
-        elif prim_type == PrimitiveType.CYLINDER:
-            radius = dims.get('radius', dims.get('diameter', 20) / 2)
-            height = dims.get('height', dims.get('length', dims.get('mm', 50)))
-
-            params = {
-                "radius": ParameterSpec(name="radius", value=radius),
-                "height": ParameterSpec(name="height", value=height),
-            }
-
-        elif prim_type == PrimitiveType.SPHERE:
-            radius = dims.get('radius', dims.get('diameter', 20) / 2)
-            params = {
-                "radius": ParameterSpec(name="radius", value=radius),
-            }
-
-        elif prim_type == PrimitiveType.CONE:
-            radius_bottom = dims.get('radius', dims.get('diameter', 20) / 2)
-            radius_top = dims.get('radius_top', 0)
-            height = dims.get('height', dims.get('mm', 50))
-            params = {
-                "radius_bottom": ParameterSpec(name="radius_bottom", value=radius_bottom),
-                "radius_top": ParameterSpec(name="radius_top", value=radius_top),
-                "height": ParameterSpec(name="height", value=height),
-            }
-
-        elif prim_type == PrimitiveType.TORUS:
-            major_radius = dims.get('radius', dims.get('major_radius', 20))
-            minor_radius = dims.get('minor_radius', dims.get('diameter', 10) / 2)
-            params = {
-                "major_radius": ParameterSpec(name="major_radius", value=major_radius),
-                "minor_radius": ParameterSpec(name="minor_radius", value=minor_radius),
-            }
-
-        elif prim_type == PrimitiveType.WEDGE:
-            width = dims.get('width', 40)
-            depth = dims.get('depth', 20)
-            height = dims.get('height', 10)
-            params = {
-                "width": ParameterSpec(name="width", value=width),
-                "depth": ParameterSpec(name="depth", value=depth),
-                "height": ParameterSpec(name="height", value=height),
-                "xmin": ParameterSpec(name="xmin", value=0),
-                "zmin": ParameterSpec(name="zmin", value=0),
-                "xmax": ParameterSpec(name="xmax", value=width),
-                "zmax": ParameterSpec(name="zmax", value=height),
-            }
-
-        return FeatureSpec(
-            id=feature_id,
-            type=prim_type,
-            name=feature_name,
-            parameters=params,
-            operation=OperationType.UNION,
+    def _find_hole_diameter(
+        self, text: str, default_unit: UnitSystem
+    ) -> Optional[tuple[float, UnitSystem]]:
+        number = self._NUMBER
+        unit = rf"(?P<unit>{self._UNIT})?"
+        patterns = (
+            rf"(?<![\w.])(?P<value>{number})\s*{unit}\s*(?:diameter\s+)?hole\b",
+            rf"\bhole\s*(?:of\s*)?(?:(?:diameter|dia)\s*)?(?P<value>{number})\s*{unit}(?!\w)",
+            rf"\b(?:diameter|dia)\s*(?P<value>{number})\s*{unit}\s+hole\b",
         )
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                value = float(match.group("value"))
+                if value <= 0:
+                    raise ValueError("Hole diameter must be greater than zero.")
+                return value, self._unit_from_token(match.group("unit"), default_unit)
+        return None
 
-    def _generate_name(self, prim_type: PrimitiveType, text: str) -> str:
-        """Generate a name for the part."""
-        base_names = {
+    def _dimension_or_error(
+        self, dimension: Optional[tuple[float, UnitSystem]], label: str
+    ) -> tuple[float, UnitSystem]:
+        if dimension is None:
+            raise ValueError(
+                f"Could not determine {label}. Include its numeric dimension and unit, "
+                "or select the intended unit system in the app."
+            )
+        return dimension
+
+    def _mentioned_primitives(self, text: str) -> set[PrimitiveType]:
+        terms = {
+            PrimitiveType.BOX: r"\b(box|block|cube|rectangular|plate|slab)\b",
+            PrimitiveType.CYLINDER: r"\b(cylinder|cylindrical|rod|shaft|pin|pipe|tube)\b",
+            PrimitiveType.SPHERE: r"\b(sphere|spherical|ball|globe)\b",
+            PrimitiveType.CONE: r"\b(cone|conical|frustum)\b",
+            PrimitiveType.TORUS: r"\b(torus|donut|doughnut|ring)\b",
+            PrimitiveType.WEDGE: r"\b(wedge|ramp)\b",
+        }
+        return {kind for kind, pattern in terms.items() if re.search(pattern, text)}
+
+    def _detect_primitive(self, text: str) -> Optional[PrimitiveType]:
+        mentioned = self._mentioned_primitives(text)
+        # Prefer an explicitly named primitive. The multi-primitive guard runs
+        # separately so ambiguous compound descriptions are rejected.
+        order = (
+            PrimitiveType.BOX,
+            PrimitiveType.CYLINDER,
+            PrimitiveType.SPHERE,
+            PrimitiveType.CONE,
+            PrimitiveType.TORUS,
+            PrimitiveType.WEDGE,
+        )
+        for primitive in order:
+            if primitive in mentioned:
+                return primitive
+        if self._dimension_tuple(text, UnitSystem.MM):
+            return PrimitiveType.BOX
+        return None
+
+    def _build_features(
+        self, primitive: PrimitiveType, text: str, default_unit: UnitSystem
+    ) -> list[FeatureSpec]:
+        """Build one solid feature history, or fail on details not represented."""
+        tuple_dims = self._dimension_tuple(text, default_unit)
+        width_labels = [r"width", r"wide"]
+        depth_labels = [r"depth", r"deep"]
+        height_labels = [r"height", r"high", r"tall"]
+        length_labels = [r"length", r"long", r"height", r"tall", r"high"]
+        features: list[FeatureSpec] = []
+
+        if primitive == PrimitiveType.BOX:
+            if tuple_dims:
+                width, depth, height = tuple_dims
+            else:
+                cube_match = re.search(
+                    rf"(?<![\w.])(?P<value>{self._NUMBER})\s*(?P<unit>{self._UNIT})?\s*(?:sized\s*)?cube\b",
+                    text,
+                    re.IGNORECASE,
+                )
+                if cube_match:
+                    dim = (
+                        float(cube_match.group("value")),
+                        self._unit_from_token(cube_match.group("unit"), default_unit),
+                    )
+                    width = depth = height = dim
+                else:
+                    width = self._dimension_or_error(
+                        self._find_dimension(text, width_labels, default_unit), "box width"
+                    )
+                    depth = self._dimension_or_error(
+                        self._find_dimension(text, depth_labels, default_unit), "box depth"
+                    )
+                    height = self._dimension_or_error(
+                        self._find_dimension(text, height_labels, default_unit), "box height"
+                    )
+
+            base = FeatureSpec(
+                id="base",
+                type=PrimitiveType.BOX,
+                name="Base box",
+                parameters={
+                    "width": self._parameter("width", width),
+                    "depth": self._parameter("depth", depth),
+                    "height": self._parameter("height", height),
+                },
+                position=[0.0, 0.0, 0.0],
+                operation=OperationType.UNION,
+            )
+            features.append(base)
+
+            if re.search(r"\bholes\b|\b\d+\s+holes?\b", text):
+                return self._raise("Multiple holes are not yet supported by the rule-based parser.")
+            if re.search(r"\bhole\b", text):
+                hole_diameter = self._dimension_or_error(
+                    self._find_hole_diameter(text, default_unit), "through-hole diameter"
+                )
+                if not re.search(r"\bthrough\b|\bcenter(?:ed|ed)?\b|\bcentre\b|\bcenter\b", text):
+                    return self._raise(
+                        "Only a centered through-hole is supported for box descriptions. "
+                        "The requested hole was not placed approximately."
+                    )
+                cutter_height_mm = self._to_mm(height) + 2.0
+                cutter = FeatureSpec(
+                    id="center_hole",
+                    type=PrimitiveType.CYLINDER,
+                    name="Centered through-hole",
+                    parameters={
+                        "radius": self._parameter(
+                            "radius", (hole_diameter[0] / 2.0, hole_diameter[1]), "Hole radius"
+                        ),
+                        "height": self._parameter("height", (cutter_height_mm, UnitSystem.MM), "Through cutter"),
+                    },
+                    position=[0.0, 0.0, 0.0],
+                    operation=OperationType.DIFFERENCE,
+                    parent_id="base",
+                )
+                features.append(cutter)
+            return features
+
+        if primitive == PrimitiveType.CYLINDER:
+            is_hollow = bool(re.search(r"\b(pipe|tube)\b", text))
+            height = self._dimension_or_error(
+                self._find_dimension(text, length_labels, default_unit), "cylinder height/length"
+            )
+            if tuple_dims and not self._find_dimension(text, length_labels, default_unit):
+                height = tuple_dims[2]
+            if is_hollow:
+                outer_diameter = self._dimension_or_error(
+                    self._find_dimension(
+                        text, [r"outer\s+diameter", r"outer\s+dia", r"\bod\b"], default_unit
+                    ),
+                    "pipe/tube outer diameter (OD)",
+                )
+                inner_diameter = self._dimension_or_error(
+                    self._find_dimension(
+                        text, [r"inner\s+diameter", r"inner\s+dia", r"\bid\b"], default_unit
+                    ),
+                    "pipe/tube inner diameter (ID)",
+                )
+                if self._to_mm(inner_diameter) >= self._to_mm(outer_diameter):
+                    raise ValueError("Pipe/tube inner diameter must be smaller than its outer diameter.")
+                outer = FeatureSpec(
+                    id="outer_cylinder",
+                    type=PrimitiveType.CYLINDER,
+                    name="Pipe/tube outside",
+                    parameters={
+                        "radius": self._parameter(
+                            "radius", (outer_diameter[0] / 2.0, outer_diameter[1])
+                        ),
+                        "height": self._parameter("height", height),
+                    },
+                    operation=OperationType.UNION,
+                )
+                cutter_height = self._to_mm(height) + 2.0
+                inner = FeatureSpec(
+                    id="inner_bore",
+                    type=PrimitiveType.CYLINDER,
+                    name="Pipe/tube bore",
+                    parameters={
+                        "radius": self._parameter(
+                            "radius", (inner_diameter[0] / 2.0, inner_diameter[1])
+                        ),
+                        "height": self._parameter("height", (cutter_height, UnitSystem.MM)),
+                    },
+                    operation=OperationType.DIFFERENCE,
+                    parent_id="outer_cylinder",
+                )
+                return [outer, inner]
+
+            radius = self._find_dimension(text, [r"radius", r"rad"], default_unit)
+            diameter = self._find_dimension(text, [r"diameter", r"dia", r"\bdia\b"], default_unit)
+            if radius is None and diameter is not None:
+                radius = (diameter[0] / 2.0, diameter[1])
+            radius = self._dimension_or_error(radius, "cylinder radius or diameter")
+            return [FeatureSpec(
+                id="cylinder_main",
+                type=PrimitiveType.CYLINDER,
+                name="Cylinder",
+                parameters={
+                    "radius": self._parameter("radius", radius),
+                    "height": self._parameter("height", height),
+                },
+                position=[0.0, 0.0, 0.0],
+                operation=OperationType.UNION,
+            )]
+
+        if primitive == PrimitiveType.SPHERE:
+            radius = self._find_dimension(text, [r"radius", r"rad"], default_unit)
+            diameter = self._find_dimension(text, [r"diameter", r"dia"], default_unit)
+            if radius is None and diameter is not None:
+                radius = (diameter[0] / 2.0, diameter[1])
+            radius = self._dimension_or_error(radius, "sphere radius or diameter")
+            if re.search(r"\bhole\b", text):
+                return self._raise("Sphere holes are not yet supported by the rule-based parser.")
+            return [FeatureSpec(
+                id="sphere_main",
+                type=PrimitiveType.SPHERE,
+                name="Sphere",
+                parameters={"radius": self._parameter("radius", radius)},
+                operation=OperationType.UNION,
+            )]
+
+        if primitive == PrimitiveType.CONE:
+            radius_bottom = self._find_dimension(
+                text, [r"bottom\s+radius", r"base\s+radius", r"radius", r"rad"], default_unit
+            )
+            bottom_diameter = self._find_dimension(
+                text, [r"base\s+diameter", r"diameter", r"dia"], default_unit
+            )
+            if radius_bottom is None and bottom_diameter is not None:
+                radius_bottom = (bottom_diameter[0] / 2.0, bottom_diameter[1])
+            radius_bottom = self._dimension_or_error(radius_bottom, "cone base radius or diameter")
+            height = self._dimension_or_error(
+                self._find_dimension(text, length_labels, default_unit), "cone height"
+            )
+            radius_top = self._find_dimension(
+                text, [r"top\s+radius", r"upper\s+radius"], default_unit
+            )
+            top_diameter = self._find_dimension(
+                text, [r"top\s+diameter", r"upper\s+diameter"], default_unit
+            )
+            if radius_top is None and top_diameter is not None:
+                radius_top = (top_diameter[0] / 2.0, top_diameter[1])
+            if re.search(r"\bfrustum\b|\btruncated\s+cone\b", text) and radius_top is None:
+                return self._raise("A truncated cone/frustum requires its top radius or top diameter.")
+            if radius_top is None:
+                radius_top = (0.0, radius_bottom[1])
+            if self._to_mm(radius_top) >= self._to_mm(radius_bottom):
+                raise ValueError("Cone top radius must be smaller than its base radius.")
+            return [FeatureSpec(
+                id="cone_main",
+                type=PrimitiveType.CONE,
+                name="Cone or conical frustum",
+                parameters={
+                    "radius_bottom": self._parameter("radius_bottom", radius_bottom),
+                    "radius_top": self._parameter("radius_top", radius_top),
+                    "height": self._parameter("height", height),
+                },
+                operation=OperationType.UNION,
+            )]
+
+        if primitive == PrimitiveType.TORUS:
+            outer_diameter = self._find_dimension(
+                text, [r"outer\s+diameter", r"outer\s+dia", r"\bod\b"], default_unit
+            )
+            inner_diameter = self._find_dimension(
+                text, [r"inner\s+diameter", r"inner\s+dia", r"\bid\b"], default_unit
+            )
+            if outer_diameter and inner_diameter:
+                outer_mm = self._to_mm(outer_diameter)
+                inner_mm = self._to_mm(inner_diameter)
+                if inner_mm >= outer_mm:
+                    raise ValueError("Torus inner diameter must be smaller than its outer diameter.")
+                major = ((outer_mm + inner_mm) / 4.0, UnitSystem.MM)
+                minor = ((outer_mm - inner_mm) / 4.0, UnitSystem.MM)
+            else:
+                major = self._find_dimension(
+                    text, [r"major\s+radius", r"mean\s+radius", r"radius"], default_unit
+                )
+                minor = self._find_dimension(text, [r"minor\s+radius", r"tube\s+radius"], default_unit)
+                major = self._dimension_or_error(major, "torus major radius")
+                minor = self._dimension_or_error(minor, "torus minor radius")
+            if self._to_mm(minor) >= self._to_mm(major):
+                raise ValueError("A printable ring torus requires its minor radius to be smaller than its major radius.")
+            return [FeatureSpec(
+                id="torus_main",
+                type=PrimitiveType.TORUS,
+                name="Torus",
+                parameters={
+                    "major_radius": self._parameter("major_radius", major),
+                    "minor_radius": self._parameter("minor_radius", minor),
+                },
+                operation=OperationType.UNION,
+            )]
+
+        if primitive == PrimitiveType.WEDGE:
+            if tuple_dims:
+                width, depth, height = tuple_dims
+            else:
+                width = self._dimension_or_error(
+                    self._find_dimension(text, width_labels, default_unit), "wedge width"
+                )
+                depth = self._dimension_or_error(
+                    self._find_dimension(text, depth_labels, default_unit), "wedge depth"
+                )
+                height = self._dimension_or_error(
+                    self._find_dimension(text, height_labels, default_unit), "wedge height"
+                )
+            return [FeatureSpec(
+                id="wedge_main",
+                type=PrimitiveType.WEDGE,
+                name="Wedge",
+                parameters={
+                    "width": self._parameter("width", width),
+                    "depth": self._parameter("depth", depth),
+                    "height": self._parameter("height", height),
+                    "xmin": self._parameter("xmin", (0.0, width[1])),
+                    "zmin": self._parameter("zmin", (0.0, height[1])),
+                    "xmax": self._parameter("xmax", width),
+                    "zmax": self._parameter("zmax", height),
+                },
+                operation=OperationType.UNION,
+            )]
+
+        return self._raise(f"Unsupported primitive type: {primitive.value}")
+
+    @staticmethod
+    def _raise(message: str):
+        raise ValueError(message)
+
+    def _generate_name(self, primitive: PrimitiveType, text: str) -> str:
+        """Generate a descriptive stable name."""
+        names = {
             PrimitiveType.BOX: "Box",
-            PrimitiveType.CYLINDER: "Cylinder",
+            PrimitiveType.CYLINDER: "Pipe" if re.search(r"\b(pipe|tube)\b", text) else "Cylinder",
             PrimitiveType.SPHERE: "Sphere",
-            PrimitiveType.CONE: "Cone",
-            PrimitiveType.TORUS: "Torus",
+            PrimitiveType.CONE: "Conical Part",
+            PrimitiveType.TORUS: "Ring",
             PrimitiveType.WEDGE: "Wedge",
         }
-        return base_names.get(prim_type, "Part")
-
+        return names.get(primitive, "Part")
 
 def parse_natural_language(description: str, use_llm: bool = False, **kwargs) -> ParseResult:
     """Main entry point for parsing natural language to PartSpec."""
