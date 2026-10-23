@@ -17,9 +17,9 @@ const routes: Record<string, CadRoute> = {
   generate: { method: "POST", upstreamPath: "/api/v1/generate", requiresUser: true },
 };
 
-const MAX_REQUEST_BYTES = 64 * 1024;
+const MAX_REQUEST_BYTES = 4 * 1024 * 1024 + 128 * 1024;
 const MAX_RESPONSE_BYTES = 12 * 1024 * 1024;
-const UPSTREAM_TIMEOUT_MS = 30_000;
+const UPSTREAM_TIMEOUT_MS = 35_000;
 
 function getCadServiceBaseUrl(): string | null {
   const configured = process.env.CAD_SERVICE_URL?.trim().replace(/\/+$/, "");
@@ -47,9 +47,9 @@ async function handleCadProxy(request: Request): Promise<Response> {
     });
   }
 
-  // The project-creation endpoint applies quota checks and persists outputs.
-  // Disable alternate paths that would otherwise bypass project persistence and quotas.
-  if (routeName !== "health") {
+  // CAD generation is routed through /api/projects so billing, quota checks, and
+  // private output persistence cannot be bypassed. OCR only extracts reviewable text.
+  if (routeName !== "health" && routeName !== "ocr/extract") {
     return NextResponse.json(
       { error: "Direct CAD endpoints are disabled. Use POST /api/projects to create a saved, quota-managed CAD project." },
       { status: 410 },
@@ -85,7 +85,7 @@ async function handleCadProxy(request: Request): Promise<Response> {
   if (request.method === "POST") {
     const contentLength = Number(request.headers.get("content-length") ?? 0);
     if (contentLength > MAX_REQUEST_BYTES) {
-      return NextResponse.json({ error: "CAD request exceeds the 64 KB limit." }, { status: 413 });
+      return NextResponse.json({ error: "CAD request exceeds the 4.125 MiB OCR proxy limit." }, { status: 413 });
     }
     let payload: unknown;
     try {
