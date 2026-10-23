@@ -4,6 +4,7 @@ Uses local LLM (llama.cpp) for offline processing.
 """
 
 import json
+from math import isfinite
 import os
 import re
 from dataclasses import dataclass
@@ -554,39 +555,78 @@ class RuleBasedParser:
 
     @staticmethod
     def _parameter(name: str, value: float) -> ParameterSpec:
-        return ParameterSpec(name=name, value=value, unit=UnitSystem.MM)
+        return ParameterSpec(name=name, value=va    @staticmethod
+    def _require_dimension(dims: Dict[str, float], keys: tuple[str, ...], label: str) -> float:
+        for key in keys:
+            value = dims.get(key)
+            if value is not None:
+                if not isfinite(float(value)) or value <= 0:
+                    raise ValueError(f"{label} must be finite and greater than zero.")
+                return float(value)
+        raise ValueError(f"An explicit {label} is required; no default dimension was guessed.")
 
     def _build_feature(self, prim_type: PrimitiveType, dims: Dict[str, float]) -> FeatureSpec:
-        """Create an explicit feature with millimeter-valued parameters."""
+        """Create an explicit feature with millimeter-valued parameters.
+
+        Underspecified descriptions fail rather than silently receive arbitrary
+        default dimensions that could produce a misleading CAD model.
+        """
         if prim_type == PrimitiveType.BOX:
             params = {
-                "width": self._parameter("width", dims.get("width", 40.0)),
-                "depth": self._parameter("depth", dims.get("depth", 20.0)),
-                "height": self._parameter("height", dims.get("height", 10.0)),
+                "width": self._parameter("width", self._require_dimension(dims, ("width",), "box width")),
+                "depth": self._parameter("depth", self._require_dimension(dims, ("depth",), "box depth")),
+                "height": self._parameter("height", self._require_dimension(dims, ("height",), "box height/thickness")),
             }
         elif prim_type == PrimitiveType.CYLINDER:
-            radius = dims.get("radius", dims.get("diameter", 20.0) / 2.0)
+            if dims.get("outer_diameter") is not None:
+                radius = self._require_dimension(dims, ("outer_diameter",), "cylinder outer diameter") / 2.0
+            elif dims.get("radius") is not None:
+                radius = self._require_dimension(dims, ("radius",), "cylinder radius")
+            else:
+                radius = self._require_dimension(dims, ("diameter",), "cylinder diameter") / 2.0
+            height = self._require_dimension(dims, ("height", "length"), "cylinder height/length")
             params = {
                 "radius": self._parameter("radius", radius),
-                "height": self._parameter("height", dims.get("height", dims.get("length", 50.0))),
+                "height": self._parameter("height", height),
             }
         elif prim_type == PrimitiveType.SPHERE:
-            radius = dims.get("radius", dims.get("diameter", 20.0) / 2.0)
+            if dims.get("radius") is not None:
+                radius = self._require_dimension(dims, ("radius",), "sphere radius")
+            else:
+                radius = self._require_dimension(dims, ("diameter",), "sphere diameter") / 2.0
             params = {"radius": self._parameter("radius", radius)}
         elif prim_type == PrimitiveType.CONE:
-            radius_bottom = dims.get("radius", dims.get("diameter", 20.0) / 2.0)
+            if dims.get("radius") is not None:
+                radius_bottom = self._require_dimension(dims, ("radius",), "cone base radius")
+            else:
+                radius_bottom = self._require_dimension(dims, ("diameter",), "cone base diameter") / 2.0
+            height = self._require_dimension(dims, ("height", "length"), "cone height")
+            radius_top = dims.get("radius_top", 0.0)
+            if not isfinite(float(radius_top)) or radius_top < 0 or radius_top >= radius_bottom:
+                raise ValueError("Cone top radius must be non-negative and smaller than its base radius.")
             params = {
                 "radius_bottom": self._parameter("radius_bottom", radius_bottom),
-                "radius_top": self._parameter("radius_top", dims.get("radius_top", 0.0)),
-                "height": self._parameter("height", dims.get("height", 50.0)),
+                "radius_top": self._parameter("radius_top", radius_top),
+                "height": self._parameter("height", height),
             }
         elif prim_type == PrimitiveType.TORUS:
+            major_radius = self._require_dimension(dims, ("major_radius", "radius"), "torus major radius")
+            if dims.get("minor_radius") is not None:
+                minor_radius = self._require_dimension(dims, ("minor_radius",), "torus minor radius")
+            elif dims.get("diameter") is not None:
+                minor_radius = self._require_dimension(dims, ("diameter",), "torus tube diameter") / 2.0
+            else:
+                raise ValueError("An explicit torus minor radius or tube diameter is required.")
+            if minor_radius >= major_radius:
+                raise ValueError("Torus minor radius must be smaller than its major radius.")
             params = {
-                "major_radius": self._parameter("major_radius", dims.get("radius", dims.get("major_radius", 20.0))),
-                "minor_radius": self._parameter("minor_radius", dims.get("minor_radius", dims.get("diameter", 10.0) / 2.0)),
+                "major_radius": self._parameter("major_radius", major_radius),
+                "minor_radius": self._parameter("minor_radius", minor_radius),
             }
         elif prim_type == PrimitiveType.WEDGE:
-            width, depth, height = dims.get("width", 40.0), dims.get("depth", 20.0), dims.get("height", 10.0)
+            width = self._require_dimension(dims, ("width",), "wedge width")
+            depth = self._require_dimension(dims, ("depth",), "wedge depth")
+            height = self._require_dimension(dims, ("height",), "wedge height")
             params = {
                 "width": self._parameter("width", width),
                 "depth": self._parameter("depth", depth),
@@ -607,6 +647,9 @@ class RuleBasedParser:
             position=[0.0, 0.0, 0.0],
             rotation=[0.0, 0.0, 0.0],
             operation=OperationType.UNION,
+        )
+
+ionType.UNION,
         )
 
     @staticmethod
