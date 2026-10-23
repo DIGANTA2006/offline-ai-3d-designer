@@ -3,6 +3,7 @@ Validation module for geometry and specification validation.
 """
 
 from typing import List, Dict, Any, Optional
+import math
 from dataclasses import dataclass
 from enum import Enum
 
@@ -107,89 +108,172 @@ class SpecValidator:
         return issues
     
     def _validate_feature(self, feature: FeatureSpec, spec: PartSpec) -> List[ValidationIssue]:
-        issues = []
-        
-        # Check required parameters for each primitive type
+        issues: List[ValidationIssue] = []
         required_params = {
             PrimitiveType.BOX: ["width", "depth", "height"],
             PrimitiveType.CYLINDER: ["radius", "height"],
             PrimitiveType.SPHERE: ["radius"],
             PrimitiveType.CONE: ["radius_bottom", "radius_top", "height"],
             PrimitiveType.TORUS: ["major_radius", "minor_radius"],
-            PrimitiveType.WEDGE: ["width", "depth", "height"],
+            PrimitiveType.WEDGE: ["width", "depth", "height", "xmin", "zmin", "xmax", "zmax"],
         }
-        
-        if feature.type in required_params:
-            for param_name in required_params[feature.type]:
-                if param_name not in feature.parameters:
+
+        # Check every supplied value for finiteness, including optional parameters.
+        # NaN/Infinity can bypass ordinary <= / >= checks and destabilize CAD kernels.
+        for param_name, param in feature.parameters.items():
+            if not math.isfinite(param.value):
+                issues.append(ValidationIssue(
+                    severity=ValidationSeverity.ERROR,
+                    code="FEATURE_NON_FINITE_PARAM",
+                    message=f"Parameter '{param_name}' must be finite.",
+                    feature_id=feature.id,
+                    field=f"parameters.{param_name}",
+                    suggestion="Replace NaN/Infinity with a concrete dimension.",
+                ))
+
+        for param_name in required_params.get(feature.type, []):
+            if param_name not in feature.parameters:
+                issues.append(ValidationIssue(
+                    severity=ValidationSeverity.ERROR,
+                    code=f"FEATURE_MISSING_PARAM_{param_name.upper()}",
+                    message=f"Feature '{feature.name or feature.id}' ({feature.type.value}) missing required parameter: {param_name}",
+                    feature_id=feature.id,
+                    field=f"parameters.{param_name}",
+                    suggestion=f"Add {param_name} with a valid value.",
+                ))
+                continue
+
+            param = feature.parameters[param_name]
+            if not math.isfinite(param.value):
+                # Already reported above, but don't issue a secondary range warning.
+                continue
+
+            # A cone may legitimately have a zero top radius. Every other required
+            # dimension must be strictly positive.
+            allow_zero = feature.type == PrimitiveType.CONE and param_name == "radius_top"
+            invalid = param.value < 0 or (param.value == 0 and not allow_zero)
+            if invalid:
+                expectation = "non-negative" if allow_zero else "positive"
+                issues.append(ValidationIssue(
+                    severity=ValidationSeverity.ERROR,
+                    code=f"FEATURE_INVALID_PARAM_{param_name.upper()}",
+                    message=f"Parameter '{param_name}' must be {expectation}, got {param.value}.",
+                    feature_id=feature.id,
+                    field=f"parameters.{param_name}",
+                    suggestion=f"Set {param_name} to a {expectation} value.",
+                ))
+            elif 0 < param.value < self.MIN_FEATURE_SIZE:
+                issues.append(ValidationIssue(
+                    severity=ValidationSeverity.WARNING,
+                    code=f"FEATURE_SMALL_PARAM_{param_name.upper()}",
+                    message=f"Parameter '{param_name}' = {param.value} {param.unit.value} is very small (recommended minimum: {self.MIN_FEATURE_SIZE} mm).",
+                    feature_id=feature.id,
+                    field=f"parameters.{param_name}",
+                    suggestion="Confirm that this feature is manufacturable in the intended process.",
+                ))
+
+        for field_name, vector in (("position", feature.position), ("rotation", feature.rotation)):
+            if len(vector) != 3:
+                issues.append(ValidationIssue(
+                    severity=ValidationSeverity.ERROR,
+                    code=f"FEATURE_INVALID_{field_name.upper()}",
+                    message=f"{field_name.title()} must have 3 values, got {len(vector)}.",
+                    feature_id=feature.id,
+                    field=field_name,
+                ))
+            elif any(not math.isfinite(float(value)) for value in vector):
+                issues.append(ValidationIssue(
+                    severity=ValidationSeverity.ERROR,
+                    code=f"FEATURE_NON_FINITE_{field_name.upper()}",
+                    message=f"All {field_name} values must be finite.",
+                    feature_id=feature.id,
+                    field=field_name,
+                ))
+
+        if feature.type == PrimitiveType.TORUS:
+            major = feature.parameters.get("major_radius")
+            minor = feature.parameters.get("minor_radius")
+            if major and minor and math.isfinite(major.value) and math.isfinite(minor.value):
+                if major.to_mm() <= minor.to_mm():
                     issues.append(ValidationIssue(
                         severity=ValidationSeverity.ERROR,
-                        code=f"FEATURE_MISSING_PARAM_{param_name.upper()}",
-                        message=f"Feature '{feature.name or feature.id}' ({feature.type.value}) missing required parameter: {param_name}",
+                        code="TORUS_INVALID_RADII",
+                        message="Torus major radius must be greater than its minor radius to avoid a self-intersecting/spindle torus.",
                         feature_id=feature.id,
-                        field=f"parameters.{param_name}",
-                        suggestion=f"Add {param_name} parameter with a positive value"
+                        field="parameters",
+                        suggestion="Use an outer and inner diameter that define a ring-shaped torus.",
                     ))
-                else:
-                    param = feature.parameters[param_name]
-                    if param.value <= 0:
-                        issues.append(ValidationIssue(
-                            severity=ValidationSeverity.ERROR,
-                            code=f"FEATURE_INVALID_PARAM_{param_name.upper()}",
-                            message=f"Parameter '{param_name}' must be positive, got {param.value}",
-                            feature_id=feature.id,
-                            field=f"parameters.{param_name}",
-                            suggestion=f"Set {param_name} to a positive value"
-                        ))
-                    elif param.value < self.MIN_FEATURE_SIZE:
-                        issues.append(ValidationIssue(
-                            severity=ValidationSeverity.WARNING,
-                            code=f"FEATURE_SMALL_PARAM_{param_name.upper()}",
-                            message=f"Parameter '{param_name}' = {param.value}mm is very small (min recommended: {self.MIN_FEATURE_SIZE}mm)",
-                            feature_id=feature.id,
-                            field=f"parameters.{param_name}",
-                            suggestion="Consider if this feature size is manufacturable"
-                        ))
-        
-        # Validate position/rotation arrays
-        if len(feature.position) != 3:
-            issues.append(ValidationIssue(
-                severity=ValidationSeverity.ERROR,
-                code="FEATURE_INVALID_POSITION",
-                message=f"Position must have 3 values, got {len(feature.position)}",
-                feature_id=feature.id,
-                field="position",
-            ))
-        
-        if len(feature.rotation) != 3:
-            issues.append(ValidationIssue(
-                severity=ValidationSeverity.ERROR,
-                code="FEATURE_INVALID_ROTATION",
-                message=f"Rotation must have 3 values, got {len(feature.rotation)}",
-                feature_id=feature.id,
-                field="rotation",
-            ))
-        
+
+        if feature.type == PrimitiveType.CONE:
+            bottom = feature.parameters.get("radius_bottom")
+            top = feature.parameters.get("radius_top")
+            if bottom and top and math.isfinite(bottom.value) and math.isfinite(top.value):
+                if top.to_mm() >= bottom.to_mm():
+                    issues.append(ValidationIssue(
+                        severity=ValidationSeverity.ERROR,
+                        code="CONE_INVALID_RADII",
+                        message="Cone top radius must be smaller than its base radius.",
+                        feature_id=feature.id,
+                        field="parameters",
+                    ))
+
         return issues
-    
+
     def _validate_cross_features(self, spec: PartSpec) -> List[ValidationIssue]:
-        issues = []
-        
-        # Check for features that reference non-existent parents
-        feature_ids = {f.id for f in spec.features}
+        issues: List[ValidationIssue] = []
+        feature_ids = {feature.id for feature in spec.features}
+
+        if spec.features and spec.features[0].operation.value != "union":
+            issues.append(ValidationIssue(
+                severity=ValidationSeverity.ERROR,
+                code="FEATURE_BASE_OPERATION",
+                message="The first feature must use union to establish the base solid.",
+                feature_id=spec.features[0].id,
+                field="features[0].operation",
+                suggestion="Make the first feature a base solid, then apply cuts/intersections.",
+            ))
+
         for feature in spec.features:
             if feature.parent_id and feature.parent_id not in feature_ids:
                 issues.append(ValidationIssue(
                     severity=ValidationSeverity.ERROR,
                     code="FEATURE_INVALID_PARENT",
-                    message=f"Feature '{feature.id}' references non-existent parent '{feature.parent_id}'",
+                    message=f"Feature '{feature.id}' references non-existent parent '{feature.parent_id}'.",
                     feature_id=feature.id,
                     field="parent_id",
                 ))
-        
-        # Check for circular dependencies (simplified)
-        # This would need a proper graph traversal for full detection
-        
+
+        # Detect parent cycles. They cannot define a meaningful feature history and
+        # are often a sign that a generated specification is malformed.
+        parents = {feature.id: feature.parent_id for feature in spec.features}
+        visited: set[str] = set()
+        active: set[str] = set()
+
+        def visit(feature_id: str) -> bool:
+            if feature_id in active:
+                return False
+            if feature_id in visited:
+                return True
+            active.add(feature_id)
+            parent_id = parents.get(feature_id)
+            if parent_id in parents and not visit(parent_id):
+                return False
+            active.remove(feature_id)
+            visited.add(feature_id)
+            return True
+
+        for feature in spec.features:
+            if not visit(feature.id):
+                issues.append(ValidationIssue(
+                    severity=ValidationSeverity.ERROR,
+                    code="FEATURE_PARENT_CYCLE",
+                    message="Feature parent references contain a cycle.",
+                    feature_id=feature.id,
+                    field="parent_id",
+                    suggestion="Remove cyclic parent references.",
+                ))
+                break
+
         return issues
 
 
@@ -214,6 +298,24 @@ class GeometryValidator:
                 ))
                 return ValidationResult(is_valid=False, issues=issues)
             
+            # Check the kernel's own topological validity when exposed by the shape.
+            validity = getattr(part, "is_valid", None)
+            try:
+                is_valid = validity() if callable(validity) else validity
+                if is_valid is False:
+                    issues.append(ValidationIssue(
+                        severity=ValidationSeverity.ERROR,
+                        code="GEOM_TOPOLOGY_INVALID",
+                        message="The CAD kernel reports that this shape is topologically invalid.",
+                        suggestion="Revise feature dimensions/placements and regenerate the model.",
+                    ))
+            except Exception as e:
+                issues.append(ValidationIssue(
+                    severity=ValidationSeverity.WARNING,
+                    code="GEOM_TOPOLOGY_CHECK_FAILED",
+                    message=f"Could not query kernel topology validity: {e}",
+                ))
+
             # Check volume
             try:
                 volume = part.volume
