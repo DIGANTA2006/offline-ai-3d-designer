@@ -783,12 +783,18 @@ class RuleBasedParser:
 
 def parse_natural_language(description: str, use_llm: bool = False, **kwargs) -> ParseResult:
     """Main entry point for parsing natural language to PartSpec."""
+    unit_system = kwargs.pop("unit_system", UnitSystem.MM)
+    try:
+        if isinstance(unit_system, str):
+            unit_system = UnitSystem(unit_system.strip().lower())
+        else:
+            unit_system = UnitSystem(unit_system)
+    except (ValueError, TypeError):
+        return ParseResult(success=False, error="Choose a supported unit system: mm, cm, in, or m.")
+
     if use_llm:
         engine = NLPEngine(**kwargs)
-        return engine.parse(description)
-    else:
-        parser = RuleBasedParser()
-        unit_system = kwargs.get("unit_system", UnitSystem.MM)
-        if isinstance(unit_system, str):
-            unit_system = UnitSystem(unit_system)
-        return parser.parse(description, unit_system=unit_system)
+        return engine.parse(description, unit_system=unit_system)
+
+    parser = RuleBasedParser()
+    return parser.parse(description, unit_system=unit_system)
