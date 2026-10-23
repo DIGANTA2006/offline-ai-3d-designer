@@ -207,94 +207,53 @@ def create_lithophane(
     max_size: float = 100.0,
     thickness: float = 3.0,
     thinnest: float = 0.8,
-    border: float = 2.0
+    border: float = 2.0,
 ) -> trimesh.Trimesh:
-    """
-    Create a lithophane from an image (better for photos).
-    
-    Args:
-        image_path: Path to input image
-        output_path: Path to output STL
-        max_size: Maximum dimension in mm
-        thickness: Maximum thickness in mm
-        thinnest: Minimum thickness in mm
-        border: Border width in mm
-        
-    Returns:
-        Generated mesh
-    """
+    """Create a closed solid lithophane with a thin perimeter border."""
+    if not all(np.isfinite(value) for value in (max_size, thickness, thinnest, border)):
+        raise ValueError("Lithophane dimensions must be finite numbers.")
+    if max_size <= 0 or border < 0 or max_size <= 2 * border:
+        raise ValueError("max_size must be positive and greater than twice the non-negative border.")
+    if thinnest <= 0 or thickness <= thinnest:
+        raise ValueError("Thickness must be greater than a positive minimum thickness.")
+
     img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
     if img is None:
         raise ValueError(f"Could not load image: {image_path}")
-    
-    h, w = img.shape
-    aspect = w / h
-    
+    original_h, original_w = img.shape
+    if min(original_h, original_w) < 2:
+        raise ValueError("Lithophane image must be at least 2 x 2 pixels.")
+
+    aspect = original_w / original_h
     if aspect > 1:
         new_w = max_size - 2 * border
         new_h = new_w / aspect
     else:
         new_h = max_size - 2 * border
         new_w = new_h * aspect
-    
-    img = cv2.resize(img, (int(new_w), int(new_h)))
-    h, w = img.shape
-    
-    img_norm = img.astype(np.float32) / 255.0
-    thickness_map = thinnest + (1.0 - img_norm) * (thickness - thinnest)
-    
-    x = np.linspace(-new_w/2, new_w/2, w)
-    y = np.linspace(-new_h/2, new_h/2, h)
+    pixel_w = max(2, int(round(new_w)))
+    pixel_h = max(2, int(round(new_h)))
+    img = cv2.resize(img, (pixel_w, pixel_h), interpolation=cv2.INTER_AREA)
+    image_h, image_w = img.shape
+
+    normalized = img.astype(np.float64) / 255.0
+    thickness_map = thinnest + (1.0 - normalized) * (thickness - thinnest)
+    # Insert a flat-thinnest ring around the image and let the shared mesh
+    # helper create bottom and side walls for a truly closed solid.
+    padded = np.pad(thickness_map, 1, mode="constant", constant_values=thinnest)
+    inner_x = np.linspace(-new_w / 2, new_w / 2, image_w)
+    inner_y = np.linspace(-new_h / 2, new_h / 2, image_h)
+    x = np.concatenate(([inner_x[0] - border], inner_x, [inner_x[-1] + border]))
+    y = np.concatenate(([inner_y[0] - border], inner_y, [inner_y[-1] + border]))
     xx, yy = np.meshgrid(x, y)
-    zz = thickness_map
-    
-    vertices = np.stack([xx, yy, zz], axis=-1).reshape(-1, 3)
-    
-    faces = []
-    for i in range(h - 1):
-        for j in range(w - 1):
-            v0 = i * w + j
-            v1 = i * w + j + 1
-            v2 = (i + 1) * w + j
-            v3 = (i + 1) * w + j + 1
-            faces.append([v0, v2, v1])
-            faces.append([v1, v2, v3])
-    
-    faces = np.array(faces)
-    mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-    
-    mesh = _add_lithophane_base(mesh, border, thinnest)
-    
-    mesh.export(output_path)
+    mesh = build_closed_heightfield(xx, yy, padded, bottom_z=0.0)
+
+    destination = Path(output_path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    mesh.export(str(destination))
+    if not destination.is_file() or destination.stat().st_size == 0:
+        raise RuntimeError("Lithophane export failed to produce a non-empty file.")
     return mesh
-
-
-def _add_lithophane_base(mesh: trimesh.Trimesh, border: float, thinnest: float) -> trimesh.Trimesh:
-    """Add base and border to lithophane."""
-    bounds = mesh.bounds
-    min_x, min_y = bounds[0, 0], bounds[0, 1]
-    max_x, max_y = bounds[1, 0], bounds[1, 1]
-    
-    base_verts = np.array([
-        [min_x - border, min_y - border, 0],
-        [max_x + border, min_y - border, 0],
-        [max_x + border, max_y + border, 0],
-        [min_x - border, max_y + border, 0],
-    ])
-    
-    base_faces = np.array([[0, 1, 2], [0, 2, 3]])
-    
-    min_z = mesh.vertices[:, 2].min()
-    bottom_mask = np.abs(mesh.vertices[:, 2] - min_z) < 0.01
-    bottom_verts = mesh.vertices[bottom_mask]
-    
-    all_verts = np.vstack([mesh.vertices, base_verts])
-    all_faces = np.vstack([mesh.faces, base_faces + len(mesh.vertices)])
-    
-    result = trimesh.Trimesh(vertices=all_verts, faces=all_faces, process=True)
-    result.fill_holes()
-    return result
-
 
 if __name__ == "__main__":
     converter = ImageTo3DConverter("MiDaS_small")
