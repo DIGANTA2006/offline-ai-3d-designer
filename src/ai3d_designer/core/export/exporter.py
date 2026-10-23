@@ -223,7 +223,7 @@ def _validate_stl(file_path: str) -> tuple[List[str], List[str]]:
         vertices = np.asarray(mesh.vertices, dtype=np.float32, order="C")
         faces = np.asarray(mesh.faces, dtype=np.uint32, order="C")
         manifold_mesh = manifold3d.Mesh(vert_properties=vertices, tri_verts=faces)
-        manifold = manifold3d.Manifold.from_mesh(manifold_mesh)
+        manifold = manifold3d.Manifold(manifold_mesh)
         status = manifold.status()
         if status != manifold3d.Error.NoError:
             errors.append(f"Manifold3d rejected the STL mesh: {status}")
