@@ -68,3 +68,27 @@ def test_gcode_validator_accepts_minimal_structural_sanity_fixture(tmp_path, mon
     assert result["stats"]["has_extrusion"]
     assert result["stats"]["max_x"] == 10
     assert result["stats"]["max_y"] == 10
+
+
+def test_gcode_validator_does_not_count_retractions_as_printing(tmp_path, monkeypatch):
+    gcode_path = tmp_path / "retraction_only.gcode"
+    gcode_path.write_text(
+        "G21\nG90\nM82\nM104 S200\nG28\nG1 X0 Y0 Z0.2 F1200\nG1 E-1 F1800\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(Slicer, "_find_cura_engine", lambda self: None)
+    result = Slicer().validate_gcode(str(gcode_path))
+    assert not result["valid"]
+    assert "extrusion move" in result["error"]
+
+
+def test_gcode_validator_tracks_relative_extrusion_and_e_resets(tmp_path, monkeypatch):
+    gcode_path = tmp_path / "relative_extrusion.gcode"
+    gcode_path.write_text(
+        "G21\nG90\nM104 S200\nG28\nM83\nG1 X0 Y0 Z0.2 F1200\nG1 X10 E1\nG92 E0\nG1 X20 E0.5\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(Slicer, "_find_cura_engine", lambda self: None)
+    result = Slicer().validate_gcode(str(gcode_path))
+    assert result["valid"]
+    assert result["stats"]["has_extrusion"]
