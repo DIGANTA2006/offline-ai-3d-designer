@@ -44,6 +44,7 @@ export default async function ProjectDetailPage({ params }: Props) {
           ocrResult: saved?.spec ? saved.spec as {
             rawText?: string;
             confidence?: number;
+            confidenceMethod?: string;
             pageCount?: number;
             dimensions?: { triplets?: Array<{ valuesMm?: number[]; raw?: string }>; linear?: Array<{ valueMm?: number; raw?: string }>; diameters?: Array<{ value?: number; unit?: string; raw?: string }>; radii?: Array<{ value?: number; unit?: string; raw?: string }> };
             tolerances?: Array<{ raw?: string }>;
