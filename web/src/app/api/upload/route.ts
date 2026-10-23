@@ -103,8 +103,8 @@ export async function POST(request: Request) {
       version: version.version,
       uploadedFiles: uploadedFiles.map(({ name, type, size }) => ({ name, type, size })),
       rejected: rejected.map((item) => ({ name: item.file.name, reason: item.reason })),
-      processingAvailable: false,
-      message: "Files were stored privately. Automatic drawing OCR and drawing-to-CAD conversion are not implemented yet.",
+      processingAvailable: true,
+      message: "Files were stored privately. Open the project to analyze supported drawings with OCR and review the extracted text before CAD generation.",
     }, { status: 201 });
   } catch (error) {
     console.error("Private drawing upload failed.", error);
