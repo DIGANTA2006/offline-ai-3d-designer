@@ -75,6 +75,7 @@ def test_image_path_returns_text_annotations_and_review_warning(monkeypatch):
 
     assert result["rawText"] == "BOX 50 x 30 x 10 mm"
     assert result["confidence"] == pytest.approx(0.93)
+    assert result["confidenceMethod"] == "tesseract_ocr"
     assert result["dimensions"]["triplets"][0]["valuesMm"] == [50, 30, 10]
     assert result["needsReview"] is True
     assert result["limitations"]
