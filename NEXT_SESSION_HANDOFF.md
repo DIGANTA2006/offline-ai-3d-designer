@@ -1,11 +1,23 @@
 # Next Session Handoff — CAD Engine Reliability / Drawing OCR
 
-**Updated:** 2026-10-23 (refreshed after current-head CI completed)  
+**Updated:** 2026-10-23 (OCR Preview routing fix added; recheck latest CI)  
 **Repository:** `DIGANTA2006/offline-ai-3d-designer` (private)  
 **Feature branch:** `feat/cad-engine-reliability-upgrade-20261023`  
 **Pull request:** https://github.com/DIGANTA2006/offline-ai-3d-designer/pull/3  
 **PR status:** Open, Draft, not merged  
 **Code-tested HEAD:** `8be700b0f435425313b6adef37f4e089b585142d`
+
+## OCR Preview backend wiring fix
+
+The manual Preview test uncovered the legacy backend placeholder. The exact message `OCR not yet implemented. Use /api/v1/text-to-cad for natural language input.` is hard-coded in the Python backend on `main`; the feature branch's `python-backend/main.py` contains a real `/api/v1/ocr/extract` route. The previous Preview used generic `CAD_SERVICE_URL`, so it could call that older backend.
+
+The feature branch now:
+- Requires `CAD_SERVICE_URL_PREVIEW` and `CAD_SERVICE_TOKEN_PREVIEW` when `VERCEL_ENV=preview`; Preview routes no longer fall back to the Production backend.
+- Checks backend `/health` for the feature-branch OCR capability contract before processing a drawing.
+- Configures Railway to use `python-backend/Dockerfile` (Tesseract system package + Python OCR dependencies) rather than Nixpacks.
+- Documents the separate Railway Preview service setup in `DEPLOYMENT.md`.
+
+**Required manual setup:** create an isolated Railway Preview service connected to `feat/cad-engine-reliability-upgrade-20261023`, with repository-root build context and Dockerfile path `python-backend/Dockerfile`. Set a new server-only `CAD_SERVICE_TOKEN`. Confirm its `/health` returns both `cadAvailable: true` and `ocrAvailable: true`. In Vercel, set Preview-only `CAD_SERVICE_URL_PREVIEW` and `CAD_SERVICE_TOKEN_PREVIEW` to that service and token, then redeploy the Preview. Leave Production's `CAD_SERVICE_URL` and `CAD_SERVICE_TOKEN` unchanged.
 
 ## Release safety
 
@@ -36,11 +48,11 @@ Guides: `docs/CAD_ENGINE_RELIABILITY.md`, `WORK_STATUS.md`.
 
 ## Next steps
 
-1. Refresh PR #3 and verify the latest branch head plus the latest CAD/Web/CodeQL checks (new handoff-only commit may retrigger them).
-2. Keep PR #3 as Draft while reviewing the full diff, particularly the CAD profile geometry and new project OCR routes.
-3. Perform a manual Vercel Preview deployment only after checks are complete; test a supported PDF/image upload, OCR result persistence, editing/review, successful supported-part generation, private STEP/STL download, failed ambiguous prompt behavior and Pro/admin entitlement behavior.
-4. Test real STEP/STL outputs in an independent CAD viewer. For slicing, test in Cura with the actual printer/extruder profile and preview before any physical print.
-5. Only after preview validation should the PR be marked ready. Do not merge automatically; Production deployment is a separate explicit decision.
+1. Check the latest PR #3 CAD/Web/CodeQL workflows after all routing changes commit; do not rely on checks for an earlier branch head.
+2. Create an isolated Railway Preview backend from the feature branch using the repository root and Dockerfile path `python-backend/Dockerfile`; verify `/health` reports `ocrAvailable: true`.
+3. Set Vercel Preview-only `CAD_SERVICE_URL_PREVIEW` and `CAD_SERVICE_TOKEN_PREVIEW` to the dedicated backend, then redeploy Preview. Do not change Production variables.
+4. Test a supported PDF/image upload, OCR persistence, review/edit, supported-part generation, private STEP/STL downloads, ambiguous prompt rejection, private file access, and Pro/admin entitlements.
+5. Test exports in an independent CAD viewer; test slicing in Cura with the actual printer/extruder profile, and preview before any physical print. Keep PR #3 Draft until all checks and manual Preview tests pass. Never merge automatically.
 
 ## Known limitations
 
