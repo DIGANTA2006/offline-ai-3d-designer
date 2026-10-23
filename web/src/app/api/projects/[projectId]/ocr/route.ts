@@ -117,16 +117,19 @@ async function assertOcrReady(endpoint: URL): Promise<void> {
     throw new RouteError("CAD backend health check failed. Verify the backend deployment and logs.", 503);
   }
 
-  const capability = (health as Record<string, unknown>).ocrAvailable;
-  if (typeof capability !== "boolean") {
+  const status = health as Record<string, unknown>;
+  const capability = status.ocrAvailable;
+  // The old main-branch health model has ocrAvailable=false by default and no
+  // limitations list. Require the expanded feature-branch health contract too.
+  if (typeof capability !== "boolean" || !Array.isArray(status.limitations)) {
     throw new RouteError(
-      "The connected CAD backend is an older build and does not report OCR readiness. Deploy the feature branch to a separate Railway Preview service and set Vercel Preview's CAD_SERVICE_URL_PREVIEW to that service. Keep Production's CAD_SERVICE_URL unchanged.",
+      "The connected CAD backend is the legacy build and still uses the OCR placeholder. Deploy the feature branch to a separate Railway Preview service and set Vercel Preview's CAD_SERVICE_URL_PREVIEW to that service. Keep Production's CAD_SERVICE_URL unchanged.",
       503,
     );
   }
   if (capability !== true) {
     throw new RouteError(
-      "The connected CAD backend reports OCR unavailable. Redeploy the feature branch using python-backend/Dockerfile, which installs Tesseract and the OCR dependencies, then confirm /health returns ocrAvailable=true.",
+      "The feature-branch CAD backend reports OCR unavailable. Ensure Railway built python-backend/Dockerfile (not Nixpacks), then confirm /health returns ocrAvailable=true.",
       503,
     );
   }
@@ -252,7 +255,9 @@ export async function POST(request: Request, { params }: Context) {
     catch { throw new RouteError("OCR service returned an invalid response.", 502); }
     if (!upstream.ok || !result.success || !result.spec) {
       const detail = result.detail || result.error || "The OCR service could not analyze this drawing.";
-      throw new RouteError(detail.slice(0, 300), upstream.status >= 400 && upstream.status < 500 ? upstream.status : 502);
+      // Do not turn a service-to-service token mismatch into a browser login redirect.
+      const status = [400, 413, 415, 422].includes(upstream.status) ? upstream.status : 502;
+      throw new RouteError(detail.slice(0, 300), status);
     }
 
     const previousResults = Array.isArray(storedSpec.ocrResults) ? storedSpec.ocrResults : [];
