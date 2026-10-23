@@ -1,6 +1,6 @@
 # Work Status — Offline AI 3D Designer
 
-Updated: 23 October 2026 — current PR checks passed
+Updated: 23 October 2026 — OCR Preview routing fix added; latest checks running
 
 ## Current repository state
 
@@ -10,6 +10,15 @@ Updated: 23 October 2026 — current PR checks passed
 - PR is **open and Draft**, not merged. Production and `main` remain unchanged by this feature branch.
 - Code-tested source HEAD: `8be700b0f435425313b6adef37f4f089b585142d`. Later commits refreshed only `NEXT_SESSION_HANDOFF.md` and `WORK_STATUS.md`; fetch the actual branch tip before continuing. All three checks passed on that source head, and the documentation-only current-head checks are rerunning.
 - Full current state and next steps: [`NEXT_SESSION_HANDOFF.md`](NEXT_SESSION_HANDOFF.md).
+
+## New OCR deployment fix (23 October 2026)
+
+- Confirmed root cause: the exact error `OCR not yet implemented. Use /api/v1/text-to-cad for natural language input.` is hard-coded in the legacy `main` branch's Python backend. The feature branch has the real Tesseract/PyMuPDF OCR route.
+- Added `web/src/lib/cad-service-config.ts`. On Vercel Preview, text-to-CAD, drawing OCR, drawing CAD generation, and CAD health now require `CAD_SERVICE_URL_PREVIEW` and `CAD_SERVICE_TOKEN_PREVIEW`; they cannot silently fall back to the Production CAD backend. Local development and Production continue using `CAD_SERVICE_URL` / `CAD_SERVICE_TOKEN`.
+- The drawing OCR route checks backend `/health` and requires the feature branch's OCR readiness fields before sending the file. It distinguishes the legacy stub from an OCR build missing Tesseract/dependencies, and maps service-token failures away from browser-login redirects.
+- Updated `python-backend/railway.toml` for the OCR-capable `python-backend/Dockerfile`, and added the Vercel/Railway Preview setup steps to `DEPLOYMENT.md` and `web/.env.example`.
+- Added a regression test confirming `/health` reports the OCR runtime's actual availability.
+- Required operator steps remain: deploy a separate Railway service from the feature branch with repository-root build context and Dockerfile path `python-backend/Dockerfile`; ensure `/health` shows `ocrAvailable: true`; then set the two Preview-only Vercel environment variables and redeploy Preview. Do not change Production variables.
 
 ## Implemented on the feature branch
 
