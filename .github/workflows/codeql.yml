@@ -99,3 +99,66 @@ jobs:
       uses: github/codeql-action/analyze@v4
       with:
         category: "/language:${{matrix.language}}"
+        # This private repository currently cannot upload to GitHub Code Scanning.
+        # Save SARIF locally, publish it as a workflow artifact and gate high/critical findings.
+        output: codeql-sarif-output
+        upload: never
+
+    - name: Upload CodeQL SARIF report
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: codeql-sarif-${{ matrix.language }}
+        path: codeql-sarif-output
+        if-no-files-found: warn
+        retention-days: 14
+
+    - name: Fail on high or critical security findings
+      if: success()
+      shell: bash
+      run: |
+        python - <<'PY'
+        import glob
+        import json
+        import sys
+
+        files = glob.glob("codeql-sarif-output/**/*.sarif", recursive=True)
+        if not files:
+            print("ERROR: CodeQL did not produce a SARIF report.")
+            sys.exit(1)
+
+        severe = []
+        total = 0
+        for filename in files:
+            with open(filename, encoding="utf-8") as handle:
+                report = json.load(handle)
+            for run in report.get("runs", []):
+                rules = {}
+                for rule in run.get("tool", {}).get("driver", {}).get("rules", []):
+                    rule_id = rule.get("id")
+                    props = rule.get("properties", {}) or {}
+                    try:
+                        severity = float(props.get("security-severity", props.get("securitySeverity", 0)) or 0)
+                    except (TypeError, ValueError):
+                        severity = 0
+                    if rule_id:
+                        rules[rule_id] = severity
+                for result in run.get("results", []):
+                    total += 1
+                    rule_id = result.get("ruleId", "unknown")
+                    severity = rules.get(rule_id, 0)
+                    if severity >= 7.0:
+                        locations = result.get("locations", [])
+                        first = locations[0].get("physicalLocation", {}) if locations else {}
+                        artifact = first.get("artifactLocation", {}).get("uri", "unknown file")
+                        region = first.get("region", {})
+                        line = region.get("startLine", "?")
+                        severe.append((severity, rule_id, artifact, line, result.get("message", {}).get("text", "")))
+
+        print(f"CodeQL SARIF reviewed: {total} results across {len(files)} report(s).")
+        if severe:
+            for severity, rule_id, artifact, line, message in severe:
+                print(f"HIGH/CRITICAL security finding ({severity:g}): {rule_id} at {artifact}:{line}: {message}")
+            sys.exit(1)
+        print("No high/critical findings were reported. Review the SARIF artifact for lower-severity findings.")
+        PY
