@@ -63,7 +63,7 @@ export function UploadPanel() {
     <Card className="w-full">
       <CardHeader>
         <CardTitle className="flex items-center gap-2"><FileText className="size-5" />Upload Engineering Drawings</CardTitle>
-        <CardDescription>Files are stored privately for your account. This flow does not run OCR or generate CAD from drawings yet; use New Project for text-to-CAD.</CardDescription>
+        <CardDescription>Files are stored privately. Open the project after upload to analyze a supported PDF or image, review OCR text, and request CAD generation for supported dimensioned parts.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <FileDropZone onFilesSelected={handleFilesSelected} disabled={uploading} />
