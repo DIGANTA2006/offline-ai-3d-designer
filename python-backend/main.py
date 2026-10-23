@@ -31,6 +31,14 @@ from ai3d_designer.core.geometry.engine import create_part_from_spec
 from ai3d_designer.core.export.exporter import export_step, export_stl, ExportResult
 from ai3d_designer.core.validation.validator import validate_spec, validate_geometry
 from ai3d_designer.core.nlp.parser import parse_natural_language
+from ai3d_designer.ocr.pipeline import (
+    MAX_DOCUMENT_BYTES,
+    OCRInputError,
+    OCRProcessingError,
+    OCRUnavailableError,
+    extract_drawing_text,
+    is_ocr_available,
+)
 
 
 # =============================================================================
@@ -43,6 +51,7 @@ class HealthResponse(BaseModel):
     ocrAvailable: bool = False
     cadAvailable: bool = True
     imageTo3dAvailable: bool = False
+    limitations: list[str] = Field(default_factory=list)
 
 
 def cad_runtime_is_available() -> bool:
@@ -56,22 +65,25 @@ def cad_runtime_is_available() -> bool:
 
 
 class OcrRequest(BaseModel):
-    fileBase64: str
-    fileName: str
-    mimeType: str
+    fileBase64: str = Field(min_length=4, max_length=7_100_000)
+    fileName: str = Field(min_length=1, max_length=200)
+    mimeType: str = Field(min_length=3, max_length=100)
 
 
 class ExtractedSpec(BaseModel):
     dimensions: dict = Field(default_factory=dict)
-    tolerances: dict = Field(default_factory=dict)
+    tolerances: list = Field(default_factory=list)
     fits: list = Field(default_factory=list)
     material: Optional[str] = None
     surfaceFinish: Optional[str] = None
     threads: list = Field(default_factory=list)
     views: list = Field(default_factory=list)
     annotations: list = Field(default_factory=list)
-    confidence: float = 0.0
-    rawText: str = ""
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    rawText: str = Field(default="", max_length=50_000)
+    pageCount: int = Field(default=1, ge=1, le=8)
+    needsReview: bool = True
+    limitations: list[str] = Field(default_factory=list)
 
 
 class OcrResponse(BaseModel):
@@ -83,18 +95,25 @@ class OcrResponse(BaseModel):
 
 class GenerationRequest(BaseModel):
     spec: ExtractedSpec
-    jobId: str
-    userId: str
+    jobId: str = Field(min_length=1, max_length=128)
+    userId: str = Field(min_length=1, max_length=128)
+    reviewed: bool = False
+    reviewedDescription: Optional[str] = Field(default=None, max_length=4000)
 
 
 class GenerationResponse(BaseModel):
     success: bool
+    jobId: Optional[str] = None
     stepUrl: Optional[str] = None
     stlUrl: Optional[str] = None
     glbUrl: Optional[str] = None
+    stepBase64: Optional[str] = None
+    stlBase64: Optional[str] = None
+    partSpec: Optional[dict] = None
     fitReport: Optional[str] = None
     isApproximation: bool = False
     error: Optional[str] = None
+    validationErrors: list[str] = Field(default_factory=list)
     version: int = 1
 
 
@@ -215,21 +234,52 @@ async def health():
     token_configured = bool(os.environ.get("CAD_SERVICE_TOKEN", "").strip())
     ready = cad_available and (is_development or token_configured)
     status = "healthy" if ready else "degraded"
-    return HealthResponse(status=status, cadAvailable=ready)
+    ocr_available = is_ocr_available()
+    limitations = [
+        "Drawing OCR recognizes text and common annotations; it does not reconstruct arbitrary 3D geometry from drawing views.",
+        "Single-view image-to-3D reconstruction is not available in this service.",
+    ]
+    return HealthResponse(
+        status=status,
+        cadAvailable=ready,
+        ocrAvailable=ocr_available,
+        imageTo3dAvailable=False,
+        limitations=limitations,
+    )
 
 
 @app.post("/api/v1/ocr/extract", response_model=OcrResponse, dependencies=[Depends(require_cad_service_token)])
 async def ocr_extract(request: OcrRequest):
-    """Extract specifications from uploaded drawing/image."""
+    """Extract drawing text and explicit annotations using Tesseract/PyMuPDF."""
     job_id = str(uuid.uuid4())[:8]
-    
-    # TODO: Implement actual OCR (Phase 3+)
-    # For now, return mock response
-    return OcrResponse(
-        success=False,
-        error="OCR not yet implemented. Use /api/v1/text-to-cad for natural language input.",
-        jobId=job_id,
-    )
+    if not is_ocr_available():
+        raise HTTPException(
+            status_code=503,
+            detail="Drawing OCR is not configured. Install pytesseract, PyMuPDF, Pillow, and the tesseract-ocr system executable.",
+        )
+
+    try:
+        if len(request.fileBase64) > 7_100_000:
+            raise OCRInputError("Encoded drawing exceeds the OCR request limit.")
+        try:
+            file_bytes = base64.b64decode(request.fileBase64, validate=True)
+        except (ValueError, base64.binascii.Error) as exc:
+            raise OCRInputError("fileBase64 must be valid standard Base64.") from exc
+        if len(file_bytes) > MAX_DOCUMENT_BYTES:
+            raise OCRInputError("Drawing exceeds the 5 MiB OCR input limit.")
+
+        extracted = extract_drawing_text(file_bytes, request.fileName, request.mimeType)
+        spec = ExtractedSpec(**extracted)
+        return OcrResponse(success=True, spec=spec, jobId=job_id)
+    except OCRInputError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except OCRUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except OCRProcessingError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        print(f"OCR extraction failed for job {job_id}: {type(exc).__name__}: {exc}")
+        raise HTTPException(status_code=500, detail="Drawing OCR failed unexpectedly. Check service logs.") from exc
 
 
 @app.post("/api/v1/generate", response_model=GenerationResponse, dependencies=[Depends(require_cad_service_token)])
