@@ -1,0 +1,4 @@
+# Add the Tesseract binary to the existing Nixpacks package set without
+# replacing packages selected by the Python provider.
+[phases.setup]
+aptPkgs = ["...", "tesseract-ocr", "tesseract-ocr-eng"]
