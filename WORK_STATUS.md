@@ -8,7 +8,7 @@ Updated: 23 October 2026 — current PR checks passed
 - Feature branch: `feat/cad-engine-reliability-upgrade-20261023`.
 - Pull request: [#3 — Improve CAD engine reliability and safe slicing](https://github.com/DIGANTA2006/offline-ai-3d-designer/pull/3).
 - PR is **open and Draft**, not merged. Production and `main` remain unchanged by this feature branch.
-- Current branch HEAD: `116db7064d7ab893600f05829a3efffa6e238d9a`. The source code was tested at `8be700b0f435425313b6adef37f4f089b585142d`; later commits only refreshed documentation. The latest PR checks on current HEAD all passed.
+- Code-tested source HEAD: `8be700b0f435425313b6adef37f4f089b585142d`. Later commits refreshed only `NEXT_SESSION_HANDOFF.md` and `WORK_STATUS.md`; fetch the actual branch tip before continuing. All three checks passed on that source head, and the documentation-only current-head checks are rerunning.
 - Full current state and next steps: [`NEXT_SESSION_HANDOFF.md`](NEXT_SESSION_HANDOFF.md).
 
 ## Implemented on the feature branch
