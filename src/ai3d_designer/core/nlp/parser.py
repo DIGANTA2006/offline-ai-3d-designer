@@ -269,66 +269,186 @@ class NLPEngine:
 
 
 class RuleBasedParser:
-    """Fallback rule-based parser for simple descriptions without LLM."""
+    """Deterministic parser for common, explicitly dimensioned mechanical primitives.
+
+    This rule-based path is intentionally conservative. It normalizes recognized
+    lengths to mm, creates actual boolean hole features, and does not infer hidden
+    geometry from descriptions it cannot parse.
+    """
+
+    _NUMBER = r"\d+(?:\.\d+)?"
+    _UNIT = r"(?:millimeters?|millimetres?|mm|centimeters?|centimetres?|cm|inches?|inch|in\b|meters?|metres?|m\b|['\"])"
+
+    @staticmethod
+    def _normalize_unit(unit_text: Optional[str], default_unit: UnitSystem) -> UnitSystem:
+        if not unit_text:
+            return default_unit
+        unit = unit_text.strip().lower()
+        if unit in {"mm", "millimeter", "millimeters", "millimetre", "millimetres"}:
+            return UnitSystem.MM
+        if unit in {"cm", "centimeter", "centimeters", "centimetre", "centimetres"}:
+            return UnitSystem.CM
+        if unit in {"in", "inch", "inches", "'", '"'}:
+            return UnitSystem.INCH
+        if unit in {"m", "meter", "meters", "metre", "metres"}:
+            return UnitSystem.M
+        return default_unit
+
+    @classmethod
+    def _to_mm(cls, raw_value: str | float, unit_text: Optional[str], default_unit: UnitSystem) -> float:
+        unit = cls._normalize_unit(unit_text, default_unit)
+        factors = {
+            UnitSystem.MM: 1.0,
+            UnitSystem.CM: 10.0,
+            UnitSystem.INCH: 25.4,
+            UnitSystem.M: 1000.0,
+        }
+        value = float(raw_value)
+        if not value > 0:
+            raise ValueError("Dimensions must be positive.")
+        return value * factors[unit]
 
     def parse(self, description: str, unit_system: UnitSystem = UnitSystem.MM) -> ParseResult:
-        """Parse using simple pattern matching."""
-        desc_lower = description.lower()
+        """Parse a small, known subset of descriptions using explicit rules."""
+        if not description or not description.strip():
+            return ParseResult(success=False, error="Empty description")
+        if isinstance(unit_system, str):
+            unit_system = UnitSystem(unit_system)
+        text = description.lower()
 
         try:
-            # Try to extract dimensions
-            dims = self._extract_dimensions(desc_lower)
-
-            # Determine primitive type
-            prim_type = self._detect_primitive(desc_lower)
-
+            dims = self._extract_dimensions(text, unit_system)
+            prim_type = self._detect_primitive(text)
             if prim_type is None:
-                return ParseResult(success=False, error="Could not determine primitive type")
+                return ParseResult(
+                    success=False,
+                    error="Could not identify a supported primitive. Try a dimensioned box, cylinder, sphere, cone, torus, or wedge.",
+                )
 
-            # Build feature
-            feature = self._build_feature(prim_type, dims, desc_lower)
+            base_feature = self._build_feature(prim_type, dims, text)
+            features = [base_feature]
+
+            if prim_type == PrimitiveType.BOX and dims.get("hole_diameter"):
+                hole_diameter = dims["hole_diameter"]
+                box_height = dims.get("height", 10.0)
+                # build123d primitives are centered on their origin. A cylinder
+                # centered at [0,0,0] and taller than the box makes a true through-hole.
+                features.append(
+                    FeatureSpec(
+                        id="center_hole",
+                        type=PrimitiveType.CYLINDER,
+                        name="Through Hole",
+                        parameters={
+                            "radius": ParameterSpec(name="radius", value=hole_diameter / 2.0, unit=UnitSystem.MM),
+                            "height": ParameterSpec(name="height", value=box_height + max(2.0, box_height * 0.1), unit=UnitSystem.MM),
+                        },
+                        position=[0.0, 0.0, 0.0],
+                        rotation=[0.0, 0.0, 0.0],
+                        operation=OperationType.DIFFERENCE,
+                        parent_id=base_feature.id,
+                        metadata={"generated_by": "rule_parser", "feature_role": "through_hole"},
+                    )
+                )
 
             spec = PartSpec(
-                name=self._generate_name(prim_type, desc_lower),
+                name=self._generate_name(prim_type, text),
                 description=description,
                 unit_system=unit_system,
-                features=[feature]
+                features=features,
             )
-
             return ParseResult(success=True, spec=spec)
+        except Exception as exc:
+            return ParseResult(success=False, error=str(exc))
 
-        except Exception as e:
-            return ParseResult(success=False, error=str(e))
+    def _extract_dimensions(
+        self, text: str, unit_system: UnitSystem = UnitSystem.MM
+    ) -> Dict[str, float]:
+        """Extract recognized measurements and normalize all values to millimeters."""
+        dims: Dict[str, float] = {}
+        number = self._NUMBER
+        unit = self._UNIT
+        triplet_pattern = re.compile(
+            rf"(?<![\w.])(?P<n1>{number})\s*(?P<u1>{unit})?\s*(?:x|×|by)\s*"
+            rf"(?P<n2>{number})\s*(?P<u2>{unit})?\s*(?:x|×|by)\s*"
+            rf"(?P<n3>{number})\s*(?P<u3>{unit})?",
+            re.IGNORECASE,
+        )
+        match = triplet_pattern.search(text)
+        cleaned = text
+        if match:
+            unit_values = [match.group("u1"), match.group("u2"), match.group("u3")]
+            common_unit = next((candidate for candidate in reversed(unit_values) if candidate), None)
+            normalized = [
+                self._to_mm(match.group(f"n{i}"), unit_values[i - 1] or common_unit, unit_system)
+                for i in (1, 2, 3)
+            ]
+            dims.update(width=normalized[0], depth=normalized[1], height=normalized[2])
+            cleaned = text[:match.start()] + " " * (match.end() - match.start()) + text[match.end():]
+        else:
+            # A two-dimensional box description remains useful; height falls back
+            # to the documented simple-box default instead of shifting dimensions.
+            pair_pattern = re.compile(
+                rf"(?<![\w.])(?P<n1>{number})\s*(?P<u1>{unit})?\s*(?:x|×|by)\s*"
+                rf"(?P<n2>{number})\s*(?P<u2>{unit})?",
+                re.IGNORECASE,
+            )
+            pair = pair_pattern.search(text)
+            if pair:
+                units = [pair.group("u1"), pair.group("u2")]
+                common_unit = next((candidate for candidate in reversed(units) if candidate), None)
+                dims["width"] = self._to_mm(pair.group("n1"), units[0] or common_unit, unit_system)
+                dims["depth"] = self._to_mm(pair.group("n2"), units[1] or common_unit, unit_system)
+                cleaned = text[:pair.start()] + " " * (pair.end() - pair.start()) + text[pair.end():]
 
-    def _extract_dimensions(self, text: str) -> Dict[str, float]:
-        """Extract numeric dimensions from text."""
-        dims = {}
+        def capture(key: str, patterns: list[str]) -> None:
+            for pattern in patterns:
+                found = re.search(pattern, cleaned, re.IGNORECASE)
+                if found:
+                    dims[key] = self._to_mm(found.group("num"), found.groupdict().get("unit"), unit_system)
+                    return
 
-        # Pattern: number followed by unit or dimension word
-        patterns = [
-            (r'(\d+(?:\.\d+)?)\s*mm', 'mm'),
-            (r'(\d+(?:\.\d+)?)\s*cm', 'cm'),
-            (r'(\d+(?:\.\d+)?)\s*inch', 'in'),
-            (r'(\d+(?:\.\d+)?)\s*in\b', 'in'),
-            (r'(\d+(?:\.\d+)?)\s*[\'"]', 'in'),
-            (r'(\d+(?:\.\d+)?)\s*(?:wide|width|x)', 'width'),
-            (r'(\d+(?:\.\d+)?)\s*(?:deep|depth)', 'depth'),
-            (r'(\d+(?:\.\d+)?)\s*(?:tall|high|height)', 'height'),
-            (r'(\d+(?:\.\d+)?)\s*(?:diam|diameter)', 'diameter'),
-            (r'(\d+(?:\.\d+)?)\s*(?:radius|rad)', 'radius'),
-            (r'(\d+(?:\.\d+)?)\s*(?:long|length)', 'length'),
-        ]
+        scalar_rules = {
+            "width": [
+                rf"(?P<num>{number})\s*(?P<unit>{unit})?\s*(?:wide|width)\b",
+                rf"\b(?:width|wide)\s*(?:of|=|:)?\s*(?P<num>{number})\s*(?P<unit>{unit})?",
+            ],
+            "depth": [
+                rf"(?P<num>{number})\s*(?P<unit>{unit})?\s*(?:deep|depth)\b",
+                rf"\b(?:depth|deep)\s*(?:of|=|:)?\s*(?P<num>{number})\s*(?P<unit>{unit})?",
+            ],
+            "height": [
+                rf"(?P<num>{number})\s*(?P<unit>{unit})?\s*(?:tall|high|height)\b",
+                rf"\b(?:height|tall|high)\s*(?:of|=|:)?\s*(?P<num>{number})\s*(?P<unit>{unit})?",
+            ],
+            "diameter": [
+                rf"(?P<num>{number})\s*(?P<unit>{unit})?\s*(?:diameter|diam|dia)\b",
+                rf"\b(?:diameter|diam|dia)\s*(?:of|=|:)?\s*(?P<num>{number})\s*(?P<unit>{unit})?",
+            ],
+            "radius": [
+                rf"(?P<num>{number})\s*(?P<unit>{unit})?\s*(?:radius|rad)\b",
+                rf"\b(?:radius|rad)\s*(?:of|=|:)?\s*(?P<num>{number})\s*(?P<unit>{unit})?",
+            ],
+            "length": [
+                rf"(?P<num>{number})\s*(?P<unit>{unit})?\s*(?:long|length)\b",
+                rf"\b(?:length|long)\s*(?:of|=|:)?\s*(?P<num>{number})\s*(?P<unit>{unit})?",
+            ],
+        }
+        for key, patterns in scalar_rules.items():
+            capture(key, patterns)
 
-        for pattern, key in patterns:
-            matches = re.findall(pattern, text)
-            if matches:
-                # Take the last match for each key
-                dims[key] = float(matches[-1])
+        if "hole" in text or "bore" in text:
+            hole_patterns = [
+                rf"(?P<num>{number})\s*(?P<unit>{unit})?\s*(?:diameter|diam|dia)?\s*(?:through\s+)?(?:hole|bore)\b",
+                rf"\b(?:hole|bore)\s*(?:diameter|diam|dia)?\s*(?:of|=|:)?\s*(?P<num>{number})\s*(?P<unit>{unit})?",
+            ]
+            capture("hole_diameter", hole_patterns)
+            if "hole_diameter" not in dims and "diameter" in dims:
+                dims["hole_diameter"] = dims["diameter"]
 
         return dims
 
     def _detect_primitive(self, text: str) -> Optional[PrimitiveType]:
-        """Detect primitive type from keywords."""
+        """Detect explicit primitive keywords before falling back to dimension triplets."""
         keywords = {
             PrimitiveType.BOX: ["box", "block", "cube", "rectangular", "plate", "slab"],
             PrimitiveType.CYLINDER: ["cylinder", "rod", "shaft", "pin", "pipe", "tube"],
@@ -337,108 +457,74 @@ class RuleBasedParser:
             PrimitiveType.TORUS: ["torus", "donut", "ring"],
             PrimitiveType.WEDGE: ["wedge", "ramp", "triangle"],
         }
-
         for prim_type, words in keywords.items():
-            if any(w in text for w in words):
+            if any(word in text for word in words):
                 return prim_type
-
-        # Default to box if dimensions suggest it (e.g., "40x20x10" or "50 x 30 x 20")
-        # Match patterns like "40x20x10", "50 x 30", "10 by 20 by 30", "10×20×30"
-        box_pattern = r'\d+(?:\.\d+)?\s*[x×]\s*\d+(?:\.\d+)?'
-        by_pattern = r'\d+(?:\.\d+)?\s+by\s+\d+(?:\.\d+)?'
-        if re.search(box_pattern, text) or re.search(by_pattern, text):
+        if re.search(r"\d+(?:\.\d+)?\s*(?:x|×)\s*\d+(?:\.\d+)?", text) or re.search(
+            r"\d+(?:\.\d+)?\s+by\s+\d+(?:\.\d+)?", text
+        ):
             return PrimitiveType.BOX
-
         return None
 
+    @staticmethod
+    def _parameter(name: str, value: float) -> ParameterSpec:
+        return ParameterSpec(name=name, value=value, unit=UnitSystem.MM)
+
     def _build_feature(self, prim_type: PrimitiveType, dims: Dict[str, float], text: str) -> FeatureSpec:
-        """Build a FeatureSpec from primitive type and dimensions."""
-        params = {}
-        feature_id = prim_type.value + "_main"
-        feature_name = prim_type.value
-
+        """Create an explicit feature with millimeter-valued parameters."""
         if prim_type == PrimitiveType.BOX:
-            width = dims.get('width', dims.get('mm', 40))
-            depth = dims.get('depth', dims.get('mm', 20))
-            height = dims.get('height', dims.get('mm', 10))
-
             params = {
-                "width": ParameterSpec(name="width", value=width),
-                "depth": ParameterSpec(name="depth", value=depth),
-                "height": ParameterSpec(name="height", value=height),
+                "width": self._parameter("width", dims.get("width", 40.0)),
+                "depth": self._parameter("depth", dims.get("depth", 20.0)),
+                "height": self._parameter("height", dims.get("height", 10.0)),
             }
-
-            # Check for hole
-            hole_diameter = dims.get('diameter')
-            if hole_diameter is None and 'hole' in text:
-                # Try to find hole size
-                hole_match = re.search(r'(\d+(?:\.\d+)?)\s*mm\s*hole', text)
-                if not hole_match:
-                    hole_match = re.search(r'hole\s*(\d+(?:\.\d+)?)\s*mm', text)
-                if hole_match:
-                    hole_diameter = float(hole_match.group(1))
-
-            if hole_diameter:
-                # Add hole as second feature (will be handled by caller)
-                pass
-
         elif prim_type == PrimitiveType.CYLINDER:
-            radius = dims.get('radius', dims.get('diameter', 20) / 2)
-            height = dims.get('height', dims.get('length', dims.get('mm', 50)))
-
+            radius = dims.get("radius", dims.get("diameter", 20.0) / 2.0)
             params = {
-                "radius": ParameterSpec(name="radius", value=radius),
-                "height": ParameterSpec(name="height", value=height),
+                "radius": self._parameter("radius", radius),
+                "height": self._parameter("height", dims.get("height", dims.get("length", 50.0))),
             }
-
         elif prim_type == PrimitiveType.SPHERE:
-            radius = dims.get('radius', dims.get('diameter', 20) / 2)
-            params = {
-                "radius": ParameterSpec(name="radius", value=radius),
-            }
-
+            radius = dims.get("radius", dims.get("diameter", 20.0) / 2.0)
+            params = {"radius": self._parameter("radius", radius)}
         elif prim_type == PrimitiveType.CONE:
-            radius_bottom = dims.get('radius', dims.get('diameter', 20) / 2)
-            radius_top = dims.get('radius_top', 0)
-            height = dims.get('height', dims.get('mm', 50))
+            radius_bottom = dims.get("radius", dims.get("diameter", 20.0) / 2.0)
             params = {
-                "radius_bottom": ParameterSpec(name="radius_bottom", value=radius_bottom),
-                "radius_top": ParameterSpec(name="radius_top", value=radius_top),
-                "height": ParameterSpec(name="height", value=height),
+                "radius_bottom": self._parameter("radius_bottom", radius_bottom),
+                "radius_top": self._parameter("radius_top", dims.get("radius_top", 0.0)),
+                "height": self._parameter("height", dims.get("height", 50.0)),
             }
-
         elif prim_type == PrimitiveType.TORUS:
-            major_radius = dims.get('radius', dims.get('major_radius', 20))
-            minor_radius = dims.get('minor_radius', dims.get('diameter', 10) / 2)
             params = {
-                "major_radius": ParameterSpec(name="major_radius", value=major_radius),
-                "minor_radius": ParameterSpec(name="minor_radius", value=minor_radius),
+                "major_radius": self._parameter("major_radius", dims.get("radius", dims.get("major_radius", 20.0))),
+                "minor_radius": self._parameter("minor_radius", dims.get("minor_radius", dims.get("diameter", 10.0) / 2.0)),
             }
-
         elif prim_type == PrimitiveType.WEDGE:
-            width = dims.get('width', 40)
-            depth = dims.get('depth', 20)
-            height = dims.get('height', 10)
+            width, depth, height = dims.get("width", 40.0), dims.get("depth", 20.0), dims.get("height", 10.0)
             params = {
-                "width": ParameterSpec(name="width", value=width),
-                "depth": ParameterSpec(name="depth", value=depth),
-                "height": ParameterSpec(name="height", value=height),
-                "xmin": ParameterSpec(name="xmin", value=0),
-                "zmin": ParameterSpec(name="zmin", value=0),
-                "xmax": ParameterSpec(name="xmax", value=width),
-                "zmax": ParameterSpec(name="zmax", value=height),
+                "width": self._parameter("width", width),
+                "depth": self._parameter("depth", depth),
+                "height": self._parameter("height", height),
+                "xmin": self._parameter("xmin", 0.0),
+                "zmin": self._parameter("zmin", 0.0),
+                "xmax": self._parameter("xmax", width),
+                "zmax": self._parameter("zmax", height),
             }
+        else:
+            raise ValueError(f"Unsupported primitive: {prim_type.value}")
 
         return FeatureSpec(
-            id=feature_id,
+            id=f"{prim_type.value}_main",
             type=prim_type,
-            name=feature_name,
+            name=prim_type.value,
             parameters=params,
+            position=[0.0, 0.0, 0.0],
+            rotation=[0.0, 0.0, 0.0],
             operation=OperationType.UNION,
         )
 
-    def _generate_name(self, prim_type: PrimitiveType, text: str) -> str:
-        """Generate a name for the part."""
+    @staticmethod
+    def _generate_name(prim_type: PrimitiveType, text: str) -> str:
         base_names = {
             PrimitiveType.BOX: "Box",
             PrimitiveType.CYLINDER: "Cylinder",
