@@ -24,7 +24,7 @@ except (ImportError, OSError):
 MAX_FILE_BYTES = 10 * 1024 * 1024
 MAX_PDF_PAGES = 5
 MAX_IMAGE_PIXELS = 40_000_000
-MAX_OCR_EDGE = 4000
+MAX_OCR_EDGE = 3000
 ALLOWED_MIME_TYPES = {
     "application/pdf",
     "image/png",
@@ -166,8 +166,12 @@ def _render_pages(file_bytes: bytes, mime_type: str) -> list[Image.Image]:
             if document.page_count > MAX_PDF_PAGES:
                 raise DrawingOcrError(f"PDF has {document.page_count} pages; OCR is limited to {MAX_PDF_PAGES} pages per request.")
             images: list[Image.Image] = []
-            matrix = fitz.Matrix(2.5, 2.5)
             for page in document:
+                page_width, page_height = float(page.rect.width), float(page.rect.height)
+                if not np.isfinite(page_width) or not np.isfinite(page_height) or min(page_width, page_height) <= 0:
+                    raise DrawingOcrError("PDF contains a page with invalid dimensions.")
+                scale = min(2.5, MAX_OCR_EDGE / max(page_width, page_height))
+                matrix = fitz.Matrix(scale, scale)
                 pixmap = page.get_pixmap(matrix=matrix, alpha=False, colorspace=fitz.csRGB)
                 image = Image.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples)
                 images.append(_resize_for_ocr(image))
