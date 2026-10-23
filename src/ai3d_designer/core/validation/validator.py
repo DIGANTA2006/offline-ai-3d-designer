@@ -162,11 +162,12 @@ class SpecValidator:
                     field=f"parameters.{param_name}",
                     suggestion=f"Set {param_name} to a {expectation} value.",
                 ))
-            elif 0 < param.value < self.MIN_FEATURE_SIZE:
+            elif 0 < param.to_mm() < self.MIN_FEATURE_SIZE:
+                dimension_mm = param.to_mm()
                 issues.append(ValidationIssue(
                     severity=ValidationSeverity.WARNING,
                     code=f"FEATURE_SMALL_PARAM_{param_name.upper()}",
-                    message=f"Parameter '{param_name}' = {param.value} {param.unit.value} is very small (recommended minimum: {self.MIN_FEATURE_SIZE} mm).",
+                    message=f"Parameter '{param_name}' = {dimension_mm:.4g} mm is very small (recommended minimum: {self.MIN_FEATURE_SIZE} mm).",
                     feature_id=feature.id,
                     field=f"parameters.{param_name}",
                     suggestion="Confirm that this feature is manufacturable in the intended process.",
