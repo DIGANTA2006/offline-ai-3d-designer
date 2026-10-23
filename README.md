@@ -9,7 +9,7 @@ An offline CAD generator that creates 3D models from natural language descriptio
 - ⚙️ **Boolean operations**: Union, difference and intersection, with dependency-cycle and empty-solid checks
 - 📐 **Unit support**: mm, cm, inch and m normalized to kernel millimeters
 - 📤 **Exports**: STEP boundary-representation and STL mesh exports with stronger manifold/watertight validation
-- 🖼️ **Image relief**: Closed heightfield relief and lithophane mesh output (not exact single-image CAD reconstruction)
+- 🖼️ **Image relief and drawing OCR**: Closed heightfield/lithophane meshes plus OCR text/annotation extraction for supported PDF and raster drawings (not exact automatic reconstruction)
 - 🧩 **Slicing integration**: CuraEngine-backed slicing only; no fake placeholder G-code fallback
 - 🖥️ **CLI & GUI**: Command-line and desktop graphical interfaces
 - 🧪 **Regression tests**: CAD, unit, profile, parser, mesh and slicer safety tests
@@ -115,7 +115,7 @@ python -m pytest tests/test_geometry.py -v
 
 The rule-based parser only generates geometry for recognized descriptions with enough dimensions. It may reject ambiguous or unsupported text; this is preferable to presenting a guessed shape as dimensionally correct. Extrusion/revolution/loft/sweep use explicit polygon profile metadata.
 
-Single-view images produce approximate relief meshes and lithophanes. A single photo does not contain enough information to guarantee hidden geometry, exact scale, dimensions, threads, fits, or tolerances. OCR/drawing interpretation and fully automated multi-view reconstruction are not represented as completed features.
+Single-view images produce approximate relief meshes and lithophanes. A single photo does not contain enough information to guarantee hidden geometry, exact scale, dimensions, threads, fits, or tolerances. Drawing OCR extracts visible text and common annotations (dimension triplets, diameters, radii, fits, threads, tolerances, materials and surface finish) when the Tesseract/PyMuPDF runtime is configured. It is not a complete drawing-understanding system: users must review the extraction and provide a supported, fully dimensioned description before CAD generation. Exact automatic reconstruction of arbitrary views remains unimplemented.
 
 The slicer requires a compatible CuraEngine and actual printer/extruder definitions. Without those it returns a clear failure rather than dummy G-code. Its structural checks are not a substitute for the real slicer preview and printer-specific safety review. The desktop "Approve Print" action is currently simulation-only; no physical printer transport is implemented.
 
