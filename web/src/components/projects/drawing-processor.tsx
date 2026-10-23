@@ -22,6 +22,7 @@ type OCRSpec = {
   views?: string[];
   annotations?: Array<{ type: string; text: string }>;
   confidence?: number;
+  confidenceMethod?: string;
   rawText?: string;
   pageCount?: number;
   needsReview?: boolean;
@@ -154,7 +155,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
             <div className="flex flex-wrap items-center gap-2 text-sm">
               <ShieldCheck className="size-4 text-primary" />
               <span className="font-medium">OCR extraction completed</span>
-              <span className="text-muted-foreground">· {Math.round((currentResult.confidence ?? 0) * 100)}% OCR word confidence · {currentResult.pageCount ?? 1} page(s)</span>
+              <span className="text-muted-foreground">· {currentResult.confidenceMethod === "native_pdf_text" ? "native PDF text extraction" : currentResult.confidenceMethod === "mixed" ? "mixed text/OCR extraction" : `${Math.round((currentResult.confidence ?? 0) * 100)}% OCR word confidence`} · {currentResult.pageCount ?? 1} page(s)</span>
             </div>
             <p className="text-xs leading-5 text-muted-foreground">OCR confidence is not dimension accuracy. Verify units, decimal points, diameter/radius symbols, tolerances, fits, threads and every view against the source.</p>
             <div className="grid gap-3 sm:grid-cols-2">
