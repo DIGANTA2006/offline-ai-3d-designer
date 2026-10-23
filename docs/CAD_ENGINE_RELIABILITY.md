@@ -44,6 +44,14 @@ The deterministic rule parser is deliberately conservative:
 
 The parser is not a substitute for a dimensioned engineering drawing, GD&T, material specification, or tolerance design.
 
+## Drawing OCR workflow
+
+The FastAPI service includes bounded PDF/raster OCR using Tesseract and PyMuPDF. The project page can analyze privately uploaded source drawings, store extracted text/annotations with the project version, and present the extraction for review. Recognized annotations include dimension triplets, diameter/radius values, tolerances, fits, common threads, material names, surface-finish notation and view labels when legible.
+
+The OCR route rejects unsupported file types, oversized inputs, PDFs over eight pages, and rendered pages/images over 24 megapixels. The service image installs Tesseract English data; health reports OCR availability only when the Python packages and binary are detected.
+
+OCR output is explicitly marked for review. The user must edit/confirm a dimensioned description before the generator attempts CAD creation. The generator uses the conservative text parser and only returns STEP/STL if the specification, geometry and exports pass validation. A drawing's views, internal features, GD&T, and full mechanical intent are not automatically reconstructed; unsupported/underspecified descriptions fail instead of producing a guessed model. Outputs are marked as approximations until compared against the source drawing.
+
 ## Mesh/image conversion
 
 `build_closed_heightfield` constructs top, bottom and side surfaces and checks watertightness and positive volume. Lithophanes and single-view MiDaS depth images produce approximate relief meshes. One image cannot reliably recover hidden surfaces, scale, threads, internal cavities, manufacturing dimensions or tolerances. For photogrammetry/true multi-view reconstruction, use validated multi-view imagery and an appropriately trained reconstruction pipeline.
