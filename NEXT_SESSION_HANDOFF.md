@@ -1,6 +1,6 @@
 # Next Session Handoff — CAD Engine Reliability / Drawing OCR
 
-**Updated:** 2026-10-23  
+**Updated:** 2026-10-23 (refreshed after current-head CI completed)  
 **Repository:** `DIGANTA2006/offline-ai-3d-designer` (private)  
 **Feature branch:** `feat/cad-engine-reliability-upgrade-20261023`  
 **Pull request:** https://github.com/DIGANTA2006/offline-ai-3d-designer/pull/3  
@@ -28,9 +28,9 @@ Guides: `docs/CAD_ENGINE_RELIABILITY.md`, `WORK_STATUS.md`.
 
 ## Verification as of code-tested HEAD `8be700b`
 
-- **CAD Engine Tests:** push run passed, **75 tests passed**. Python compilation also passed. Run: https://github.com/DIGANTA2006/offline-ai-3d-designer/actions/runs/39957241049
-- **Web Frontend Checks:** ESLint, TypeScript typecheck and Next.js production build passed. Run: https://github.com/DIGANTA2006/offline-ai-3d-designer/actions/runs/39957243077
-- **CodeQL Advanced:** both JavaScript/TypeScript and Python jobs passed, and both SARIF reports were examined. No SARIF findings were reported in either language on this HEAD. Run: https://github.com/DIGANTA2006/offline-ai-3d-designer/actions/runs/39957242980
+- **CAD Engine Tests on current PR HEAD:** PASS; 75 tests passed and Python compilation passed. Run: https://github.com/DIGANTA2006/offline-ai-3d-designer/actions/runs/39957963730
+- **Web Frontend Checks on current PR HEAD:** PASS; ESLint, TypeScript typecheck and Next.js production build passed. Run: https://github.com/DIGANTA2006/offline-ai-3d-designer/actions/runs/39957963698
+- **CodeQL Advanced on current PR HEAD:** PASS; both JavaScript/TypeScript and Python jobs succeeded. Both SARIF artifacts were downloaded and inspected: **0 findings** in Python and **0 findings** in JavaScript/TypeScript. Run: https://github.com/DIGANTA2006/offline-ai-3d-designer/actions/runs/39957963530
 - **Private-repository constraint:** this repository could not upload SARIF to GitHub's Code Scanning UI. The CodeQL workflow now saves reports as downloadable Actions artifacts, and its gate fails on high/critical security results plus regex-DoS / regex-injection findings. A green CodeQL job means the analysis/gate completed; it does not mean results are visible in the repository Security tab.
 - The PR-triggered CAD Engine run on the same `8be700b` HEAD was still completing setup at the time this note was refreshed; the matching push test run had already passed. Recheck the current PR check state before merge.
 
