@@ -18,10 +18,10 @@ requests>=2.32.3
 tqdm>=4.66.5
 psutil>=7.0.0
 
-# OCR (Phase 3+)
-# pytesseract>=0.3.10
-# pillow>=10.0.0
-# opencv-python-headless>=4.10.0
+# OCR (Tesseract executable is installed via python-backend/nixpacks.toml / Dockerfile)
+pytesseract>=0.3.13
+Pillow>=10.0.0
+PyMuPDF>=1.24.10,<2
 
 # Image to 3D (Phase 4+)
 # torch>=2.5.0
