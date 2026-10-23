@@ -436,7 +436,7 @@ class AI3DDesignerGUI:
         ttk.Entry(model_frame, textvariable=self.gcode_output_var, width=50).grid(row=1, column=1, sticky=tk.EW, padx=5)
         ttk.Button(model_frame, text="Browse...", command=self._browse_gcode_output).grid(row=1, column=2, padx=5)
         
-        ttk.Label(model_frame, text="Cura Printer Definition JSON:").grid(row=2, column=0, sticky=tk.W, pady=2)
+        ttk.Label(model_frame, text="Cura Definition JSON(s):").grid(row=2, column=0, sticky=tk.W, pady=2)
         self.printer_definition_var = tk.StringVar(value=os.environ.get("CURA_PRINTER_DEFINITION", ""))
         ttk.Entry(model_frame, textvariable=self.printer_definition_var, width=50).grid(row=2, column=1, sticky=tk.EW, padx=5)
         ttk.Button(model_frame, text="Browse...", command=self._browse_printer_definition).grid(row=2, column=2, padx=5)
@@ -641,13 +641,14 @@ class AI3DDesignerGUI:
             self.gcode_output_var.set(file_path)
             
     def _browse_printer_definition(self):
-        """Browse for a Cura printer definition exported from a configured printer profile."""
-        file_path = filedialog.askopenfilename(
-            title="Select Cura printer definition JSON",
+        """Browse for Cura printer and optional extruder definition JSON files."""
+        file_paths = filedialog.askopenfilenames(
+            title="Select Cura printer definition and any required extruder definition",
             filetypes=[("Cura definition JSON", "*.json"), ("JSON files", "*.json"), ("All files", "*.*")],
         )
-        if file_path:
-            self.printer_definition_var.set(file_path)
+        if file_paths:
+            # Multiple Cura definition files are passed in the order selected.
+            self.printer_definition_var.set(";".join(file_paths))
 
     def _on_generate_text(self):
         """Generate 3D model from text prompt."""
@@ -937,6 +938,11 @@ class AI3DDesignerGUI:
         
     def _on_slice(self):
         """Slice the STL to G-code."""
+        # Never leave an old successful G-code file approvable after a new
+        # slice attempt starts or fails.
+        self.current_gcode_path = None
+        self.validate_gcode_btn.config(state=tk.DISABLED)
+        self.approve_print_btn.config(state=tk.DISABLED)
         if not SLICING_AVAILABLE or self.slicer is None:
             messagebox.showerror("Error", "Slicing not available")
             return
