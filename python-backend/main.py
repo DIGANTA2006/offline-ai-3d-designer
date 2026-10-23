@@ -249,7 +249,7 @@ async def health():
 
 
 @app.post("/api/v1/ocr/extract", response_model=OcrResponse, dependencies=[Depends(require_cad_service_token)])
-async def ocr_extract(request: OcrRequest):
+def ocr_extract(request: OcrRequest):
     """Extract drawing text and explicit annotations using Tesseract/PyMuPDF."""
     job_id = str(uuid.uuid4())[:8]
     if not is_ocr_available():
@@ -283,20 +283,81 @@ async def ocr_extract(request: OcrRequest):
 
 
 @app.post("/api/v1/generate", response_model=GenerationResponse, dependencies=[Depends(require_cad_service_token)])
-async def generate_cad(request: GenerationRequest):
-    """Generate CAD from extracted specification."""
+def generate_cad(request: GenerationRequest):
+    """Generate STEP/STL from reviewed OCR text when the conservative parser can resolve it."""
     job_id = request.jobId
-    
-    # TODO: Implement full pipeline (Phase 3+)
-    return GenerationResponse(
-        success=False,
-        error="Full generation pipeline not yet implemented. Use /api/v1/text-to-cad.",
-        jobId=job_id,
-    )
+    if not request.reviewed:
+        raise HTTPException(
+            status_code=409,
+            detail="Review the extracted text, dimensions, tolerances and shape assumptions before CAD generation; set reviewed=true only after checking the drawing.",
+        )
+
+    prompt = (request.reviewedDescription or request.spec.rawText or "").strip()
+    if len(prompt) < 5:
+        raise HTTPException(
+            status_code=422,
+            detail="No reviewed dimensioned description was supplied. Edit the OCR text into an explicit part description first.",
+        )
+
+    try:
+        parsed = parse_natural_language(prompt, unit_system=UnitSystem.MM)
+        if not parsed.success or parsed.spec is None:
+            detail = parsed.error or "The reviewed description could not be parsed."
+            return GenerationResponse(success=False, jobId=job_id, error=detail, validationErrors=[detail], isApproximation=True)
+
+        part_spec = parsed.spec
+        spec_validation = validate_spec(part_spec)
+        if not spec_validation.is_valid:
+            messages = [issue.message for issue in spec_validation.errors]
+            return GenerationResponse(
+                success=False,
+                jobId=job_id,
+                error="Reviewed part specification failed validation.",
+                validationErrors=messages,
+                isApproximation=True,
+            )
+
+        part = create_part_from_spec(part_spec)
+        geometry_validation = validate_geometry(part)
+        if not geometry_validation.is_valid:
+            messages = [issue.message for issue in geometry_validation.errors]
+            return GenerationResponse(
+                success=False,
+                jobId=job_id,
+                error="Generated geometry failed CAD-kernel validation.",
+                validationErrors=messages,
+                isApproximation=True,
+            )
+
+        exports = _export_part_to_base64(part, ["step", "stl"])
+        fit_report = (
+            "Geometry and file validation passed for the supported primitive features. "
+            "This does not certify drawing interpretation, GD&T, fits, tolerances, material, "
+            "or manufacturing suitability. Inspect the model in CAD and compare every dimension "
+            "against the source drawing before use."
+        )
+        return GenerationResponse(
+            success=True,
+            jobId=job_id,
+            stepBase64=exports.get("stepBase64"),
+            stlBase64=exports.get("stlBase64"),
+            partSpec=part_spec.model_dump(mode="json"),
+            fitReport=fit_report,
+            isApproximation=True,
+        )
+    except Exception as exc:
+        print(f"OCR-derived CAD generation failed for job {job_id}: {type(exc).__name__}: {exc}")
+        return GenerationResponse(
+            success=False,
+            jobId=job_id,
+            error="CAD generation failed. Simplify the reviewed dimensions or try a supported primitive description.",
+            validationErrors=["CAD kernel or export validation failed; no model was returned."],
+            isApproximation=True,
+        )
 
 
 @app.post("/api/v1/text-to-cad", response_model=TextToCadResponse, dependencies=[Depends(require_cad_service_token)])
-async def text_to_cad(request: TextToCadRequest):
+def text_to_cad(request: TextToCadRequest):
     """Convert natural language to 3D CAD model."""
     try:
         # Parse natural language
