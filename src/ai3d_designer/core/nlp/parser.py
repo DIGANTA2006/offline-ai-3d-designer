@@ -325,7 +325,7 @@ class RuleBasedParser:
                     error="Could not identify a supported primitive. Try a dimensioned box, cylinder, sphere, cone, torus, or wedge.",
                 )
 
-            base_feature = self._build_feature(prim_type, dims, text)
+            base_feature = self._build_feature(prim_type, dims)
             features = [base_feature]
 
             if prim_type == PrimitiveType.BOX and dims.get("hole_diameter"):
@@ -470,7 +470,7 @@ class RuleBasedParser:
     def _parameter(name: str, value: float) -> ParameterSpec:
         return ParameterSpec(name=name, value=value, unit=UnitSystem.MM)
 
-    def _build_feature(self, prim_type: PrimitiveType, dims: Dict[str, float], text: str) -> FeatureSpec:
+    def _build_feature(self, prim_type: PrimitiveType, dims: Dict[str, float]) -> FeatureSpec:
         """Create an explicit feature with millimeter-valued parameters."""
         if prim_type == PrimitiveType.BOX:
             params = {
