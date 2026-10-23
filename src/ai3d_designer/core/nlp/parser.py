@@ -422,9 +422,12 @@ class RuleBasedParser:
         number = self._NUMBER
         unit = rf"(?P<unit>{self._UNIT})?"
         label = "(?:" + "|".join(labels) + ")"
+        # Prefer label-first forms such as "ID 10 mm" before trailing-label
+        # forms such as "20 mm ID"; otherwise the outer diameter can be captured
+        # as the inner diameter in text like "OD 20 mm ID 10 mm".
         patterns = (
-            rf"(?<![\w.])(?P<value>{number})\s*{unit}\s*{label}\b",
             rf"\b{label}\s*(?:of\s*)?(?P<value>{number})\s*{unit}(?!\w)",
+            rf"(?<![\w.])(?P<value>{number})\s*{unit}\s*{label}\b",
         )
         for pattern in patterns:
             match = re.search(pattern, text, re.IGNORECASE)
