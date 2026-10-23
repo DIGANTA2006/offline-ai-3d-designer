@@ -149,10 +149,10 @@ class GeometryEngine:
             try:
                 volume = float(result.volume)
             except Exception as exc:
-                raise ValueError(f"Could not evaluate the result after feature '${feature.id}'.") from exc
+                raise ValueError(f"Could not evaluate the result after feature '{feature.id}'.") from exc
             if not math.isfinite(volume) or volume <= 1e-9:
                 raise ValueError(
-                    f"Feature '${feature.name or feature.id}' produced empty or invalid geometry. "
+                    f"Feature '{feature.name or feature.id}' produced empty or invalid geometry. "
                     "Check feature order, placement, and boolean overlap."
                 )
 
@@ -160,10 +160,10 @@ class GeometryEngine:
             try:
                 is_valid = validity() if callable(validity) else validity
             except Exception as exc:
-                raise ValueError(f"Could not validate geometry after feature '${feature.id}'.") from exc
+                raise ValueError(f"Could not validate geometry after feature '{feature.id}'.") from exc
             if is_valid is False:
                 raise ValueError(
-                    f"Feature '${feature.name or feature.id}' produced an invalid solid. "
+                    f"Feature '{feature.name or feature.id}' produced an invalid solid. "
                     "Adjust dimensions or feature placement."
                 )
 
