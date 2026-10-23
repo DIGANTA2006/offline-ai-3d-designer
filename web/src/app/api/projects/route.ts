@@ -4,6 +4,7 @@ import type { Prisma } from "@prisma/client";
 import { getCurrentUser } from "@/lib/auth/server";
 import { isSameOriginRequest } from "@/lib/security/same-origin";
 import { prisma } from "@/lib/prisma";
+import { getCadServiceConfig } from "@/lib/cad-service-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -70,22 +71,11 @@ function decodeBase64(value: unknown, label: string): Buffer {
 }
 
 function cadServiceUrl(): URL {
-  const raw = process.env.CAD_SERVICE_URL?.trim();
-  if (!raw) {
-    if (process.env.NODE_ENV !== "production") return new URL("http://127.0.0.1:8000/");
-    throw new RouteError("CAD_SERVICE_URL is not configured in the web deployment.", 503);
-  }
-  let base: URL;
   try {
-    base = new URL(raw);
-  } catch {
-    throw new RouteError("CAD_SERVICE_URL is not a valid URL.", 503);
+    return new URL("/api/v1/text-to-cad", getCadServiceConfig().baseUrl);
+  } catch (error) {
+    throw new RouteError(error instanceof Error ? error.message : "CAD service configuration is invalid.", 503);
   }
-  const isLoopback = ["localhost", "127.0.0.1", "::1"].includes(base.hostname);
-  if (base.protocol !== "https:" && !(process.env.NODE_ENV !== "production" && base.protocol === "http:" && isLoopback)) {
-    throw new RouteError("The production CAD service must use HTTPS.", 503);
-  }
-  return new URL("/api/v1/text-to-cad", base);
 }
 
 function safeErrorMessage(error: unknown): string {
@@ -111,9 +101,15 @@ export async function POST(request: Request) {
   if (!privateBlobToken) {
     return NextResponse.json({ error: "Private project storage is not configured. Connect a private Vercel Blob store before generating files." }, { status: 503 });
   }
-  const serviceToken = process.env.CAD_SERVICE_TOKEN?.trim();
+  let serviceToken: string | undefined;
+  try {
+    serviceToken = getCadServiceConfig().token;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "CAD service configuration is invalid.";
+    return NextResponse.json({ error: message }, { status: 503 });
+  }
   if (process.env.NODE_ENV === "production" && !serviceToken) {
-    return NextResponse.json({ error: "CAD_SERVICE_TOKEN is not configured on the web service." }, { status: 503 });
+    return NextResponse.json({ error: "CAD service token is not configured on the web service." }, { status: 503 });
   }
 
   const statedLength = Number(request.headers.get("content-length") ?? 0);
