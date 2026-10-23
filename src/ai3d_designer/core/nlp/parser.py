@@ -555,7 +555,9 @@ class RuleBasedParser:
 
     @staticmethod
     def _parameter(name: str, value: float) -> ParameterSpec:
-        return ParameterSpec(name=name, value=va    @staticmethod
+        return ParameterSpec(name=name, value=value, unit=UnitSystem.MM)
+
+    @staticmethod
     def _require_dimension(dims: Dict[str, float], keys: tuple[str, ...], label: str) -> float:
         for key in keys:
             value = dims.get(key)
@@ -647,9 +649,6 @@ class RuleBasedParser:
             position=[0.0, 0.0, 0.0],
             rotation=[0.0, 0.0, 0.0],
             operation=OperationType.UNION,
-        )
-
-ionType.UNION,
         )
 
     @staticmethod
