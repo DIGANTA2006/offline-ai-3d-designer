@@ -213,6 +213,9 @@ class ImageTo3DConverter:
         output_format = format.lower().lstrip(".")
         if output_format not in {"stl", "obj", "ply"}:
             raise ValueError("Output format must be STL, OBJ, or PLY.")
+        output = Path(output_path)
+        if output.suffix.lower() != "." + output_format:
+            raise ValueError("Output filename extension must match the selected export format.")
         try:
             with Image.open(image_path) as source:
                 image = np.asarray(source.convert("RGB"))
@@ -233,7 +236,6 @@ class ImageTo3DConverter:
         if not mesh.is_watertight or not mesh.is_volume or mesh.volume <= 0:
             raise ValueError("Refusing to export an invalid or non-watertight relief mesh.")
 
-        output = Path(output_path)
         output.parent.mkdir(parents=True, exist_ok=True)
         mesh.export(str(output), file_type=output_format)
         if not output.is_file() or output.stat().st_size == 0:
