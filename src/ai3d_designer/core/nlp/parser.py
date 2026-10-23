@@ -277,7 +277,10 @@ class RuleBasedParser:
     geometry from descriptions it cannot parse.
     """
 
-    _NUMBER = r"\d+(?:\.\d+)?"
+    # Bounded digits and explicit numeric boundaries avoid polynomial-time backtracking
+    # on attacker-controlled descriptions and prevent silently parsing a prefix of a huge number.
+    _NUMBER = r"(?<![\d.])\d{1,8}(?:\.\d{1,6})?(?![\d.])"
+    MAX_DESCRIPTION_LENGTH = 4000
     _UNIT = r"(?:millimeters?|millimetres?|mm|centimeters?|centimetres?|cm|inches?|inch|in\b|meters?|metres?|m\b|['\"])"
 
     @staticmethod
@@ -313,6 +316,11 @@ class RuleBasedParser:
         """Parse a small, known subset of descriptions using explicit rules."""
         if not description or not description.strip():
             return ParseResult(success=False, error="Empty description")
+        if len(description) > self.MAX_DESCRIPTION_LENGTH:
+            return ParseResult(
+                success=False,
+                error=f"Description exceeds the {self.MAX_DESCRIPTION_LENGTH}-character parser limit.",
+            )
         if isinstance(unit_system, str):
             unit_system = UnitSystem(unit_system)
         text = description.lower()
@@ -551,8 +559,9 @@ class RuleBasedParser:
         for prim_type, words in keywords.items():
             if any(word in text for word in words):
                 return prim_type
-        if re.search(r"\d+(?:\.\d+)?\s*(?:x|×)\s*\d+(?:\.\d+)?", text) or re.search(
-            r"\d+(?:\.\d+)?\s+by\s+\d+(?:\.\d+)?", text
+        number = self._NUMBER
+        if re.search(rf"{number}\s*(?:x|×)\s*{number}", text) or re.search(
+            rf"{number}\s+by\s+{number}", text
         ):
             return PrimitiveType.BOX
         return None
