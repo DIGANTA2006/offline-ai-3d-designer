@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { getCurrentUser } from "@/lib/auth/server";
 import { isSameOriginRequest } from "@/lib/security/same-origin";
 import { prisma } from "@/lib/prisma";
+import { getCadServiceConfig } from "@/lib/cad-service-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -45,15 +46,11 @@ class RouteError extends Error {
 }
 
 function getGenerateEndpoint(): URL {
-  const raw = process.env.CAD_SERVICE_URL?.trim();
-  if (!raw) throw new RouteError("CAD_SERVICE_URL is not configured.", 503);
-  let base: URL;
-  try { base = new URL(raw); }
-  catch { throw new RouteError("CAD_SERVICE_URL is invalid.", 503); }
-  if (base.protocol !== "https:" && !(process.env.NODE_ENV !== "production" && base.protocol === "http:" && ["localhost", "127.0.0.1", "::1"].includes(base.hostname))) {
-    throw new RouteError("The production CAD service must use HTTPS.", 503);
+  try {
+    return new URL("/api/v1/generate", getCadServiceConfig().baseUrl);
+  } catch (error) {
+    throw new RouteError(error instanceof Error ? error.message : "CAD service configuration is invalid.", 503);
   }
-  return new URL("/api/v1/generate", base);
 }
 
 async function readLimitedText(response: Response, limit: number): Promise<string> {
@@ -146,9 +143,14 @@ export async function POST(request: Request, { params }: Context) {
     const fileIndex = input.fileIndex;
 
     const blobToken = process.env.PRIVATE_BLOB_READ_WRITE_TOKEN?.trim();
-    const serviceToken = process.env.CAD_SERVICE_TOKEN?.trim();
+    let serviceToken: string | undefined;
+    try {
+      serviceToken = getCadServiceConfig().token;
+    } catch (error) {
+      throw new RouteError(error instanceof Error ? error.message : "CAD service configuration is invalid.", 503);
+    }
     if (!blobToken) throw new RouteError("Private project storage is not configured.", 503);
-    if (!serviceToken) throw new RouteError("CAD_SERVICE_TOKEN is not configured on the web deployment.", 503);
+    if (!serviceToken) throw new RouteError("CAD service token is not configured on the web deployment.", 503);
 
     const project = await prisma.project.findFirst({
       where: { id: projectId, userId: user.id },
