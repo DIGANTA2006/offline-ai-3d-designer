@@ -33,7 +33,7 @@ const features = [
   },
 ];
 
-const freeFeatures = ["3 generations per month", "Basic model preview", "Standard export queue"];
+const freeFeatures = ["Create an account", "Access the account dashboard", "Manage your profile"];
 const proFeatures = [
   "Unlimited generation allowance",
   "STEP, STL, and GLB exports",
@@ -192,14 +192,14 @@ export default function HomePage() {
         <div className="text-center">
           <p className="text-sm font-semibold uppercase tracking-[0.18em] text-primary">Simple plans</p>
           <h2 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">Start small. Scale your workflow.</h2>
-          <p className="mt-4 text-muted-foreground">Proposed plan limits are shown below; enforcement and Razorpay billing are implemented in later phases.</p>
+          <p className="mt-4 text-muted-foreground">CAD generation requires an active Pro subscription. Pro is INR 500/month with recurring billing that you can cancel.</p>
         </div>
         <div className="mx-auto mt-8 grid max-w-4xl gap-4 md:grid-cols-2">
           <Card>
             <CardContent className="p-6 sm:p-8">
               <p className="font-semibold">Free</p>
               <p className="mt-3 text-4xl font-semibold">₹0 <span className="text-sm font-normal text-muted-foreground">/ month</span></p>
-              <p className="mt-3 text-sm text-muted-foreground">For trying the workflow and basic exports.</p>
+              <p className="mt-3 text-sm text-muted-foreground">Create an account. CAD generation and STEP/STL downloads require Pro.</p>
               <ul className="mt-6 space-y-3 text-sm">
                 {freeFeatures.map((item) => <li key={item} className="flex gap-2"><Check className="size-4 shrink-0 text-primary" />{item}</li>)}
               </ul>
@@ -210,14 +210,14 @@ export default function HomePage() {
             <CardContent className="p-6 sm:p-8">
               <div className="flex items-center justify-between gap-3">
                 <p className="font-semibold">Pro</p>
-                <span className="rounded-full bg-primary/15 px-2.5 py-1 text-xs font-semibold text-primary">Planned</span>
+                <span className="rounded-full bg-primary/15 px-2.5 py-1 text-xs font-semibold text-primary">Monthly subscription</span>
               </div>
-              <p className="mt-3 text-4xl font-semibold">₹2,000 <span className="text-sm font-normal text-muted-foreground">/ month</span></p>
-              <p className="mt-3 text-sm text-muted-foreground">For sustained use and expanded generation tools.</p>
+              <p className="mt-3 text-4xl font-semibold">₹500 <span className="text-sm font-normal text-muted-foreground">/ month</span></p>
+              <p className="mt-3 text-sm text-muted-foreground">Unlock CAD generation for as long as your monthly subscription is active.</p>
               <ul className="mt-6 space-y-3 text-sm">
                 {proFeatures.map((item) => <li key={item} className="flex gap-2"><Check className="size-4 shrink-0 text-primary" />{item}</li>)}
               </ul>
-              <Button className="mt-8 w-full" asChild><Link href="/signup">Explore Pro <ArrowRight /></Link></Button>
+              <Button className="mt-8 w-full" asChild><Link href="/login?next=%2Fdashboard%2Fbilling">Subscribe for ₹500/month <ArrowRight /></Link></Button>
             </CardContent>
           </Card>
         </div>

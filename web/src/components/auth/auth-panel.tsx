@@ -105,7 +105,16 @@ export function AuthPanel({ mode }: Props) {
 
   async function finishSignIn(idToken: string) {
     await createServerSession(idToken);
-    router.replace("/dashboard");
+    const statusResponse = await fetch("/api/auth/session", {
+      method: "GET",
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+    const statusPayload = await statusResponse.json().catch(() => ({})) as { user?: { role?: string } };
+    const role = statusResponse.ok ? statusPayload.user?.role : undefined;
+    const requestedPath = new URLSearchParams(window.location.search).get("next");
+    const safeRequestedPath = requestedPath === "/dashboard/billing" ? requestedPath : null;
+    router.replace(role === "ADMIN" ? "/admin" : (safeRequestedPath ?? "/dashboard"));
     router.refresh();
   }
 

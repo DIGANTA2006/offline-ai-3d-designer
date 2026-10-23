@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 const MAX_BODY_BYTES = 16 * 1024;
 const MAX_CAD_RESPONSE_BYTES = 15 * 1024 * 1024;
 const MAX_BASE64_BYTES = 10 * 1024 * 1024;
-const FREE_MONTHLY_GENERATIONS = 3;
+// CAD generation requires an active PRO subscription; ADMIN accounts bypass billing.
 const CAD_TIMEOUT_MS = 30_000;
 
 type UnitSystem = "mm" | "cm" | "in" | "m";
@@ -153,13 +153,20 @@ export async function POST(request: Request) {
 
   let usageReserved = false;
   let projectId: string | null = null;
-  let isPro = false;
+  let hasCadAccess = user.role === "ADMIN";
   try {
     const subscription = await prisma.subscription.findUnique({ where: { userId: user.id } });
-    isPro = subscription?.tier === "PRO" && subscription.status === "ACTIVE";
+    hasCadAccess = hasCadAccess || (subscription?.tier === "PRO" && subscription.status === "ACTIVE");
   } catch (error) {
-    console.error("Project API could not load subscription limits.", error);
-    return NextResponse.json({ error: "Project quota service is unavailable. Please retry shortly." }, { status: 503 });
+    console.error("Project API could not load subscription status.", error);
+    return NextResponse.json({ error: "Subscription service is unavailable. Please retry shortly." }, { status: 503 });
+  }
+  if (!hasCadAccess) {
+    return NextResponse.json({
+      error: "An active Pro subscription is required to generate CAD files. Pro costs ₹500 per month.",
+      code: "SUBSCRIPTION_REQUIRED",
+      upgradeUrl: "/dashboard/billing",
+    }, { status: 402 });
   }
   const now = new Date();
   const periodStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
@@ -173,9 +180,10 @@ export async function POST(request: Request) {
       update: {},
       create: { userId: user.id, action: "generation", periodStart, count: 0 },
     });
-    const reservation = isPro
-      ? await prisma.usageRecord.updateMany({ where: { userId: user.id, action: "generation", periodStart }, data: { count: { increment: 1 } } })
-      : await prisma.usageRecord.updateMany({ where: { userId: user.id, action: "generation", periodStart, count: { lt: FREE_MONTHLY_GENERATIONS } }, data: { count: { increment: 1 } } });
+    const reservation = await prisma.usageRecord.updateMany({
+      where: { userId: user.id, action: "generation", periodStart },
+      data: { count: { increment: 1 } },
+    });
     if (reservation.count !== 1) {
       return NextResponse.json({ error: "Your free-tier generation limit has been reached for this month." }, { status: 403 });
     }
