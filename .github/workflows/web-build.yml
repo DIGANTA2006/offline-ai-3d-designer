@@ -1,0 +1,54 @@
+name: Web lint and production build
+
+on:
+  push:
+    branches:
+      - main
+      - "feat/**"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    name: ESLint and Next.js production build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: web
+    env:
+      DATABASE_URL: postgresql://postgres:password@127.0.0.1:5432/test?schema=public
+      DIRECT_URL: postgresql://postgres:password@127.0.0.1:5432/test?schema=public
+      NEXT_PUBLIC_FIREBASE_API_KEY: test-api-key
+      NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: example.firebaseapp.com
+      NEXT_PUBLIC_FIREBASE_PROJECT_ID: example-project
+      NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: example-project.appspot.com
+      NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: "123456789"
+      NEXT_PUBLIC_FIREBASE_APP_ID: "1:123456789:web:abcdef"
+      FIREBASE_PROJECT_ID: example-project
+      FIREBASE_CLIENT_EMAIL: build-only@example-project.iam.gserviceaccount.com
+      FIREBASE_PRIVATE_KEY: "build-only-placeholder-not-a-real-key"
+      INITIAL_ADMIN_EMAIL: admin@example.com
+      CAD_SERVICE_URL: https://example.invalid
+      CAD_SERVICE_TOKEN: build-only-token
+      PRIVATE_BLOB_READ_WRITE_TOKEN: build-only-token
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Run ESLint
+        run: npm run lint
+      - name: Build production bundle
+        run: npm run build
