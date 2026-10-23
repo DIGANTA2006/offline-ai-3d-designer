@@ -16,7 +16,7 @@ export default async function UploadPage() {
           <div className="mt-5 flex flex-wrap items-end justify-between gap-4">
             <div>
               <h1 className="text-3xl font-semibold tracking-tight">Upload drawings</h1>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">Securely store supported source files. Automated OCR and drawing-to-CAD conversion are not implemented yet.</p>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">Securely store supported source files and extract reviewable OCR text/dimension candidates. Drawing-to-parametric-CAD conversion is still a separate, incomplete stage.</p>
             </div>
             <Button asChild><Link href="/dashboard/projects/new"><Sparkles className="size-4" /> New text-to-CAD project</Link></Button>
           </div>
