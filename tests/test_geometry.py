@@ -379,3 +379,20 @@ def test_missing_boolean_parent_and_cycles_fail_clearly():
     ))
     with pytest.raises(ValueError, match="cycle"):
         create_part_from_spec(cyclic)
+
+
+def test_zero_top_radius_is_valid_for_a_pointed_cone():
+    spec = PartSpec(name="pointed_cone", unit_system=UnitSystem.MM)
+    spec.add_feature(FeatureSpec(
+        id="cone",
+        type=PrimitiveType.CONE,
+        name="cone",
+        parameters={
+            "radius_bottom": ParameterSpec(name="radius_bottom", value=10),
+            "radius_top": ParameterSpec(name="radius_top", value=0),
+            "height": ParameterSpec(name="height", value=20),
+        },
+        operation=OperationType.UNION,
+    ))
+    result = create_part_from_spec(spec)
+    assert result.volume > 0
