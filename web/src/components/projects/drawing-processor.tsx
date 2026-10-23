@@ -34,7 +34,7 @@ type Props = { projectId: string; sourceFiles: SourceFile[] };
 
 export function DrawingProcessor({ projectId, sourceFiles }: Props) {
   const router = useRouter();
-  const ocrSourceFiles = sourceFiles.filter((file) => /\\.(pdf|png|jpe?g|bmp|tiff?|webp)$/i.test(file.name));
+  const ocrSourceFiles = sourceFiles.filter((file) => /\.(pdf|png|jpe?g|bmp|tiff?|webp)$/i.test(file.name));
   const [selectedIndex, setSelectedIndex] = useState<number>(ocrSourceFiles[0]?.index ?? -1);
   const [results, setResults] = useState<Record<number, OCRSpec>>(() => Object.fromEntries(
     ocrSourceFiles.flatMap((file) => file.ocrResult ? [[file.index, file.ocrResult]] : []),
