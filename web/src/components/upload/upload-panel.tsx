@@ -39,6 +39,7 @@ export function UploadPanel() {
       setProgress(50);
       const data = await response.json().catch(() => ({})) as {
         error?: string; projectId?: string; versionId?: string; uploadedFiles?: Array<{ name: string }>;
+        ocrResult?: { success?: boolean; error?: string };
       };
       if (response.status === 401) {
         router.replace("/login");
@@ -48,7 +49,9 @@ export function UploadPanel() {
         throw new Error(data.error ?? `Upload failed (HTTP ${response.status}).`);
       }
       setProgress(100);
-      setSuccess(`Stored ${data.uploadedFiles?.length ?? 0} file(s) privately. Automated drawing OCR and CAD generation are not implemented yet.`);
+      setSuccess(data.ocrResult?.success
+        ? `Stored ${data.uploadedFiles?.length ?? 0} file(s) privately and extracted OCR candidates. Verify all measurements manually; drawing-to-parametric-CAD generation is not automated yet.`
+        : `Stored ${data.uploadedFiles?.length ?? 0} file(s) privately. OCR was not completed: ${data.ocrResult?.error ?? "See the project page for details."}`);
       router.push(`/dashboard/projects/${data.projectId}`);
       router.refresh();
     } catch (cause) {
@@ -63,7 +66,7 @@ export function UploadPanel() {
     <Card className="w-full">
       <CardHeader>
         <CardTitle className="flex items-center gap-2"><FileText className="size-5" />Upload Engineering Drawings</CardTitle>
-        <CardDescription>Files are stored privately for your account. This flow does not run OCR or generate CAD from drawings yet; use New Project for text-to-CAD.</CardDescription>
+        <CardDescription>PDF and image drawings are stored privately. OCR extracts provisional text and dimension candidates from the first supported drawing in the batch; it does not create CAD geometry automatically.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <FileDropZone onFilesSelected={handleFilesSelected} disabled={uploading} />
@@ -72,7 +75,7 @@ export function UploadPanel() {
         <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
           <div className="text-sm text-muted-foreground">{selectedFiles.length} file(s) selected · {valid.length} valid · {rejected.length} rejected · 3 MiB batch limit</div>
           <Button onClick={handleUpload} disabled={uploading || !valid.length} className="gap-2">
-            {uploading ? <><Loader2 className="size-4 animate-spin" /> Uploading… {progress}%</> : <><ArrowRight className="size-4" /> Store privately</>}
+            {uploading ? <><Loader2 className="size-4 animate-spin" /> Uploading… {progress}%</> : <><ArrowRight className="size-4" /> Upload and extract OCR</>}
           </Button>
         </div>
       </CardContent>
