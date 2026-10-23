@@ -202,7 +202,7 @@ class AI3DDesignerGUI:
         if self.slicer and self.slicer.cura_available:
             self._log(f"CuraEngine: Found at {self.slicer.cura_engine_path}")
         else:
-            self._log("CuraEngine: Not found - using basic slicer (preview only)")
+            self._log("CuraEngine: Not found - real slicing is disabled until CuraEngine is installed.")
         self._log("========================")
         
     def _create_widgets(self):
@@ -436,6 +436,11 @@ class AI3DDesignerGUI:
         ttk.Entry(model_frame, textvariable=self.gcode_output_var, width=50).grid(row=1, column=1, sticky=tk.EW, padx=5)
         ttk.Button(model_frame, text="Browse...", command=self._browse_gcode_output).grid(row=1, column=2, padx=5)
         
+        ttk.Label(model_frame, text="Cura Printer Definition JSON:").grid(row=2, column=0, sticky=tk.W, pady=2)
+        self.printer_definition_var = tk.StringVar(value=os.environ.get("CURA_PRINTER_DEFINITION", ""))
+        ttk.Entry(model_frame, textvariable=self.printer_definition_var, width=50).grid(row=2, column=1, sticky=tk.EW, padx=5)
+        ttk.Button(model_frame, text="Browse...", command=self._browse_printer_definition).grid(row=2, column=2, padx=5)
+
         model_frame.columnconfigure(1, weight=1)
         
         # Slice settings
@@ -635,6 +640,15 @@ class AI3DDesignerGUI:
         if file_path:
             self.gcode_output_var.set(file_path)
             
+    def _browse_printer_definition(self):
+        """Browse for a Cura printer definition exported from a configured printer profile."""
+        file_path = filedialog.askopenfilename(
+            title="Select Cura printer definition JSON",
+            filetypes=[("Cura definition JSON", "*.json"), ("JSON files", "*.json"), ("All files", "*.*")],
+        )
+        if file_path:
+            self.printer_definition_var.set(file_path)
+
     def _on_generate_text(self):
         """Generate 3D model from text prompt."""
         prompt = self.prompt_text.get(1.0, tk.END).strip()
@@ -942,11 +956,12 @@ class AI3DDesignerGUI:
             bed_size_x=self.slice_settings_vars["bed_x_var"].get(),
             bed_size_y=self.slice_settings_vars["bed_y_var"].get(),
             bed_size_z=self.slice_settings_vars["bed_z_var"].get(),
+            nozzle_diameter=self.slice_settings_vars["nozzle_size_var"].get(),
         )
         
         def slice_thread():
             try:
-                result = self.slicer.slice(stl_path, gcode_path, settings)
+                result = self.slicer.slice(stl_path, gcode_path, settings, printer_definition=self.printer_definition_var.get().strip())
                 
                 if result.success:
                     self.current_gcode_path = gcode_path
