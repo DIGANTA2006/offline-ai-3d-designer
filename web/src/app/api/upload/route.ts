@@ -38,7 +38,7 @@ async function runDrawingOcr(file: File): Promise<StoredOcrResult> {
     return { success: false, error: "OCR supports PDF, PNG, JPEG, and WEBP. The file was stored privately but not processed." };
   }
 
-  const configured = process.env.CAD_SERVICE_URL?.trim().replace(/\\/+$/, "");
+  const configured = process.env.CAD_SERVICE_URL?.trim().replace(/\/+$/, "");
   if (!configured) return { success: false, error: "CAD_SERVICE_URL is not configured; source file was stored privately." };
   let baseUrl: URL;
   try {
