@@ -25,6 +25,7 @@ MAX_FILE_BYTES = 10 * 1024 * 1024
 MAX_PDF_PAGES = 3
 MAX_IMAGE_PIXELS = 40_000_000
 MAX_OCR_EDGE = 3000
+MAX_OCR_TEXT_CHARS_PER_PAGE = 20_000
 ALLOWED_MIME_TYPES = {
     "application/pdf",
     "image/png",
@@ -228,6 +229,7 @@ def _run_tesseract(image: Image.Image) -> OcrPageResult:
         lines.setdefault(key, []).append(token)
 
     text = "\n".join(" ".join(words) for words in lines.values()).strip()
+    text = text[:MAX_OCR_TEXT_CHARS_PER_PAGE]
     confidence = (sum(confidences) / (100.0 * len(confidences))) if confidences else 0.0
     return OcrPageResult(text=text, confidence=confidence, word_count=sum(len(words) for words in lines.values()))
 
@@ -300,13 +302,13 @@ def extract_candidates(raw_text: str) -> dict:
     surface_finishes = list(dict.fromkeys(match.group(0).strip() for match in _SURFACE_RE.finditer(raw_text)))
 
     return {
-        "dimensions": {"candidates": dimension_candidates, "dimensionTriples": triples},
-        "tolerances": {"numericCandidates": numeric_tolerances, "fitCandidates": fits},
-        "fits": fits,
-        "threads": threads,
-        "materialCandidates": materials,
-        "views": views,
-        "surfaceFinishCandidates": surface_finishes,
+        "dimensions": {"candidates": dimension_candidates[:500], "dimensionTriples": triples[:100]},
+        "tolerances": {"numericCandidates": numeric_tolerances[:200], "fitCandidates": fits[:200]},
+        "fits": fits[:200],
+        "threads": threads[:200],
+        "materialCandidates": materials[:50],
+        "views": views[:100],
+        "surfaceFinishCandidates": surface_finishes[:100],
     }
 
 
