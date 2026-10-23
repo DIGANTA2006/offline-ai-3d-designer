@@ -111,3 +111,21 @@ def test_sphere_requires_radius_or_diameter():
     result = parse_natural_language("sphere 20 mm")
     assert not result.success
     assert "sphere radius or diameter" in (result.error or "")
+
+
+def test_unsupported_unit_system_returns_a_parse_error_not_an_exception():
+    result = parse_natural_language("40 x 20 x 10 box", unit_system="furlong")
+    assert not result.success
+    assert "supported unit system" in (result.error or "")
+
+
+def test_llm_entrypoint_consumes_unit_system_option_before_model_initialization(tmp_path):
+    missing_model = tmp_path / "no-model.gguf"
+    result = parse_natural_language(
+        "A 20 mm cylinder",
+        use_llm=True,
+        unit_system=UnitSystem.CM,
+        model_path=str(missing_model),
+    )
+    assert not result.success
+    assert "Model not found" in (result.error or "")
