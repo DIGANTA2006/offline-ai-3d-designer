@@ -115,3 +115,25 @@ def test_plate_with_explicit_thickness():
     assert feature.parameters["width"].value == 100
     assert feature.parameters["depth"].value == 50
     assert feature.parameters["height"].value == 5
+
+
+def test_parser_rejects_unbounded_numeric_tokens_instead_of_truncating():
+    result = RuleBasedParser().parse("A 100000000 x 30 x 10 mm box")
+    assert result.success is False
+    assert "explicit" in (result.error or "").lower()
+
+
+def test_parser_rejects_overlong_untrusted_descriptions():
+    result = RuleBasedParser().parse("box " + ("0" * 5000))
+    assert result.success is False
+    assert "character parser limit" in (result.error or "").lower()
+
+
+def test_bounded_number_grammar_keeps_normal_decimal_dimensions():
+    result = RuleBasedParser().parse("A 12.5 x 8.25 x 3.75 mm box")
+    assert result.success, result.error
+    assert result.spec is not None
+    feature = result.spec.features[0]
+    assert feature.parameters["width"].value == 12.5
+    assert feature.parameters["depth"].value == 8.25
+    assert feature.parameters["height"].value == 3.75
