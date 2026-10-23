@@ -26,6 +26,16 @@ SUPPORTED_MIME_TYPES = {
     "image/tiff",
     "image/webp",
 }
+EXPECTED_MIME_BY_SUFFIX = {
+    ".pdf": "application/pdf",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".bmp": "image/bmp",
+    ".tif": "image/tiff",
+    ".tiff": "image/tiff",
+    ".webp": "image/webp",
+}
 UNIT_PATTERN = r"(?:millimeters?|millimetres?|mm|centimeters?|centimetres?|cm|inches?|inch|in|meters?|metres?|m)"
 NUMBER_PATTERN = r"(?:\d+(?:\.\d+)?|\.\d+)"
 TRIPLET_PATTERN = re.compile(
@@ -242,6 +252,8 @@ def extract_drawing_text(file_bytes: bytes, file_name: str, mime_type: str) -> d
         raise OCRInputError("Unsupported drawing type. Upload a PDF, PNG, JPEG, BMP, TIFF, or WebP file.")
     if normalized_mime not in SUPPORTED_MIME_TYPES:
         raise OCRInputError("The uploaded content type is not supported for drawing OCR.")
+    if EXPECTED_MIME_BY_SUFFIX[suffix] != normalized_mime:
+        raise OCRInputError("The file extension and content type do not match.")
 
     try:
         import fitz
@@ -251,6 +263,7 @@ def extract_drawing_text(file_bytes: bytes, file_name: str, mime_type: str) -> d
 
     page_text: list[str] = []
     confidence_scores: list[float] = []
+    confidence_methods: list[str] = []
     pages_processed = 0
     try:
         if suffix == ".pdf":
@@ -275,6 +288,7 @@ def extract_drawing_text(file_bytes: bytes, file_name: str, mime_type: str) -> d
                     if len(native_text) >= 12:
                         page_text.append(native_text)
                         confidence_scores.append(1.0)
+                        confidence_methods.append("native_pdf_text")
                         continue
                     pixmap = page.get_pixmap(matrix=fitz.Matrix(200 / 72, 200 / 72), alpha=False)
                     image = Image.open(io.BytesIO(pixmap.tobytes("png")))
@@ -284,6 +298,7 @@ def extract_drawing_text(file_bytes: bytes, file_name: str, mime_type: str) -> d
                     if page_result.strip():
                         page_text.append(page_result)
                     confidence_scores.append(confidence)
+                    confidence_methods.append("tesseract_ocr")
         else:
             try:
                 image = Image.open(io.BytesIO(file_bytes))
@@ -301,6 +316,7 @@ def extract_drawing_text(file_bytes: bytes, file_name: str, mime_type: str) -> d
             text, confidence = _run_tesseract(ImageOps.exif_transpose(image).convert("RGB"))
             page_text.append(text)
             confidence_scores.append(confidence)
+            confidence_methods.append("tesseract_ocr")
     except (OCRInputError, OCRUnavailableError, OCRProcessingError):
         raise
     except Exception as exc:
@@ -315,6 +331,7 @@ def extract_drawing_text(file_bytes: bytes, file_name: str, mime_type: str) -> d
         **metadata,
         "rawText": raw_text,
         "confidence": max(0.0, min(1.0, float(confidence))),
+        "confidenceMethod": "mixed" if len(set(confidence_methods)) > 1 else (confidence_methods[0] if confidence_methods else "tesseract_ocr"),
         "pageCount": pages_processed or 1,
         "needsReview": True,
         "limitations": [
