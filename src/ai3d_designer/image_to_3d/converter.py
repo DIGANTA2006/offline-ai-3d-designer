@@ -100,130 +100,56 @@ class ImageTo3DConverter:
         return depth_map
     
     def depth_to_mesh(
-        self, 
-        depth_map: np.ndarray, 
+        self,
+        depth_map: np.ndarray,
         image: Optional[np.ndarray] = None,
         scale: float = 50.0,
         height_scale: float = 10.0,
         simplify: float = 0.0,
-        base_thickness: float = 2.0
+        base_thickness: float = 2.0,
     ) -> trimesh.Trimesh:
+        """Convert a depth map into a closed approximate relief mesh.
+
+        This is a heightfield extrusion, not reconstruction of hidden geometry.
         """
-        Convert depth map to 3D mesh.
-        
-        Args:
-            depth_map: Normalized depth map (0-1)
-            image: Optional color image for vertex colors
-            scale: XY scale in mm
-            height_scale: Z scale in mm
-            simplify: Simplification factor (0 = no simplification)
-            base_thickness: Base thickness in mm
-            
-        Returns:
-            trimesh.Trimesh object
-        """
-        h, w = depth_map.shape
-        
-        # Create vertex grid
-        x = np.linspace(0, scale, w)
-        y = np.linspace(0, scale, h)
-        xx, yy = np.meshgrid(x, y)
-        
-        # Z from depth map (inverted so bright = high)
-        zz = depth_map * height_scale + base_thickness
-        
-        # Create vertices
-        vertices = np.stack([xx, yy, zz], axis=-1).reshape(-1, 3)
-        
-        # Create faces (quad grid -> triangles)
-        faces = []
-        for i in range(h - 1):
-            for j in range(w - 1):
-                v0 = i * w + j
-                v1 = i * w + j + 1
-                v2 = (i + 1) * w + j
-                v3 = (i + 1) * w + j + 1
-                
-                faces.append([v0, v2, v1])
-                faces.append([v1, v2, v3])
-        
-        faces = np.array(faces)
-        
-        # Create mesh
-        mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
-        
-        # Add base (extrude bottom)
-        mesh = self._add_base(mesh, base_thickness)
-        
-        # Add vertex colors from image if provided
+        depth = np.asarray(depth_map, dtype=np.float64)
+        if depth.ndim != 2 or min(depth.shape, default=0) < 2:
+            raise ValueError("Depth map must be a 2-D array with at least 2 rows and columns.")
+        if not np.isfinite(depth).all():
+            raise ValueError("Depth map contains non-finite values.")
+        if not np.isfinite(scale) or scale <= 0:
+            raise ValueError("XY scale must be a finite positive number of millimeters.")
+        if not np.isfinite(height_scale) or height_scale < 0:
+            raise ValueError("Height scale must be a finite non-negative number of millimeters.")
+        if not np.isfinite(base_thickness) or base_thickness <= 0:
+            raise ValueError("Base thickness must be a finite positive number of millimeters.")
+        if not np.isfinite(simplify) or not 0 <= simplify < 1:
+            raise ValueError("Simplification must be in the range [0, 1).")
+
+        height, width = depth.shape
+        xx, yy = np.meshgrid(np.linspace(0, scale, width), np.linspace(0, scale, height))
+        zz = np.clip(depth, 0.0, 1.0) * height_scale + base_thickness
+        color_grid = None
         if image is not None:
-            img_resized = cv2.resize(image, (w, h))
-            colors = img_resized.reshape(-1, 3)
-            mesh.visual.vertex_colors = np.hstack([colors, np.full((len(colors), 1), 255)])
-        
-        # Simplify if requested
+            rgb = np.asarray(cv2.resize(image, (width, height)), dtype=np.uint8)
+            color_grid = rgb[:, :, :3]
+
+        mesh = build_closed_heightfield(xx, yy, zz, bottom_z=0.0, vertex_colors=color_grid)
         if simplify > 0:
-            mesh = mesh.simplify_quadratic_decimation(int(len(mesh.faces) * (1 - simplify)))
-        
-        # Ensure watertight
-        mesh.fill_holes()
+            target_faces = max(12, int(len(mesh.faces) * (1.0 - simplify)))
+            simplifier = getattr(mesh, "simplify_quadric_decimation", None)
+            if simplifier is not None:
+                mesh = simplifier(face_count=target_faces)
+            else:
+                legacy_simplifier = getattr(mesh, "simplify_quadratic_decimation", None)
+                if legacy_simplifier is None:
+                    raise RuntimeError("Mesh simplification is unavailable in the installed trimesh version.")
+                mesh = legacy_simplifier(target_faces)
+            if not mesh.is_watertight or not mesh.is_volume or mesh.volume <= 0:
+                raise ValueError("Mesh simplification produced an invalid solid; retry with simplification set to 0.")
         mesh.fix_normals()
-        
         return mesh
-    
-    def _add_base(self, mesh: trimesh.Trimesh, thickness: float) -> trimesh.Trimesh:
-        """Add a flat base to the mesh to make it printable."""
-        bounds = mesh.bounds
-        min_z = bounds[0, 2]
-        
-        boundary_mask = np.abs(mesh.vertices[:, 2] - min_z) < 0.01
-        boundary_verts = mesh.vertices[boundary_mask]
-        
-        if len(boundary_verts) < 3:
-            return mesh
-        
-        from scipy.spatial import ConvexHull
-        try:
-            hull = ConvexHull(boundary_verts[:, :2])
-            
-            base_z = 0
-            base_vertices = []
-            for v_idx in hull.vertices:
-                v = boundary_verts[v_idx]
-                base_vertices.append([v[0], v[1], base_z])
-            
-            base_vertices = np.array(base_vertices)
-            base_vertex_offset = len(mesh.vertices)
-            
-            base_faces = []
-            for simplex in hull.simplices:
-                base_faces.append([
-                    base_vertex_offset + simplex[0],
-                    base_vertex_offset + simplex[1],
-                    base_vertex_offset + simplex[2]
-                ])
-            
-            side_faces = []
-            for i in range(len(hull.vertices)):
-                next_i = (i + 1) % len(hull.vertices)
-                v_top_1 = hull.vertices[i]
-                v_top_2 = hull.vertices[next_i]
-                v_bot_1 = base_vertex_offset + i
-                v_bot_2 = base_vertex_offset + next_i
-                
-                side_faces.append([v_top_1, v_bot_1, v_bot_2])
-                side_faces.append([v_top_1, v_bot_2, v_top_2])
-            
-            all_vertices = np.vstack([mesh.vertices, base_vertices])
-            all_faces = np.vstack([mesh.faces, base_faces, side_faces])
-            
-            mesh = trimesh.Trimesh(vertices=all_vertices, faces=all_faces, process=True)
-            
-        except Exception:
-            pass
-        
-        return mesh
-    
+
     def convert_image_to_3d(
         self,
         image_path: str,
