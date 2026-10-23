@@ -3,6 +3,7 @@
 Image to 3D conversion module using depth estimation (MiDaS) and mesh generation.
 """
 import os
+import tempfile
 import torch
 import cv2
 import numpy as np
@@ -176,8 +177,10 @@ class ImageTo3DConverter:
             Generated mesh
         """
         img = cv2.imread(image_path)
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) if img is not None else None
-        
+        if img is None:
+            raise ValueError(f"Could not load image: {image_path}")
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
         self._log(f"Estimating depth from {image_path}...")
         depth_map = self.estimate_depth(image_path)
         
@@ -191,10 +194,34 @@ class ImageTo3DConverter:
             simplify=simplify
         )
         
-        self._log(f"Exporting to {output_path}...")
-        mesh.export(output_path)
-        
-        self._log(f"Done! Mesh: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces")
+        supported_formats = {"stl", "obj", "ply"}
+        destination = Path(output_path).expanduser()
+        output_format = destination.suffix.lower().lstrip(".") if destination.suffix else format.lower().lstrip(".")
+        if output_format not in supported_formats:
+            raise ValueError(f"Unsupported image-mesh export format: {output_format}. Use STL, OBJ, or PLY.")
+        if not destination.suffix:
+            destination = destination.with_suffix("." + output_format)
+        if not mesh.is_watertight or not mesh.is_volume or not np.isfinite(float(mesh.volume)) or mesh.volume <= 0:
+            raise ValueError("Refusing to export image-derived geometry that is not a positive-volume watertight solid.")
+
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                prefix=f".{destination.stem}-", suffix=destination.suffix,
+                dir=str(destination.parent), delete=False,
+            ) as temp_file:
+                temporary_path = Path(temp_file.name)
+            self._log(f"Exporting to {destination}...")
+            mesh.export(str(temporary_path), file_type=output_format)
+            if not temporary_path.is_file() or temporary_path.stat().st_size == 0:
+                raise RuntimeError("Image-derived mesh export produced an empty file.")
+            os.replace(temporary_path, destination)
+        finally:
+            if temporary_path is not None and temporary_path.exists():
+                temporary_path.unlink()
+
+        self._log(f"Done! Closed solid mesh: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces")
         return mesh
     
     def _log(self, msg: str):
