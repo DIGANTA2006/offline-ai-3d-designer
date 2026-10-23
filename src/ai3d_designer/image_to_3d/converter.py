@@ -251,93 +251,65 @@ def create_lithophane(
     max_size: float = 100.0,
     thickness: float = 3.0,
     thinnest: float = 0.8,
-    border: float = 2.0
+    border: float = 2.0,
 ) -> trimesh.Trimesh:
-    """
-    Create a lithophane from an image (better for photos).
-    
-    Args:
-        image_path: Path to input image
-        output_path: Path to output STL
-        max_size: Maximum dimension in mm
-        thickness: Maximum thickness in mm
-        thinnest: Minimum thickness in mm
-        border: Border width in mm
-        
-    Returns:
-        Generated mesh
-    """
-    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-    if img is None:
-        raise ValueError(f"Could not load image: {image_path}")
-    
-    h, w = img.shape
-    aspect = w / h
-    
-    if aspect > 1:
-        new_w = max_size - 2 * border
-        new_h = new_w / aspect
+    """Create a watertight photo-relief lithophane, not an engineering CAD reconstruction."""
+    if not np.isfinite(max_size) or max_size <= 0:
+        raise ValueError("max_size must be a positive millimetre value.")
+    if not np.isfinite(thickness) or not np.isfinite(thinnest) or thinnest <= 0 or thickness < thinnest:
+        raise ValueError("Require thickness >= thinnest > 0.")
+    if not np.isfinite(border) or border < 0 or max_size <= 2.0 * border:
+        raise ValueError("border must be non-negative and less than half of max_size.")
+
+    try:
+        with Image.open(image_path) as source:
+            grayscale = source.convert("L")
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"Could not load image: {exc}") from exc
+
+    source_w, source_h = grayscale.size
+    if source_w < 2 or source_h < 2:
+        raise ValueError("Image must be at least 2 × 2 pixels.")
+    aspect = source_w / source_h
+    inner_max = max_size - 2.0 * border
+    if aspect >= 1.0:
+        inner_w, inner_h = inner_max, inner_max / aspect
     else:
-        new_h = max_size - 2 * border
-        new_w = new_h * aspect
-    
-    img = cv2.resize(img, (int(new_w), int(new_h)))
-    h, w = img.shape
-    
-    img_norm = img.astype(np.float32) / 255.0
-    thickness_map = thinnest + (1.0 - img_norm) * (thickness - thinnest)
-    
-    x = np.linspace(-new_w/2, new_w/2, w)
-    y = np.linspace(-new_h/2, new_h/2, h)
-    xx, yy = np.meshgrid(x, y)
-    zz = thickness_map
-    
-    vertices = np.stack([xx, yy, zz], axis=-1).reshape(-1, 3)
-    
-    faces = []
-    for i in range(h - 1):
-        for j in range(w - 1):
-            v0 = i * w + j
-            v1 = i * w + j + 1
-            v2 = (i + 1) * w + j
-            v3 = (i + 1) * w + j + 1
-            faces.append([v0, v2, v1])
-            faces.append([v1, v2, v3])
-    
-    faces = np.array(faces)
-    mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-    
-    mesh = _add_lithophane_base(mesh, border, thinnest)
-    
-    mesh.export(output_path)
+        inner_h, inner_w = inner_max, inner_max * aspect
+
+    pixel_count = min(512, max(source_w, source_h))
+    pixels_w = max(2, int(round(pixel_count * inner_w / max(inner_w, inner_h))))
+    pixels_h = max(2, int(round(pixel_count * inner_h / max(inner_w, inner_h))))
+    resized = grayscale.resize((pixels_w, pixels_h), resample=Image.Resampling.LANCZOS)
+    gray = np.asarray(resized, dtype=np.float64) / 255.0
+
+    if border > 0:
+        pixel_pitch = min(inner_w / max(pixels_w - 1, 1), inner_h / max(pixels_h - 1, 1))
+        border_px_x = max(1, int(round(border / pixel_pitch)))
+        border_px_y = max(1, int(round(border / pixel_pitch)))
+        # Black padding is deliberately thicker and strengthens the lithophane's frame.
+        gray = np.pad(
+            gray,
+            ((border_px_y, border_px_y), (border_px_x, border_px_x)),
+            mode="constant",
+            constant_values=0.0,
+        )
+
+    height_map = thinnest + (1.0 - gray) * (thickness - thinnest)
+    mesh = _build_watertight_heightfield(
+        height_map,
+        scale_x=inner_w + 2.0 * border,
+        scale_y=inner_h + 2.0 * border,
+    )
+    if not mesh.is_watertight or not mesh.is_volume or mesh.volume <= 0:
+        raise ValueError("Lithophane mesh failed watertight solid validation.")
+
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    mesh.export(str(output), file_type="stl")
+    if not output.is_file() or output.stat().st_size == 0:
+        raise RuntimeError("Lithophane export did not produce a non-empty STL file.")
     return mesh
-
-
-def _add_lithophane_base(mesh: trimesh.Trimesh, border: float, thinnest: float) -> trimesh.Trimesh:
-    """Add base and border to lithophane."""
-    bounds = mesh.bounds
-    min_x, min_y = bounds[0, 0], bounds[0, 1]
-    max_x, max_y = bounds[1, 0], bounds[1, 1]
-    
-    base_verts = np.array([
-        [min_x - border, min_y - border, 0],
-        [max_x + border, min_y - border, 0],
-        [max_x + border, max_y + border, 0],
-        [min_x - border, max_y + border, 0],
-    ])
-    
-    base_faces = np.array([[0, 1, 2], [0, 2, 3]])
-    
-    min_z = mesh.vertices[:, 2].min()
-    bottom_mask = np.abs(mesh.vertices[:, 2] - min_z) < 0.01
-    bottom_verts = mesh.vertices[bottom_mask]
-    
-    all_verts = np.vstack([mesh.vertices, base_verts])
-    all_faces = np.vstack([mesh.faces, base_faces + len(mesh.vertices)])
-    
-    result = trimesh.Trimesh(vertices=all_verts, faces=all_faces, process=True)
-    result.fill_holes()
-    return result
 
 
 if __name__ == "__main__":
