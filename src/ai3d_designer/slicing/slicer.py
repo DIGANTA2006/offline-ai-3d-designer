@@ -230,13 +230,18 @@ class Slicer:
                 ],
             )
 
-        definition_text = printer_definition or os.environ.get("CURA_PRINTER_DEFINITION", "")
-        definition_path = Path(definition_text).expanduser() if definition_text else None
-        if definition_path is None or not definition_path.is_file():
+        definition_value = printer_definition or os.environ.get("CURA_PRINTER_DEFINITION", "")
+        if isinstance(definition_value, (list, tuple)):
+            definition_names = [str(value).strip() for value in definition_value if str(value).strip()]
+        else:
+            # GUI supports multiple definition files separated by semicolons.
+            definition_names = [part.strip() for part in str(definition_value).split(";") if part.strip()]
+        definition_paths = [Path(value).expanduser() for value in definition_names]
+        if not definition_paths or any(not path.is_file() for path in definition_paths):
             return SliceResult(
                 success=False,
                 errors=[
-                    "Select a valid Cura printer definition JSON (plus any required extruder definition). Printer-specific start/end G-code and firmware settings are required; no G-code was generated."
+                    "Select valid Cura printer/extruder definition JSON file(s), separated with semicolons. Printer-specific start/end G-code and firmware settings are required; no G-code was generated."
                 ],
             )
 
@@ -273,14 +278,10 @@ class Slicer:
             ) as temp_file:
                 temporary_output = Path(temp_file.name)
 
-            command = [
-                str(self.cura_engine_path),
-                "slice",
-                "-v",
-                "-j", str(definition_path.resolve()),
-                "-l", str(model_path.resolve()),
-                "-o", str(temporary_output),
-            ]
+            command = [str(self.cura_engine_path), "slice", "-v"]
+            for definition_path in definition_paths:
+                command.extend(["-j", str(definition_path.resolve())])
+            command.extend(["-l", str(model_path.resolve()), "-o", str(temporary_output)])
             for key, value in settings.to_cura_json().items():
                 command.extend(["-s", f"{key}={self._cura_value(value)}"])
 
