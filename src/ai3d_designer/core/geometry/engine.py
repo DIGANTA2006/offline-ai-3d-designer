@@ -4,6 +4,7 @@ Converts PartSpec to build123d Part objects.
 """
 
 from typing import Optional, List, Dict, Any
+import math
 from build123d import (
     Part, Box, Cylinder, Sphere, Cone, Torus, Wedge,
     Pos, Rot, Location, Vector, Axis,
@@ -38,12 +39,21 @@ class GeometryEngine:
         return value * self.unit_factor
     
     def _convert_vec(self, vec: List[float]) -> Vector:
-        """Convert list to build123d Vector in mm."""
-        return Vector(*[self._convert(v) for v in vec])
+        """Convert a position expressed in millimeters to a build123d Vector.
+
+        Feature positions are defined in millimeters by the PartSpec/NLP contract;
+        only individual dimensional parameters carry their own unit metadata.
+        """
+        if len(vec) != 3 or any(not math.isfinite(float(value)) for value in vec):
+            raise ValueError("Feature position must contain three finite millimeter values.")
+        return Vector(*[float(value) for value in vec])
     
     def _create_primitive(self, feature: FeatureSpec) -> Shape:
         """Create a primitive shape from feature spec."""
-        params = {k: self._convert(v.value) for k, v in feature.parameters.items()}
+        params = {k: v.to_mm() for k, v in feature.parameters.items()}
+        for key, value in params.items():
+            if not math.isfinite(value):
+                raise ValueError(f"Parameter '{key}' must be a finite number.")
         
         match feature.type:
             case PrimitiveType.BOX:
@@ -106,55 +116,64 @@ class GeometryEngine:
         return shape.move(Location(transform))
     
     def create_part(self, spec: PartSpec) -> Part:
-        """Create a build123d Part from PartSpec."""
+        """Build geometry in the explicit feature-history order of the PartSpec."""
         if not spec.features:
             raise ValueError("No features in specification")
-        
-        # Sort features by dependency (parent before children)
-        features_by_id = {f.id: f for f in spec.features}
-        ordered_features = self._topological_sort(spec.features)
-        
-        parts: Dict[str, Part] = {}
+
+        # Feature order is significant for sequential boolean history; do not reorder
+        # by parent_id because that would silently change the meaning of operations.
+        ordered_features = list(spec.features)
         result: Optional[Part] = None
-        
-        for feature in ordered_features:
-            # Create primitive
+
+        for index, feature in enumerate(ordered_features):
+            if index == 0 and feature.operation != OperationType.UNION:
+                raise ValueError("The first feature must use the union operation to define a base solid.")
+
             shape = self._create_primitive(feature)
-            
-            # Apply transform
             shape = self._apply_transform(shape, feature)
-            
-            # Convert to Part
             part = Part(shape)
-            parts[feature.id] = part
-            
-            # Apply boolean operation
-            if feature.operation == OperationType.UNION:
-                if result is None:
-                    result = part
-                else:
-                    result += part
+
+            if result is None:
+                result = part
+            elif feature.operation == OperationType.UNION:
+                result = result + part
             elif feature.operation == OperationType.DIFFERENCE:
-                if result is None:
-                    result = part
-                else:
-                    result -= part
+                result = result - part
             elif feature.operation == OperationType.INTERSECTION:
-                if result is None:
-                    result = part
-                else:
-                    result &= part
-        
+                result = result & part
+            else:
+                raise ValueError(f"Unsupported boolean operation: {feature.operation}")
+
+            # A failed/empty boolean must stop the pipeline before exports can be
+            # reported as successful. Multiple solids remain valid for assemblies.
+            try:
+                volume = float(result.volume)
+            except Exception as exc:
+                raise ValueError(f"Could not evaluate the result after feature '${feature.id}'.") from exc
+            if not math.isfinite(volume) or volume <= 1e-9:
+                raise ValueError(
+                    f"Feature '${feature.name or feature.id}' produced empty or invalid geometry. "
+                    "Check feature order, placement, and boolean overlap."
+                )
+
+            validity = getattr(result, "is_valid", None)
+            try:
+                is_valid = validity() if callable(validity) else validity
+            except Exception as exc:
+                raise ValueError(f"Could not validate geometry after feature '${feature.id}'.") from exc
+            if is_valid is False:
+                raise ValueError(
+                    f"Feature '${feature.name or feature.id}' produced an invalid solid. "
+                    "Adjust dimensions or feature placement."
+                )
+
         if result is None:
-            raise ValueError("Failed to create part from features")
-        
+            raise ValueError("Failed to create part from specification.")
         return result
-    
+
     def _topological_sort(self, features: List[FeatureSpec]) -> List[FeatureSpec]:
-        """Sort features so parents come before children."""
-        # Simple approach: features with no parent_id first, then by parent_id
-        # For now, just return as-is since build123d handles operations sequentially
-        return features
+        """Return feature history in input order; boolean order is semantically significant."""
+        return list(features)
 
 
 def create_part_from_spec(spec: PartSpec) -> Part:
