@@ -495,6 +495,8 @@ class Slicer:
             seen_position: dict[str, bool] = {"x": False, "y": False, "z": False}
             position: dict[str, float] = {"X": 0.0, "Y": 0.0, "Z": 0.0}
             absolute_xyz = True
+            absolute_e = True
+            extrusion_position = 0.0
 
             for raw_line in text.splitlines():
                 # Ignore human-readable comments so words like "E" or "G28"
@@ -516,6 +518,10 @@ class Slicer:
                         absolute_xyz = True
                     elif command == "G91":
                         absolute_xyz = False
+                    elif command == "G92":
+                        reset_e = re.search(r"(?<![A-Z])E\\s*(-?(?:\\d+(?:\\.\\d*)?|\\.\\d+))", line)
+                        if reset_e:
+                            extrusion_position = float(reset_e.group(1))
                     elif command == "G28":
                         stats["has_home"] = True
                         for axis in ("X", "Y", "Z"):
@@ -545,12 +551,21 @@ class Slicer:
                                 stats[low_key] = min(stats[low_key], position[axis])
                                 stats[high_key] = max(stats[high_key], position[axis])
 
-                        # Detect extrusion on a motion command only, with E parsed as a token.
-                        if "E" in values and values["E"] != 0:
-                            stats["has_extrusion"] = True
+                        # Track extrusion mode so a retraction cannot masquerade as printing.
+                        if "E" in values:
+                            extrusion_value = values["E"]
+                            extrusion_delta = extrusion_value - extrusion_position if absolute_e else extrusion_value
+                            if absolute_e:
+                                extrusion_position = extrusion_value
+                            if extrusion_delta > 1e-9:
+                                stats["has_extrusion"] = True
                 elif command_type == "M":
                     stats["m_commands"] += 1
-                    if command in {"M104", "M109"}:
+                    if command == "M82":
+                        absolute_e = True
+                    elif command == "M83":
+                        absolute_e = False
+                    elif command in {"M104", "M109"}:
                         stats["has_temp"] = True
 
             missing = []
