@@ -23,6 +23,7 @@ def test_extracts_explicit_dimensions_tolerances_fits_threads_and_finish():
     assert result["threads"] == ["M8X1.25"]
     assert result["surfaceFinish"] == "Ra3.2um"
     assert result["material"].lower() == "stainless steel"
+    assert any("0.1" in item["raw"] for item in result["tolerances"])
     assert any(item["type"] == "view" for item in result["annotations"])
 
 
@@ -36,7 +37,7 @@ def test_annotation_parser_does_not_invent_dimensions():
     assert result["dimensions"]["triplets"] == []
     assert result["dimensions"]["linear"] == []
     assert result["dimensions"]["diameters"] == []
-    assert result["needsReview"] if "needsReview" in result else True
+    assert result["material"].lower() == "aluminium"
 
 
 def test_rejects_unsupported_extension_before_ocr_dependency_use():
