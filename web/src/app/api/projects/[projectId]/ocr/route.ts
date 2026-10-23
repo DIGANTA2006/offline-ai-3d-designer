@@ -119,17 +119,41 @@ async function assertOcrReady(endpoint: URL): Promise<void> {
 
   const status = health as Record<string, unknown>;
   const capability = status.ocrAvailable;
-  // The old main-branch health model has ocrAvailable=false by default and no
-  // limitations list. Require the expanded feature-branch health contract too.
-  if (typeof capability !== "boolean" || !Array.isArray(status.limitations)) {
+  // The legacy main-branch backend returns a health model without these fields.
+  // Requiring the complete contract prevents a stale Preview from reaching its mock endpoint.
+  if (
+    typeof capability !== "boolean" ||
+    !Array.isArray(status.limitations) ||
+    typeof status.cadRuntimeAvailable !== "boolean" ||
+    typeof status.serviceTokenConfigured !== "boolean"
+  ) {
     throw new RouteError(
-      "The connected CAD backend is the legacy build and still uses the OCR placeholder. Deploy the feature branch to a separate Railway Preview service and set Vercel Preview's CAD_SERVICE_URL_PREVIEW to that service. Keep Production's CAD_SERVICE_URL unchanged.",
+      "The connected CAD backend is an older build and still uses the OCR placeholder. Redeploy the latest feature branch to a separate Railway Preview service, then point Vercel Preview's CAD_SERVICE_URL_PREVIEW to it. Do not change Production's CAD_SERVICE_URL.",
+      503,
+    );
+  }
+  if (status.cadRuntimeAvailable !== true) {
+    const cause = typeof status.cadRuntimeError === "string" ? ` (${status.cadRuntimeError})` : "";
+    throw new RouteError(
+      `CAD runtime is unavailable${cause}. Check the Railway deployment build logs. The image must pass the build123d import smoke test in python-backend/Dockerfile.`,
+      503,
+    );
+  }
+  if (status.serviceTokenConfigured !== true) {
+    throw new RouteError(
+      "CAD_SERVICE_TOKEN is missing on the Railway Preview backend. Configure it on Railway and set the matching CAD_SERVICE_TOKEN_PREVIEW in Vercel Preview.",
+      503,
+    );
+  }
+  if (status.cadAvailable !== true || status.status !== "healthy") {
+    throw new RouteError(
+      "CAD backend is degraded. Verify the Railway Preview backend's health JSON and service-token configuration before retrying OCR.",
       503,
     );
   }
   if (capability !== true) {
     throw new RouteError(
-      "The feature-branch CAD backend reports OCR unavailable. Ensure Railway built python-backend/Dockerfile (not Nixpacks), then confirm /health returns ocrAvailable=true.",
+      "The feature-branch CAD backend reports OCR unavailable. Ensure Railway built python-backend/Dockerfile, which installs Tesseract and the OCR dependencies, then confirm /health returns ocrAvailable=true.",
       503,
     );
   }
