@@ -436,3 +436,10 @@ def test_loft_accepts_offset_polygon_sections():
     part = create_part_from_spec(spec)
     assert part.volume > 0
     assert part.bounding_box().size.Z == pytest.approx(10.0, abs=0.1)
+
+
+def test_legacy_geometry_import_reexports_canonical_engine():
+    from ai3d_designer.geometry.engine import create_part_from_spec as legacy_create_part
+    from ai3d_designer.core.geometry.engine import create_part_from_spec as core_create_part
+
+    assert legacy_create_part is core_create_part
