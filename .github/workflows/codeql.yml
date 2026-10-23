@@ -147,7 +147,8 @@ jobs:
                     total += 1
                     rule_id = result.get("ruleId", "unknown")
                     severity = rules.get(rule_id, 0)
-                    if severity >= 7.0:
+                    rule_id_lower = rule_id.lower()
+                    if severity >= 7.0 or "redos" in rule_id_lower or "regex-injection" in rule_id_lower:
                         locations = result.get("locations", [])
                         first = locations[0].get("physicalLocation", {}) if locations else {}
                         artifact = first.get("artifactLocation", {}).get("uri", "unknown file")
@@ -158,7 +159,7 @@ jobs:
         print(f"CodeQL SARIF reviewed: {total} results across {len(files)} report(s).")
         if severe:
             for severity, rule_id, artifact, line, message in severe:
-                print(f"HIGH/CRITICAL security finding ({severity:g}): {rule_id} at {artifact}:{line}: {message}")
+                print(f"Blocked CodeQL finding (severity {severity:g}): {rule_id} at {artifact}:{line}: {message}")
             sys.exit(1)
-        print("No high/critical findings were reported. Review the SARIF artifact for lower-severity findings.")
+        print("No high/critical security or regex-denial-of-service findings were reported. Review the SARIF artifact for all other findings.")
         PY
