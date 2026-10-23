@@ -143,10 +143,17 @@ class PartSpec(BaseModel):
         ids = [f.id for f in self.features]
         if len(ids) != len(set(ids)):
             errors.append("Duplicate feature IDs found")
-        # Validate each feature
+        # Validate profile data according to each modelling operation.
         for feature in self.features:
-            if feature.type in (PrimitiveType.EXTRUSION, PrimitiveType.REVOLUTION, 
-                               PrimitiveType.LOFT, PrimitiveType.SWEEP):
+            if feature.type in (PrimitiveType.EXTRUSION, PrimitiveType.REVOLUTION):
                 if not feature.metadata.get("profile"):
-                    errors.append(f"Feature {feature.id} ({feature.type.value}) requires a profile")
+                    errors.append(f"Feature {feature.id} ({feature.type.value}) requires metadata.profile")
+            elif feature.type == PrimitiveType.LOFT:
+                profiles = feature.metadata.get("profiles")
+                if not isinstance(profiles, list) or len(profiles) < 2:
+                    errors.append(f"Feature {feature.id} (loft) requires at least two metadata.profiles sections")
+            elif feature.type == PrimitiveType.SWEEP:
+                if not feature.metadata.get("profile") or not feature.metadata.get("path"):
+                    errors.append(f"Feature {feature.id} (sweep) requires metadata.profile and metadata.path")
+
         return errors
