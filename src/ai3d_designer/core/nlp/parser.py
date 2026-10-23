@@ -330,7 +330,7 @@ class RuleBasedParser:
             tube_mentioned = bool(re.search(r"\b(?:tube|pipe)\b", text))
             count_match = re.search(r"\b(\d+)\s+holes?\b", text)
             word_counts = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "eight": 8}
-            word_count_match = re.search(r"\b(two|three|four|five|six|eight)\s+holes?\b", text)
+            word_count_match = re.search(r"\b(two|three|four|five|six|eight)\b(?:\s+[a-z0-9.]+){0,3}\s+holes?\b", text)
             hole_count = int(count_match.group(1)) if count_match else (
                 word_counts[word_count_match.group(1)] if word_count_match else 1
             )
@@ -529,7 +529,7 @@ class RuleBasedParser:
 
         if "hole" in text or "bore" in text:
             hole_patterns = [
-                rf"(?P<num>{number})\s*(?P<unit>{unit})?\s*(?:diameter|diam|dia)?\s*(?:through\s+)?(?:hole|bore)\b",
+                rf"(?P<num>{number})\s*(?P<unit>{unit})?\s*(?:diameter|diam|dia)?\s*(?:through\s+)?(?:holes?|bores?)\b",
                 rf"\b(?:hole|bore)\s*(?:diameter|diam|dia)?\s*(?:of|=|:)?\s*(?P<num>{number})\s*(?P<unit>{unit})?",
             ]
             capture("hole_diameter", hole_patterns)
