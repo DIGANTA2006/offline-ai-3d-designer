@@ -30,7 +30,7 @@ This document separates capabilities that exist in code from capabilities that a
 | General engineering drawing OCR | Not implemented in the web workflow | Secure raster/PDF processing, OCR engine deployment, structured extraction, and confidence/provenance reporting |
 | Drawing annotations/tolerances/fits | Schema fields exist, but extraction pipeline is not implemented | Dimension and GD&T parsing, unit recognition, datum/feature association, and human review |
 | Single-image depth relief/lithophane | Experimental prototype; work on this branch makes the generated relief/lithophane a validated watertight solid. Depth is relative, not metric. | Real image-quality benchmarks, optional MiDaS model deployment, quality/performance limits, and user review before printing |\n| Image-to-parametric CAD | Not implemented as an accurate engineering pipeline | Multiple views/calibration, feature correspondence, constraints, ambiguity handling, and validation |
-| Complex parametric features | Extrusion/revolution/loft/sweep are declared but the geometry engine currently does not implement them | Explicit validated profiles, paths, axis definitions, dependency handling, and kernel tests |
+| Complex parametric features | Explicit polygon-profile extrusion and 360° Z-axis revolution are implemented on this branch; loft/sweep and curved/multi-loop profiles remain unsupported | More CAD feature types, curved profiles, interior loops, explicit axes, complex feature dependency graphs, and broader kernel tests |
 | Fillets/chamfers/threads/gears/freeform surfaces | Not supported by the deterministic parser | Feature-history operations, standards-aware parameters, geometric failure handling, and tests |
 | Automatic 3D printing slicer in the web app | Not implemented | Server/job orchestration, machine profiles, safe storage of G-code, and detailed print-setting UI |
 | Production slicing on desktop | Requires CuraEngine and valid installation resources | Integration tests against supported CuraEngine versions and printer profiles |
@@ -61,9 +61,8 @@ The pull request for this audit adds parser/geometry regression coverage and a d
 - Remove false-success placeholder G-code generation.
 
 ### Stage 2 — Parametric feature history
-- Implement extrusion from validated 2D profiles.
-- Implement revolution with explicit axis and closed profile.
-- Implement loft/sweep with validated section/path relationships.
+- Expand test coverage and API/UI schema for the new polygon-profile extrusion and 360° Z-axis revolution operations.
+- Implement loft/sweep with validated section/path relationships and explicit axes.
 - Add fillet/chamfer operations with explicit edge selection and graceful kernel failure.
 - Add property-based testing for boolean operations, dimensions, unit conversions, degenerate inputs, and topology.
 
