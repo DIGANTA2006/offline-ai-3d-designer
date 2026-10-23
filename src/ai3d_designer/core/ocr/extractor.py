@@ -35,46 +35,46 @@ ALLOWED_MIME_TYPES = {
 }
 
 _DIMENSION_RE = re.compile(
-    r'(?<![A-Za-z0-9])(?P<prefix>Ø|⌀|φ|Φ|R|DIA\\.?|DIAM\\.?)?\\s*'
-    r'(?P<value>\\d{1,6}(?:[.,]\\d{1,4})?)\\s*'
-    r'(?P<unit>mm\\b|cm\\b|in\\b|inches?\\b|["″])?\\s*'
-    r'(?P<tolerance>±\\s*\\d+(?:[.,]\\d+)?|'
-    r'\\+\\s*\\d+(?:[.,]\\d+)?\\s*/\\s*-\\s*\\d+(?:[.,]\\d+)?)?',
+    r'(?<![A-Za-z0-9])(?P<prefix>Ø|⌀|φ|Φ|R|DIA\.?|DIAM\.?)?\s*'
+    r'(?P<value>\d{1,6}(?:[.,]\d{1,4})?)\s*'
+    r'(?P<unit>mm\b|cm\b|in\b|inches?\b|["″])?\s*'
+    r'(?P<tolerance>±\s*\d+(?:[.,]\d+)?|'
+    r'\+\s*\d+(?:[.,]\d+)?\s*/\s*-\s*\d+(?:[.,]\d+)?)?',
     re.IGNORECASE,
 )
 _TRIPLE_RE = re.compile(
-    r'(?<![A-Za-z])(?P<a>\\d+(?:[.,]\\d+)?)\\s*'
-    r'(?:mm\\s*)?[x×]\\s*(?P<b>\\d+(?:[.,]\\d+)?)\\s*'
-    r'(?:mm\\s*)?[x×]\\s*(?P<c>\\d+(?:[.,]\\d+)?)\\s*'
-    r'(?P<unit>mm\\b|cm\\b|in\\b|inches?\\b)?',
+    r'(?<![A-Za-z])(?P<a>\d+(?:[.,]\d+)?)\s*'
+    r'(?:mm\s*)?[x×]\s*(?P<b>\d+(?:[.,]\d+)?)\s*'
+    r'(?:mm\s*)?[x×]\s*(?P<c>\d+(?:[.,]\d+)?)\s*'
+    r'(?P<unit>mm\b|cm\b|in\b|inches?\b)?',
     re.IGNORECASE,
 )
 _TOLERANCE_RE = re.compile(
-    r'±\\s*\\d+(?:[.,]\\d+)?|'
-    r'\\+\\s*\\d+(?:[.,]\\d+)?\\s*/\\s*-\\s*\\d+(?:[.,]\\d+)?',
+    r'±\s*\d+(?:[.,]\d+)?|'
+    r'\+\s*\d+(?:[.,]\d+)?\s*/\s*-\s*\d+(?:[.,]\d+)?',
     re.IGNORECASE,
 )
 _FIT_RE = re.compile(
-    r'\\b[A-HJ-NP-Z]{1,2}\\d{1,2}\\s*/\\s*[a-hj-np-z]{1,2}\\d{1,2}\\b|'
-    r'\\b(?:H|h|g|f|js|JS)\\d{1,2}\\b'
+    r'\b[A-HJ-NP-Z]{1,2}\d{1,2}\s*/\s*[a-hj-np-z]{1,2}\d{1,2}\b|'
+    r'\b(?:H|h|g|f|js|JS)\d{1,2}\b'
 )
 _THREAD_RE = re.compile(
-    r'\\bM\\s*\\d+(?:[.,]\\d+)?(?:\\s*[x×]\\s*\\d+(?:[.,]\\d+)?)?'
-    r'(?:\\s*[- ]\\s*(?:UNC|UNF|UNEF|NPT|BSW|BSP))?\\b|'
-    r'\\b\\d+/\\d+\\s*-\\s*\\d+\\s*(?:UNC|UNF|NPT)\\b',
+    r'\bM\s*\d+(?:[.,]\d+)?(?:\s*[x×]\s*\d+(?:[.,]\d+)?)?'
+    r'(?:\s*[- ]\s*(?:UNC|UNF|UNEF|NPT|BSW|BSP))?\b|'
+    r'\b\d+/\d+\s*-\s*\d+\s*(?:UNC|UNF|NPT)\b',
     re.IGNORECASE,
 )
 _MATERIAL_RE = re.compile(
-    r'\\b(?:stainless steel|steel|aluminium|aluminum|brass|copper|titanium|'
-    r'ABS|PLA|PETG|PA6|nylon|polycarbonate)\\b',
+    r'\b(?:stainless steel|steel|aluminium|aluminum|brass|copper|titanium|'
+    r'ABS|PLA|PETG|PA6|nylon|polycarbonate)\b',
     re.IGNORECASE,
 )
 _VIEW_RE = re.compile(
-    r'\\b(?:FRONT|TOP|SIDE|BOTTOM|LEFT|RIGHT|ISOMETRIC|ISOMETRICAL|'
-    r'ELEVATION|SECTION|DETAIL)(?:\\s+[A-Z](?:\\s*[-–]\\s*[A-Z])?)?\\b',
+    r'\b(?:FRONT|TOP|SIDE|BOTTOM|LEFT|RIGHT|ISOMETRIC|ISOMETRICAL|'
+    r'ELEVATION|SECTION|DETAIL)(?:\s+[A-Z](?:\s*[-–]\s*[A-Z])?)?\b',
     re.IGNORECASE,
 )
-_SURFACE_RE = re.compile(r'\\bRa\\s*[=]?\\s*\\d+(?:[.,]\\d+)?\\s*(?:µm|um)?', re.IGNORECASE)
+_SURFACE_RE = re.compile(r'\bRa\s*[=]?\s*\d+(?:[.,]\d+)?\s*(?:µm|um)?', re.IGNORECASE)
 
 
 class OcrRuntimeUnavailable(RuntimeError):
@@ -287,7 +287,7 @@ def extract_candidates(raw_text: str) -> dict:
 
     numeric_tolerances = list(dict.fromkeys(match.group(0).strip() for match in _TOLERANCE_RE.finditer(raw_text)))
     fits = list(dict.fromkeys(match.group(0).replace(" ", "") for match in _FIT_RE.finditer(raw_text)))
-    threads = list(dict.fromkeys(re.sub(r"\\s+", "", match.group(0)).upper() for match in _THREAD_RE.finditer(raw_text)))
+    threads = list(dict.fromkeys(re.sub(r"\s+", "", match.group(0)).upper() for match in _THREAD_RE.finditer(raw_text)))
     materials = list(dict.fromkeys(match.group(0).strip() for match in _MATERIAL_RE.finditer(raw_text)))
     views = [
         {"label": match.group(0).strip().upper()}
