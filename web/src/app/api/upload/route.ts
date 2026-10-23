@@ -11,6 +11,76 @@ export const dynamic = "force-dynamic";
 
 // Vercel Functions have a 4.5 MB request-body limit. Leave space for multipart headers.
 const MAX_BATCH_BYTES = 3 * 1024 * 1024;
+const OCR_TIMEOUT_MS = 35_000;
+
+type StoredOcrResult = {
+  success: boolean;
+  jobId?: string;
+  spec?: Record<string, unknown>;
+  error?: string;
+};
+
+function getOcrMimeType(file: File): string | null {
+  const extension = file.name.toLowerCase().split(".").pop();
+  const raw = file.type.toLowerCase().split(";", 1)[0].trim();
+  const mime = raw === "image/jpg" ? "image/jpeg" : raw;
+  if (mime === "application/pdf" || mime === "image/png" || mime === "image/jpeg" || mime === "image/webp") return mime;
+  if (extension === "pdf") return "application/pdf";
+  if (extension === "png") return "image/png";
+  if (extension === "jpg" || extension === "jpeg") return "image/jpeg";
+  if (extension === "webp") return "image/webp";
+  return null;
+}
+
+async function runDrawingOcr(file: File): Promise<StoredOcrResult> {
+  const mimeType = getOcrMimeType(file);
+  if (!mimeType) {
+    return { success: false, error: "OCR supports PDF, PNG, JPEG, and WEBP. The file was stored privately but not processed." };
+  }
+
+  const configured = process.env.CAD_SERVICE_URL?.trim().replace(/\\/+$/, "");
+  if (!configured) return { success: false, error: "CAD_SERVICE_URL is not configured; source file was stored privately." };
+  let baseUrl: URL;
+  try {
+    baseUrl = new URL(configured);
+  } catch {
+    return { success: false, error: "CAD_SERVICE_URL is invalid; source file was stored privately." };
+  }
+  const loopback = ["localhost", "127.0.0.1", "::1"].includes(baseUrl.hostname);
+  if (baseUrl.protocol !== "https:" && !(process.env.NODE_ENV !== "production" && baseUrl.protocol === "http:" && loopback)) {
+    return { success: false, error: "CAD service must use HTTPS in production; source file was stored privately." };
+  }
+  const token = process.env.CAD_SERVICE_TOKEN?.trim();
+  if (!token) return { success: false, error: "CAD_SERVICE_TOKEN is not configured; source file was stored privately." };
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), OCR_TIMEOUT_MS);
+  try {
+    const encoded = Buffer.from(await file.arrayBuffer()).toString("base64");
+    const upstream = await fetch(new URL("/api/v1/ocr/extract", baseUrl), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ fileBase64: encoded, fileName: file.name.slice(0, 240), mimeType }),
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    const result = await upstream.json().catch(() => ({})) as StoredOcrResult & { detail?: string };
+    if (!upstream.ok) {
+      return { success: false, error: result.error ?? result.detail ?? `OCR service returned HTTP ${upstream.status}; the file was still stored privately.` };
+    }
+    return result;
+  } catch (error) {
+    const timedOut = error instanceof Error && error.name === "AbortError";
+    return {
+      success: false,
+      error: timedOut
+        ? "OCR timed out. The drawing was stored privately; try a clearer or smaller file."
+        : "OCR service is unavailable. The drawing was stored privately and can be retried later.",
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 export async function POST(request: Request) {
   if (!isSameOriginRequest(request)) {
@@ -57,7 +127,7 @@ export async function POST(request: Request) {
       data: {
         userId: user.id,
         name: valid[0].file.name.replace(/\.[^.]+$/, "").slice(0, 80) || "Engineering drawing upload",
-        description: `Stored ${valid.length} source file(s). Automated drawing OCR and drawing-to-CAD generation are not implemented yet.`,
+        description: `Stored ${valid.length} source file(s). OCR extraction is provisional and requires manual verification before CAD generation.`,
         status: "DRAFT",
       },
       select: { id: true },
@@ -76,12 +146,25 @@ export async function POST(request: Request) {
       uploadedFiles.push({ pathname: blob.pathname, name: originalName, type: item.type, size: item.size, contentType: item.file.type || "application/octet-stream" });
     }
 
+    // OCR only the first supported raster/PDF drawing in a batch. This bounds
+    // request duration while preserving every uploaded source file privately.
+    // OCR results are candidates, not manufacturing-authoritative dimensions.
+    const ocrSource = valid.find((item) => getOcrMimeType(item.file) !== null);
+    const ocrResult = ocrSource
+      ? await runDrawingOcr(ocrSource.file)
+      : { success: false, error: "Files were stored privately, but this batch contains no PDF or supported raster drawing for OCR." };
+
     const version = await prisma.projectVersion.create({
       data: {
         projectId: project.id,
         version: 1,
         sourceFileName: uploadedFiles.map((file) => file.name).join(", "),
-        spec: { uploadedFiles, rejected: rejected.map((item) => ({ name: item.file.name, reason: item.reason })) },
+        spec: {
+          uploadedFiles,
+          rejected: rejected.map((item) => ({ name: item.file.name, reason: item.reason })),
+          ocrSourceFileName: ocrSource?.file.name ?? null,
+          ocrResult,
+        },
       },
       select: { id: true, version: true },
     });
@@ -103,8 +186,11 @@ export async function POST(request: Request) {
       version: version.version,
       uploadedFiles: uploadedFiles.map(({ name, type, size }) => ({ name, type, size })),
       rejected: rejected.map((item) => ({ name: item.file.name, reason: item.reason })),
-      processingAvailable: false,
-      message: "Files were stored privately. Automatic drawing OCR and drawing-to-CAD conversion are not implemented yet.",
+      ocrResult,
+      processingAvailable: Boolean(ocrResult.success),
+      message: ocrResult.success
+        ? "Files were stored privately and OCR candidates were extracted. Verify all dimensions manually; drawing-to-parametric-CAD generation is not automated yet."
+        : `Files were stored privately. OCR was not completed: ${ocrResult.error ?? "unknown OCR error"}`,
     }, { status: 201 });
   } catch (error) {
     console.error("Private drawing upload failed.", error);
