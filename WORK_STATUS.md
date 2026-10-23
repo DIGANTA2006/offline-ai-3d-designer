@@ -1,34 +1,46 @@
-# Work Status
+# Work Status — Offline AI 3D Designer
 
-Updated: 23 October 2026 (CAD reliability feature branch; CI validation in progress)
+Updated: 23 October 2026
 
-## CAD engine reliability review
-- Branch: `feat/cad-engine-reliability-upgrade-20261023` (based on the deployed `main`; this branch is not merged).
-- Geometry: canonical engine now normalizes explicit per-parameter units, validates feature dependency DAGs, supports profile extrusion/revolution/loft/sweep, and rejects invalid/empty boolean results.
-- Rule parser: dimensions normalize to mm; supported boxes/cylinders can have a specified centered through-bore; tubes require outer and inner dimensions/wall thickness; ambiguous multiple-hole layouts and missing dimensions are rejected.
-- Exports: STEP/STL paths now share canonical exporters; STL validation treats open surfaces, invalid manifold status, degenerate faces and non-positive volume as errors.
-- Image meshes: closed watertight heightfield helper with tests; image-depth is explicitly approximate and not a substitute for exact multi-view reconstruction.
-- Slicing: removed dummy preview G-code success path. Real slicing requires CuraEngine and printer/extruder definitions. G-code structure/bounds checks remain heuristic.
-- Print UI: approval action now explicitly says simulation-only; no physical printer connection has been implemented.
-- Regression automation: `.github/workflows/cad-engine-tests.yml` compiles Python modules and runs tests for geometry, parser, image meshes, export validation and slicing. Check the latest feature-branch Actions run before considering the code ready.
-- Drawing OCR: implemented with Tesseract/PyMuPDF, file/page/pixel/size limits, annotation extraction, authenticated project API, private result storage, and a review-before-generation UI. OCR tests are included in CI. It still does not infer arbitrary solids directly from multi-view drawings.
-- Not completed in this pass: exact image-to-parametric CAD, general-purpose engineering drawing understanding/GD&T interpretation, automatic supports/repair for all meshes, printer-host transport (OctoPrint/Klipper/USB), full web runtime/E2E checks, and runtime testing against the user's actual printer/profile.
+## Current repository state
 
----
+- Repository: `DIGANTA2006/offline-ai-3d-designer` (private).
+- Feature branch: `feat/cad-engine-reliability-upgrade-20261023`.
+- Pull request: [#3 — Improve CAD engine reliability and safe slicing](https://github.com/DIGANTA2006/offline-ai-3d-designer/pull/3).
+- PR is **open and Draft**, not merged. Production and `main` remain unchanged by this feature branch.
+- Code-tested HEAD before the handoff-document refresh: `8be700b0f435425313b6adef37f4f089b585142d`. The most recent branch commit may be documentation-only; check Actions for the current head before relying on statuses.
+- Full current state and next steps: [`NEXT_SESSION_HANDOFF.md`](NEXT_SESSION_HANDOFF.md).
 
+## Implemented on the feature branch
 
+- Geometry generation with explicit parameter-unit handling, feature dependency ordering, Boolean validation, extrusion, revolution, loft and sweep.
+- Conservative dimension parser for supported shapes, through-bores and hollow tubes; ambiguous shapes/holes and missing dimensions are rejected instead of guessed.
+- Parser security fixes: numeric pattern is bounded (1–8 integer digits, at most six decimals), numeric boundaries prevent prefix parsing, and descriptions over 4,000 characters are rejected before regex/LLM processing.
+- Stronger STEP/STL export validation for non-finite, degenerate, non-watertight and invalid-manifold outputs.
+- Watertight heightfield and lithophane mesh utilities. Single-image depth output remains approximate.
+- CuraEngine-backed slicing only; no fake G-code fallback. A real printer/extruder definition is required. Desktop print approval is simulation-only; physical printer transport is not implemented.
+- Bounded PDF/raster drawing OCR with Tesseract/PyMuPDF, recognition of visible engineering annotations, private project OCR result storage, and review-before-generation UI/API. Supported, reviewed text can generate validated private STEP/STL versions.
+- Legacy package paths now forward to canonical model, geometry, validation, storage, licensing and worker APIs.
+- Engineering usage guide and regression workflows have been added.
 
-| Area | Status | Evidence / next action |
+## Verification observed on code-tested HEAD `8be700b`
+
+| Check | Result | Evidence |
 | --- | --- | --- |
-| Secret handling | PASS (local) | Prisma uses `DATABASE_URL`/`DIRECT_URL`; the credential-pattern scan found only documented/template placeholders, not a working credential. Rotate the formerly public Supabase password and any exposed Firebase Admin / cron secrets in their dashboards. |
-| Git hygiene | PASS (local) | `.gitignore` is plain text and ignores timestamped backup directories. The untracked `d`, repair script, and `web/audit.json` were preserved rather than deleted. |
-| Python unit tests | PASS | `python -m compileall -q src python-backend tests` and `python -m pytest`: 20 passed. |
-| Local CAD API smoke test | PASS | `/health` reported `healthy`; invalid text returned `success: false`; a 40x20x10 mm box returned a 15,404-byte STEP file with an `ISO-10303` header and a 684-byte STL file. |
-| CAD container | BLOCKED | Docker is not installed on this machine, so the production Docker build/container health check could not run. |
-| CAD proxy | BLOCKED (end-to-end) | Browser helper calls only `/api/cad/...`; the server proxy owns upstream URL/token access, verified user identity, request/response size limits, and a 30-second timeout. The route builds successfully, but a local Next.js `start` smoke process did not become reachable; verify `/api/cad/health` on a configured preview deployment. |
-| Web quality | PASS | Clean `npm ci`, `npm run lint`, and `npm run build` completed successfully. |
-| Authentication / database / storage | BLOCKED | Requires real Firebase, PostgreSQL, Vercel Blob, and deployed-service credentials. No migration or remote mutation was run. |
-| Drawing OCR | IMPLEMENTED WITH LIMITS | Tesseract/PyMuPDF extraction, dimensions/tolerances/fits/threads/material annotations, private result storage and review-before-generation UI; arbitrary-drawing interpretation remains incomplete. |
-| Full npm audit | FAIL (8 high) | Remaining paths are `eslint-config-next -> fast-glob -> micromatch -> braces` and `prisma -> @prisma/config -> deepmerge-ts`. |
-| Production npm audit | FAIL (3 high) | Only `prisma -> @prisma/config -> deepmerge-ts@7.1.5` remains. Updating to Prisma 7.10.1 is a breaking migration and needs separate compatibility testing. |
-| Deployment / push | NOT RUN | No remote deployment, database migration, Git commit, or push was performed. |
+| Python compile + CAD regression suite | PASS — 75 tests | [CAD Engine Tests](https://github.com/DIGANTA2006/offline-ai-3d-designer/actions/runs/39957241049) |
+| Web lint, TypeScript and production build | PASS | [Web Frontend Checks](https://github.com/DIGANTA2006/offline-ai-3d-designer/actions/runs/39957243077) |
+| CodeQL Python + JavaScript/TypeScript analysis | PASS — SARIF had no reported results for either language | [CodeQL Advanced](https://github.com/DIGANTA2006/offline-ai-3d-designer/actions/runs/39957242980) |
+
+Because GitHub Code Scanning upload is unavailable for the current private-repository configuration, CodeQL SARIF is retained as downloadable Actions artifacts instead of appearing in the repository Security tab. The workflow gates high/critical security findings and regex-DoS/regex-injection findings. A passed CodeQL job means analysis and this gate completed; it is not a guarantee of absence of all vulnerabilities.
+
+The PR-triggered CAD test job for the same code-tested HEAD was still completing setup at the last status check, even though the matching push run passed. Recheck the current PR checks after the latest documentation-only commits.
+
+## Not complete / must be tested before release
+
+- Full arbitrary engineering-drawing understanding, hidden-surface reconstruction, automated GD&T/tolerance interpretation, and guaranteed drawing-to-parametric-CAD accuracy.
+- Automatic support generation and universal mesh repair.
+- Physical printer communication through USB/network/OctoPrint/Klipper or another host.
+- Manual Windows GUI testing and real-world CAD-viewer/slicer verification.
+- End-to-end Vercel Preview validation of private upload, OCR persistence, review/edit, supported CAD generation, private exports, and subscription/admin entitlements.
+
+Do not merge or deploy these changes until the final latest-head checks and manual Preview validation are reviewed. No production environment variables, live Razorpay configuration, database records, migration, or Production deployment were changed by this feature work.
