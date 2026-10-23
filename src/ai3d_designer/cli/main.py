@@ -38,18 +38,21 @@ def create_box_spec(name: str, width: float, depth: float, height: float,
     )
     spec.add_feature(box_feature)
     
-    # Optional hole
-    if hole_diameter and hole_diameter > 0:
+    # Optional centered through-hole; primitives are centered on the origin.
+    if hole_diameter is not None:
+        if hole_diameter <= 0 or hole_diameter >= min(width, depth):
+            raise ValueError("A centered through-hole diameter must be positive and smaller than both box width and depth.")
         hole_feature = FeatureSpec(
             id="hole_center",
             type=PrimitiveType.CYLINDER,
             name="center_hole",
             parameters={
                 "radius": ParameterSpec(name="radius", value=hole_diameter / 2),
-                "height": ParameterSpec(name="height", value=height + 2),  # Slightly taller for clean cut
+                "height": ParameterSpec(name="height", value=height + 2),
             },
-            position=[width/2, depth/2, -1],  # Centered, slightly below bottom
+            position=[0.0, 0.0, 0.0],
             operation=OperationType.DIFFERENCE,
+            parent_id=box_feature.id,
         )
         spec.add_feature(hole_feature)
     
@@ -235,7 +238,11 @@ Examples:
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    formats = [f.strip().lower() for f in args.format.split(",")]
+    formats = [f.strip().lower() for f in args.format.split(",") if f.strip()]
+    invalid_formats = sorted(set(formats) - {"step", "stl"})
+    if not formats or invalid_formats:
+        print(f"Unsupported export format(s): {', '.join(invalid_formats) if invalid_formats else '(none selected)'}. Choose step, stl, or both.")
+        return 2
     validate = not args.no_validate
     
     for fmt in formats:
