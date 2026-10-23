@@ -57,7 +57,7 @@ export async function POST(request: Request) {
       data: {
         userId: user.id,
         name: valid[0].file.name.replace(/\.[^.]+$/, "").slice(0, 80) || "Engineering drawing upload",
-        description: `Stored ${valid.length} source file(s). Automated drawing OCR and drawing-to-CAD generation are not implemented yet.`,
+        description: `Stored ${valid.length} private source file(s). Open this project to analyze supported drawings with OCR and review the extracted text before generating CAD.`,
         status: "DRAFT",
       },
       select: { id: true },
