@@ -96,7 +96,7 @@ def is_ocr_available() -> bool:
     if not _tesseract_executable():
         return False
     try:
-        import fitz  # noqa: F401
+        import pymupdf  # noqa: F401
         import pytesseract  # noqa: F401
         from PIL import Image  # noqa: F401
         return True
