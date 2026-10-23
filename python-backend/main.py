@@ -31,6 +31,14 @@ from ai3d_designer.core.geometry.engine import create_part_from_spec
 from ai3d_designer.core.export.exporter import export_step, export_stl, ExportResult
 from ai3d_designer.core.validation.validator import validate_spec, validate_geometry
 from ai3d_designer.core.nlp.parser import parse_natural_language
+from ai3d_designer.core.ocr.extractor import (
+    DrawingOcrError,
+    OcrRuntimeUnavailable,
+    decode_base64_file,
+    extract_drawing_spec,
+    is_ocr_runtime_available,
+)
+from starlette.concurrency import run_in_threadpool
 
 
 # =============================================================================
@@ -56,9 +64,9 @@ def cad_runtime_is_available() -> bool:
 
 
 class OcrRequest(BaseModel):
-    fileBase64: str
-    fileName: str
-    mimeType: str
+    fileBase64: str = Field(min_length=1, max_length=14_000_000)
+    fileName: str = Field(min_length=1, max_length=240)
+    mimeType: str = Field(min_length=1, max_length=100)
 
 
 class ExtractedSpec(BaseModel):
@@ -215,21 +223,58 @@ async def health():
     token_configured = bool(os.environ.get("CAD_SERVICE_TOKEN", "").strip())
     ready = cad_available and (is_development or token_configured)
     status = "healthy" if ready else "degraded"
-    return HealthResponse(status=status, cadAvailable=ready)
+    return HealthResponse(
+        status=status,
+        cadAvailable=ready,
+        ocrAvailable=is_ocr_runtime_available(),
+        imageTo3dAvailable=False,
+    )
 
 
 @app.post("/api/v1/ocr/extract", response_model=OcrResponse, dependencies=[Depends(require_cad_service_token)])
 async def ocr_extract(request: OcrRequest):
-    """Extract specifications from uploaded drawing/image."""
+    """Extract reviewable OCR text and engineering-dimension candidates from a PDF/image."""
     job_id = str(uuid.uuid4())[:8]
-    
-    # TODO: Implement actual OCR (Phase 3+)
-    # For now, return mock response
-    return OcrResponse(
-        success=False,
-        error="OCR not yet implemented. Use /api/v1/text-to-cad for natural language input.",
-        jobId=job_id,
-    )
+    try:
+        file_bytes = decode_base64_file(request.fileBase64)
+        extracted = await run_in_threadpool(
+            extract_drawing_spec,
+            file_bytes,
+            request.fileName,
+            request.mimeType,
+        )
+        spec = ExtractedSpec(**extracted)
+        if not spec.rawText.strip():
+            return OcrResponse(
+                success=False,
+                spec=spec,
+                error="No readable drawing text was detected. Try a higher-resolution, clearer scan. No CAD geometry was generated.",
+                jobId=job_id,
+            )
+        return OcrResponse(
+            success=True,
+            spec=spec,
+            jobId=job_id,
+        )
+    except OcrRuntimeUnavailable as exc:
+        return OcrResponse(
+            success=False,
+            error=str(exc),
+            jobId=job_id,
+        )
+    except DrawingOcrError as exc:
+        return OcrResponse(
+            success=False,
+            error=str(exc),
+            jobId=job_id,
+        )
+    except Exception:
+        traceback.print_exc()
+        return OcrResponse(
+            success=False,
+            error="Drawing OCR failed unexpectedly. Check the CAD service logs; no CAD geometry was generated.",
+            jobId=job_id,
+        )
 
 
 @app.post("/api/v1/generate", response_model=GenerationResponse, dependencies=[Depends(require_cad_service_token)])
