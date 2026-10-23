@@ -1,43 +1,72 @@
+"""Experimental image-to-relief mesh generation.
 
+Depth estimation from one image is approximate; it is not a general engineering drawing-to-CAD
+pipeline. Reliefs generated here must be reviewed before manufacture.
 """
-Image to 3D conversion module using depth estimation (MiDaS) and mesh generation.
-"""
-import os
-import torch
-import cv2
-import numpy as np
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
+
+import numpy as np
 import trimesh
 from PIL import Image
 
-# Try to import MiDaS
 try:
-    import torch.hub
-    MIDAS_AVAILABLE = True
-except ImportError:
+    import torch
+except (ImportError, OSError):
+    torch = None
     MIDAS_AVAILABLE = False
+else:
+    MIDAS_AVAILABLE = True
 
-# Monkey-patch torch.hub to auto-trust known repos BEFORE any imports
-import torch.hub as hub
-_original_check = hub._check_repo_is_trusted
 
-def _auto_trust_repo(repo, *args, **kwargs):
-    """Auto-trust known repositories used by MiDaS and its dependencies."""
-    trusted_patterns = [
-        "intel-isl",
-        "rwightman",
-        "MiDaS",
-        "gen-efficientnet",
-        "pytorch-image-models",
-    ]
-    repo_str = str(repo).lower()
-    for pattern in trusted_patterns:
-        if pattern.lower() in repo_str:
-            return True
-    return _original_check(repo, *args, **kwargs)
+def _build_watertight_heightfield(heights: np.ndarray, scale_x: float, scale_y: float) -> trimesh.Trimesh:
+    """Create a closed solid with a height-map top, flat bottom, and perimeter walls."""
+    height_map = np.asarray(heights, dtype=np.float64)
+    if height_map.ndim != 2 or min(height_map.shape) < 2:
+        raise ValueError("Height map must be 2D and at least 2 × 2 pixels.")
+    if not np.isfinite(height_map).all() or np.any(height_map <= 0):
+        raise ValueError("All height-map values must be finite and above the bottom plane.")
+    if not np.isfinite(scale_x) or not np.isfinite(scale_y) or scale_x <= 0 or scale_y <= 0:
+        raise ValueError("X and Y scale must be finite positive millimetre values.")
 
-hub._check_repo_is_trusted = _auto_trust_repo
+    rows, cols = height_map.shape
+    xx, yy = np.meshgrid(
+        np.linspace(-scale_x / 2.0, scale_x / 2.0, cols),
+        np.linspace(-scale_y / 2.0, scale_y / 2.0, rows),
+    )
+    top = np.column_stack((xx.ravel(), yy.ravel(), height_map.ravel()))
+    bottom = np.column_stack((xx.ravel(), yy.ravel(), np.zeros(rows * cols)))
+    offset = rows * cols
+    faces: list[list[int]] = []
+
+    for row in range(rows - 1):
+        for col in range(cols - 1):
+            v0 = row * cols + col
+            v1 = v0 + 1
+            v2 = v0 + cols
+            v3 = v2 + 1
+            faces.extend(([v0, v1, v2], [v1, v3, v2]))
+            faces.extend((
+                [offset + v0, offset + v2, offset + v1],
+                [offset + v1, offset + v2, offset + v3],
+            ))
+
+    perimeter = []
+    perimeter.extend((rows - 1) * cols + col for col in range(cols))
+    perimeter.extend(row * cols + cols - 1 for row in range(rows - 2, -1, -1))
+    perimeter.extend(col for col in range(cols - 2, -1, -1))
+    perimeter.extend(row * cols for row in range(1, rows - 1))
+    for index, top_a in enumerate(perimeter):
+        top_b = perimeter[(index + 1) % len(perimeter)]
+        bottom_a = offset + top_a
+        bottom_b = offset + top_b
+        faces.extend(([top_a, bottom_a, bottom_b], [top_a, bottom_b, top_b]))
+
+    mesh = trimesh.Trimesh(vertices=np.vstack((top, bottom)), faces=np.asarray(faces), process=True)
+    mesh.fix_normals(multibody=True)
+    if not mesh.is_watertight or not mesh.is_volume or not np.isfinite(mesh.volume) or mesh.volume <= 0:
+        raise ValueError("Generated height-field mesh is not a valid watertight solid.")
+    return mesh
 
 
 class ImageTo3DConverter:
