@@ -134,3 +134,10 @@ def test_parameter_spec_rejects_non_finite_values_and_bounds():
         ParameterSpec(name="width", value=1.0, max_value=float("inf"))
     with pytest.raises(ValueError, match="cannot exceed"):
         ParameterSpec(name="width", value=5.0, min_value=10.0, max_value=2.0)
+
+
+def test_legacy_spec_path_reexports_canonical_models():
+    from ai3d_designer.spec.models import PartSpec as LegacyPartSpec
+    from ai3d_designer.core.spec.models import PartSpec as CorePartSpec
+
+    assert LegacyPartSpec is CorePartSpec
