@@ -62,6 +62,8 @@ class GeometryEngine:
             PrimitiveType.CONE: ("radius_bottom", "radius_top", "height"),
             PrimitiveType.TORUS: ("major_radius", "minor_radius"),
             PrimitiveType.WEDGE: ("width", "depth", "height"),
+            PrimitiveType.EXTRUSION: ("height",),
+            PrimitiveType.REVOLUTION: (),
         }
         missing = [key for key in required.get(feature.type, ()) if key not in params]
         if missing:
@@ -112,10 +114,13 @@ class GeometryEngine:
                     params.get("zmax", 10),
                 )
             case PrimitiveType.EXTRUSION:
-                # Requires a profile face - handled separately
-                raise NotImplementedError("Extrusion requires profile face")
+                profile = self._validated_profile(feature, "xy")
+                face = Face(Wire.make_polygon(profile, close=True))
+                return extrude(face, amount=params["height"])
             case PrimitiveType.REVOLUTION:
-                raise NotImplementedError("Revolution requires profile face")
+                profile = self._validated_profile(feature, "rz")
+                face = Face(Wire.make_polygon(profile, close=True))
+                return revolve(face, axis=Axis.Z, revolution_arc=360)
             case PrimitiveType.LOFT:
                 raise NotImplementedError("Loft requires multiple profiles")
             case PrimitiveType.SWEEP:
@@ -123,6 +128,90 @@ class GeometryEngine:
             case _:
                 raise ValueError(f"Unknown primitive type: {feature.type}")
     
+    @staticmethod
+    def _validated_profile(feature: FeatureSpec, plane: str) -> List[Vector]:
+        """Read a simple polygon profile; profile coordinates are millimetres.
+
+        XY profiles are used for extrusion ([x, y]); RZ profiles are
+        [radius, z] coordinates revolved around the Z axis. Curved edges, holes,
+        splines and multi-loop profiles are not inferred.
+        """
+        raw = feature.metadata.get("profile")
+        if not isinstance(raw, list) or len(raw) < 3:
+            raise ValueError(
+                f"{feature.type.value} requires metadata.profile with at least three [x, y] points in mm."
+            )
+
+        points: List[tuple[float, float]] = []
+        for index, item in enumerate(raw):
+            if not isinstance(item, (list, tuple)) or len(item) != 2:
+                raise ValueError(f"Profile point {index + 1} must contain exactly two coordinates.")
+            try:
+                x, y = float(item[0]), float(item[1])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"Profile point {index + 1} has non-numeric coordinates.") from exc
+            if not math.isfinite(x) or not math.isfinite(y):
+                raise ValueError(f"Profile point {index + 1} must contain finite coordinates.")
+            points.append((x, y))
+
+        if len(points) > 3 and points[-1] == points[0]:
+            points.pop()
+        if len(set(points)) < 3:
+            raise ValueError("Profile needs at least three distinct points.")
+        if plane == "rz":
+            if any(radius < 0 for radius, _ in points):
+                raise ValueError("Revolution profile radii cannot be negative.")
+            if not any(radius > 0 for radius, _ in points):
+                raise ValueError("Revolution profile must enclose a nonzero radius.")
+
+        def orient(a: tuple[float, float], b: tuple[float, float], p: tuple[float, float]) -> float:
+            return (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])
+
+        def on_segment(a: tuple[float, float], b: tuple[float, float], p: tuple[float, float]) -> bool:
+            eps = 1e-9
+            return (min(a[0], b[0]) - eps <= p[0] <= max(a[0], b[0]) + eps
+                    and min(a[1], b[1]) - eps <= p[1] <= max(a[1], b[1]) + eps)
+
+        def intersects(a: tuple[float, float], b: tuple[float, float],
+                       d: tuple[float, float], e: tuple[float, float]) -> bool:
+            o1, o2 = orient(a, b, d), orient(a, b, e)
+            o3, o4 = orient(d, e, a), orient(d, e, b)
+            eps = 1e-9
+            if ((o1 > eps and o2 < -eps) or (o1 < -eps and o2 > eps)) and (
+                (o3 > eps and o4 < -eps) or (o3 < -eps and o4 > eps)
+            ):
+                return True
+            return ((abs(o1) <= eps and on_segment(a, b, d))
+                    or (abs(o2) <= eps and on_segment(a, b, e))
+                    or (abs(o3) <= eps and on_segment(d, e, a))
+                    or (abs(o4) <= eps and on_segment(d, e, b)))
+
+        count = len(points)
+        for i in range(count):
+            a, b = points[i], points[(i + 1) % count]
+            if a == b:
+                raise ValueError("Profile contains a zero-length edge.")
+            for j in range(i + 1, count):
+                if j == (i + 1) % count or i == (j + 1) % count:
+                    continue
+                d, e = points[j], points[(j + 1) % count]
+                if intersects(a, b, d, e):
+                    raise ValueError("Profile self-intersects; provide a simple non-crossing polygon.")
+
+        area_twice = sum(
+            points[i][0] * points[(i + 1) % count][1]
+            - points[(i + 1) % count][0] * points[i][1]
+            for i in range(count)
+        )
+        if not math.isfinite(area_twice) or abs(area_twice) <= 1e-9:
+            raise ValueError("Profile polygon has zero area.")
+
+        if plane == "xy":
+            return [Vector(x, y, 0.0) for x, y in points]
+        if plane == "rz":
+            return [Vector(radius, 0.0, z) for radius, z in points]
+        raise ValueError(f"Unsupported profile plane: {plane}")
+
     def _apply_transform(self, shape: Shape, feature: FeatureSpec) -> Shape:
         """Apply position and rotation to shape."""
         pos = self._convert_vec(feature.position)
