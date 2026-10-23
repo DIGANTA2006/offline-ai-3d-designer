@@ -11,13 +11,19 @@
 
 The manual Preview test uncovered the legacy backend placeholder. The exact message `OCR not yet implemented. Use /api/v1/text-to-cad for natural language input.` is hard-coded in the Python backend on `main`; the feature branch's `python-backend/main.py` contains a real `/api/v1/ocr/extract` route. The previous Preview used generic `CAD_SERVICE_URL`, so it could call that older backend.
 
+The latest follow-up also addresses the reported degraded health response:
+- `python-backend/Dockerfile` upgrades pip/setuptools/wheel, installs `python-backend/requirements.txt` (includes `build123d`), installs root project package with `pip install --no-deps .`, and runs a build-time smoke check that fails unless both CAD and OCR imports work.
+- The Docker image includes native headless runtime libraries for build123d/OpenCascade/VTK as well as Tesseract.
+- `/health` now exposes `cadRuntimeAvailable`, `serviceTokenConfigured`, and a non-sensitive `cadRuntimeError` exception class, so `cadAvailable:false` can be distinguished between engine import problems and missing Railway token.
+- CAD Engine Tests now builds the same Docker image with a CAD+OCR smoke check. The latest workflows must pass on the current tip before deployment.
+
 The feature branch now:
 - Requires `CAD_SERVICE_URL_PREVIEW` and `CAD_SERVICE_TOKEN_PREVIEW` when `VERCEL_ENV=preview`; Preview routes no longer fall back to the Production backend.
 - Checks backend `/health` for the feature-branch OCR capability contract before processing a drawing.
 - Configures Railway to use `python-backend/Dockerfile` (Tesseract system package + Python OCR dependencies) rather than Nixpacks.
 - Documents the separate Railway Preview service setup in `DEPLOYMENT.md`.
 
-**Required manual setup:** create an isolated Railway Preview service connected to `feat/cad-engine-reliability-upgrade-20261023`, with repository-root build context and Dockerfile path `python-backend/Dockerfile`. Set a new server-only `CAD_SERVICE_TOKEN`. Confirm its `/health` returns both `cadAvailable: true` and `ocrAvailable: true`. In Vercel, set Preview-only `CAD_SERVICE_URL_PREVIEW` and `CAD_SERVICE_TOKEN_PREVIEW` to that service and token, then redeploy the Preview. Leave Production's `CAD_SERVICE_URL` and `CAD_SERVICE_TOKEN` unchanged.
+**Required manual setup:** create an isolated Railway Preview service connected to `feat/cad-engine-reliability-upgrade-20261023`, with repository-root build context and Dockerfile path `python-backend/Dockerfile`. Set a new server-only `CAD_SERVICE_TOKEN`. Confirm its `/health` returns `status: healthy`, `cadAvailable: true`, `cadRuntimeAvailable: true`, `serviceTokenConfigured: true`, and `ocrAvailable: true`. In Vercel, set Preview-only `CAD_SERVICE_URL_PREVIEW` and `CAD_SERVICE_TOKEN_PREVIEW` to that service and token, then redeploy the Preview. Leave Production's `CAD_SERVICE_URL` and `CAD_SERVICE_TOKEN` unchanged.
 
 ## Release safety
 
