@@ -1,9 +1,24 @@
 """FastAPI OCR/generation endpoint checks using the production CAD engine."""
 
+import asyncio
+
 import pytest
 from fastapi import HTTPException
 
 import main as cad_service
+
+
+@pytest.mark.parametrize("ocr_available", [True, False])
+def test_health_reports_real_ocr_runtime_availability(monkeypatch, ocr_available):
+    monkeypatch.setattr(cad_service, "cad_runtime_is_available", lambda: True)
+    monkeypatch.setattr(cad_service, "is_ocr_available", lambda: ocr_available)
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("CAD_SERVICE_TOKEN", "unit-test-only-token")
+
+    result = asyncio.run(cad_service.health())
+
+    assert result.cadAvailable is True
+    assert result.ocrAvailable is ocr_available
 
 
 def test_generation_requires_user_review_before_model_creation():
