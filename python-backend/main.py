@@ -49,19 +49,31 @@ from ai3d_designer.ocr.pipeline import (
 class HealthResponse(BaseModel):
     status: str = "healthy"
     version: str = "0.1.0"
+    # cadAvailable means that the engine and service-to-service auth are ready.
+    cadAvailable: bool = False
+    # Keep component-level diagnostics separate so health results are actionable.
+    cadRuntimeAvailable: bool = False
+    serviceTokenConfigured: bool = False
+    cadRuntimeError: Optional[str] = None
     ocrAvailable: bool = False
-    cadAvailable: bool = True
     imageTo3dAvailable: bool = False
     limitations: list[str] = Field(default_factory=list)
 
 
+CAD_RUNTIME_IMPORT_ERROR: Optional[str] = None
+
+
 def cad_runtime_is_available() -> bool:
-    """Check that the CAD runtime can be imported before advertising readiness."""
+    """Check that build123d loads, and log the actionable import exception on failure."""
+    global CAD_RUNTIME_IMPORT_ERROR
     try:
         import build123d  # noqa: F401
 
+        CAD_RUNTIME_IMPORT_ERROR = None
         return True
-    except Exception:
+    except Exception as exc:
+        CAD_RUNTIME_IMPORT_ERROR = type(exc).__name__
+        print(f"CAD runtime import check failed: {type(exc).__name__}: {exc}")
         return False
 
 
@@ -229,12 +241,13 @@ app.add_middleware(
 
 @app.get("/health", response_model=HealthResponse)
 async def health():
-    # Keep health checks public, but never advertise a CAD runtime that cannot load.
-    cad_available = cad_runtime_is_available()
+    # Keep health checks public, but report each capability separately to make
+    # deployment failures diagnosable without exposing environment secrets.
+    cad_runtime_available = cad_runtime_is_available()
     app_env = os.environ.get("APP_ENV", "").strip().lower()
     is_development = app_env in {"development", "dev", "test"}
     token_configured = bool(os.environ.get("CAD_SERVICE_TOKEN", "").strip())
-    ready = cad_available and (is_development or token_configured)
+    ready = cad_runtime_available and (is_development or token_configured)
     status = "healthy" if ready else "degraded"
     ocr_available = is_ocr_available()
     limitations = [
@@ -244,6 +257,9 @@ async def health():
     return HealthResponse(
         status=status,
         cadAvailable=ready,
+        cadRuntimeAvailable=cad_runtime_available,
+        serviceTokenConfigured=token_configured,
+        cadRuntimeError=CAD_RUNTIME_IMPORT_ERROR,
         ocrAvailable=ocr_available,
         imageTo3dAvailable=False,
         limitations=limitations,
