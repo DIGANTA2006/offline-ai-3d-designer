@@ -86,10 +86,12 @@ class GeometryEngine:
         default_unit: UnitSystem,
         close: bool = True,
         label: str = "profile",
+        plane: str = "xy",
     ) -> Wire:
         """Build a polygon wire from [[x, y], ...] or [[x, y, z], ...] metadata."""
         profile_unit = default_unit
         points: Any = profile
+        offset = [0.0, 0.0, 0.0]
         if isinstance(profile, dict):
             points = profile.get("points")
             unit_value = profile.get("unit")
@@ -98,7 +100,16 @@ class GeometryEngine:
                     profile_unit = UnitSystem(unit_value)
                 except ValueError as exc:
                     raise ValueError(f"{label}.unit must be one of mm, cm, in, m.") from exc
+            if profile.get("offset") is not None:
+                offset_value = profile["offset"]
+                if not isinstance(offset_value, (list, tuple)) or len(offset_value) != 3:
+                    raise ValueError(f"{label}.offset must contain three coordinates.")
+                offset = [self._check_finite(v, f"{label}.offset") for v in offset_value]
+            elif profile.get("z") is not None:
+                offset[2] = self._check_finite(profile["z"], f"{label}.z")
 
+        if plane not in {"xy", "xz"}:
+            raise ValueError("Profile plane must be 'xy' or 'xz'.")
         if not isinstance(points, list):
             raise ValueError(f"{label} must be a list of polygon points or an object with a points list.")
         minimum = 3 if close else 2
@@ -111,8 +122,14 @@ class GeometryEngine:
             if not isinstance(point, (list, tuple)) or len(point) not in (2, 3):
                 raise ValueError(f"{label}[{index}] must have two or three coordinates.")
             coords = [self._check_finite(v, f"{label}[{index}]") * factor for v in point]
-            if len(coords) == 2:
+            if len(coords) == 2 and plane == "xz":
+                coords = [coords[0], 0.0, coords[1]]
+            elif len(coords) == 2:
                 coords.append(0.0)
+            coords = [
+                coords[axis] + offset[axis] * factor
+                for axis in range(3)
+            ]
             vectors.append(Vector(*coords))
 
         for left, right in zip(vectors, vectors[1:]):
@@ -172,7 +189,7 @@ class GeometryEngine:
             case PrimitiveType.REVOLUTION:
                 profile = self._profile_wire(
                     feature.metadata.get("profile"), default_unit=self.unit_system,
-                    label=f"{feature.id}.profile",
+                    label=f"{feature.id}.profile", plane="xz",
                 )
                 angle = feature.parameters.get("angle")
                 sweep_angle = 360.0 if angle is None else self._check_finite(angle.value, f"{feature.id}.angle")
