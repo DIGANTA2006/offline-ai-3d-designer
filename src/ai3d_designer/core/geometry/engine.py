@@ -50,11 +50,32 @@ class GeometryEngine:
     
     def _create_primitive(self, feature: FeatureSpec) -> Shape:
         """Create a primitive shape from feature spec."""
-        params = {k: v.to_mm() for k, v in feature.parameters.items()}
+        params = {key: parameter.to_mm() for key, parameter in feature.parameters.items()}
         for key, value in params.items():
             if not math.isfinite(value):
                 raise ValueError(f"Parameter '{key}' must be a finite number.")
-        
+
+        required = {
+            PrimitiveType.BOX: ("width", "depth", "height"),
+            PrimitiveType.CYLINDER: ("radius", "height"),
+            PrimitiveType.SPHERE: ("radius",),
+            PrimitiveType.CONE: ("radius_bottom", "radius_top", "height"),
+            PrimitiveType.TORUS: ("major_radius", "minor_radius"),
+            PrimitiveType.WEDGE: ("width", "depth", "height"),
+        }
+        missing = [key for key in required.get(feature.type, ()) if key not in params]
+        if missing:
+            raise ValueError(
+                f"Feature '{feature.name or feature.id}' is missing required parameter(s): "
+                + ", ".join(missing)
+            )
+        for key in required.get(feature.type, ()):
+            value = params[key]
+            allow_zero = feature.type == PrimitiveType.CONE and key == "radius_top"
+            if value < 0 or (value == 0 and not allow_zero):
+                requirement = "non-negative" if allow_zero else "positive"
+                raise ValueError(f"Parameter '{key}' must be {requirement}.")
+
         match feature.type:
             case PrimitiveType.BOX:
                 return Box(
