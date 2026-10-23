@@ -256,7 +256,7 @@ def extract_drawing_text(file_bytes: bytes, file_name: str, mime_type: str) -> d
         raise OCRInputError("The file extension and content type do not match.")
 
     try:
-        import fitz
+        import pymupdf
         from PIL import Image, ImageOps, UnidentifiedImageError
     except ImportError as exc:
         raise OCRUnavailableError("Install PyMuPDF and Pillow to enable PDF/image drawing OCR.") from exc
@@ -270,7 +270,7 @@ def extract_drawing_text(file_bytes: bytes, file_name: str, mime_type: str) -> d
             if not file_bytes.startswith(b"%PDF-"):
                 raise OCRInputError("The file extension says PDF but the content is not a PDF document.")
             try:
-                document = fitz.open(stream=file_bytes, filetype="pdf")
+                document = pymupdf.open(stream=file_bytes, filetype="pdf")
             except Exception as exc:
                 raise OCRInputError(f"Could not open the PDF: {exc}") from exc
             with document:
@@ -290,7 +290,7 @@ def extract_drawing_text(file_bytes: bytes, file_name: str, mime_type: str) -> d
                         confidence_scores.append(1.0)
                         confidence_methods.append("native_pdf_text")
                         continue
-                    pixmap = page.get_pixmap(matrix=fitz.Matrix(200 / 72, 200 / 72), alpha=False)
+                    pixmap = page.get_pixmap(matrix=pymupdf.Matrix(200 / 72, 200 / 72), alpha=False)
                     image = Image.open(io.BytesIO(pixmap.tobytes("png")))
                     if image.width * image.height > MAX_IMAGE_PIXELS:
                         raise OCRInputError("A rendered PDF page exceeds the 24-megapixel OCR safety limit.")
