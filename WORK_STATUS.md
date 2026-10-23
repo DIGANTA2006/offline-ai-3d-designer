@@ -8,7 +8,7 @@ Updated: 23 October 2026 — OCR Preview routing fix added; latest checks runnin
 - Feature branch: `feat/cad-engine-reliability-upgrade-20261023`.
 - Pull request: [#3 — Improve CAD engine reliability and safe slicing](https://github.com/DIGANTA2006/offline-ai-3d-designer/pull/3).
 - PR is **open and Draft**, not merged. Production and `main` remain unchanged by this feature branch.
-- Code-tested source HEAD: `8be700b0f435425313b6adef37f4f089b585142d`. Later commits refreshed only `NEXT_SESSION_HANDOFF.md` and `WORK_STATUS.md`; fetch the actual branch tip before continuing. All three checks passed on that source head, and the documentation-only current-head checks are rerunning.
+- Last fully verified source HEAD before the OCR Preview-routing fix: `8be700b0f435425313b6adef37f4f089b585142d`. The OCR routing, Preview-only environment selection, Railway Dockerfile configuration, and regression-test commits came after that SHA; the latest PR checks must pass before treating those additions as verified.
 - Full current state and next steps: [`NEXT_SESSION_HANDOFF.md`](NEXT_SESSION_HANDOFF.md).
 
 ## New OCR deployment fix (23 October 2026)
@@ -42,7 +42,7 @@ Updated: 23 October 2026 — OCR Preview routing fix added; latest checks runnin
 
 Because GitHub Code Scanning upload is unavailable for the current private-repository configuration, CodeQL SARIF is retained as downloadable Actions artifacts instead of appearing in the repository Security tab. The workflow gates high/critical security findings and regex-DoS/regex-injection findings. A passed CodeQL job means analysis and this gate completed; it is not a guarantee of absence of all vulnerabilities.
 
-The PR-triggered CAD test job for the same code-tested HEAD was still completing setup at the last status check, even though the matching push run passed. Recheck the current PR checks after the latest documentation-only commits.
+The linked run evidence below is historical for the pre-wiring-fix source HEAD only. Recheck the latest CAD/Web/CodeQL results at the current branch tip before manual Preview deployment or merge.
 
 ## Not complete / must be tested before release
 
