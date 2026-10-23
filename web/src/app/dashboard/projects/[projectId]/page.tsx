@@ -110,6 +110,95 @@ export default async function ProjectDetailPage({ params }: Props) {
 
         {sourceFiles.length > 0 && <Card className="mt-5"><CardHeader><CardTitle>Original source files</CardTitle><CardDescription>Files are privately stored and downloads are restricted to your account.</CardDescription></CardHeader><CardContent className="space-y-3">{sourceFiles.map((file) => <a key={file.index} href={`/api/projects/${project.id}/files/source/${file.index}`} className="flex items-center gap-3 rounded-xl border border-border p-4 hover:border-primary/50"><Download className="size-5 text-primary" /><span className="truncate text-sm font-medium">{file.name}</span></a>)}</CardContent></Card>}
 
+        {ocrResult && (
+          <Card className="mt-5">
+            <CardHeader>
+              <CardTitle>OCR extraction preview</CardTitle>
+              <CardDescription>
+                {ocrSourceFileName ? `Source: ${ocrSourceFileName}. ` : ""}
+                Extracted text and dimensions are provisional candidates, not verified engineering measurements.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {ocrSucceeded ? (
+                <>
+                  <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-3 text-sm">
+                    OCR completed
+                    {ocrConfidence !== null ? ` · ${ocrConfidence}% average OCR character confidence (not measurement accuracy)` : ""}
+                  </div>
+
+                  {dimensionTriples.length > 0 && (
+                    <section className="space-y-2">
+                      <h3 className="font-semibold">Three-number dimension candidates</h3>
+                      <div className="space-y-2">
+                        {dimensionTriples.map((item, index) => (
+                          <div key={index} className="rounded-lg border border-border p-3">
+                            <p className="font-mono text-sm">{item.values.join(" × ")} {item.unit !== "unspecified" ? item.unit : ""}</p>
+                            <p className="mt-1 text-xs text-muted-foreground">{item.interpretation} · Source text: {item.raw}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                  )}
+
+                  {dimensionCandidates.length > 0 && (
+                    <section className="space-y-2">
+                      <h3 className="font-semibold">Individual dimension candidates</h3>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {dimensionCandidates.slice(0, 100).map((item, index) => (
+                          <div key={index} className="rounded-lg border border-border p-3 text-sm">
+                            <p className="font-mono">{item.raw}</p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {item.kind}: {item.value ?? "unparsed"} {item.unit}
+                              {item.tolerance ? ` · tolerance ${item.tolerance}` : ""}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                  )}
+
+                  {(numericTolerances.length > 0 || fitCandidates.length > 0 || threadCandidates.length > 0 || detectedMaterial || detectedSurfaceFinish) && (
+                    <section className="space-y-2">
+                      <h3 className="font-semibold">Other annotation candidates</h3>
+                      <div className="flex flex-wrap gap-2">
+                        {numericTolerances.map((value, index) => <span key={`tol-${index}`} className="rounded-full border border-border px-3 py-1 text-sm">Tolerance: {value}</span>)}
+                        {fitCandidates.map((value, index) => <span key={`fit-${index}`} className="rounded-full border border-border px-3 py-1 text-sm">Fit: {value}</span>)}
+                        {threadCandidates.map((value, index) => <span key={`thread-${index}`} className="rounded-full border border-border px-3 py-1 text-sm">Thread: {value}</span>)}
+                        {detectedMaterial && <span className="rounded-full border border-border px-3 py-1 text-sm">Material candidate: {detectedMaterial}</span>}
+                        {detectedSurfaceFinish && <span className="rounded-full border border-border px-3 py-1 text-sm">Surface finish: {detectedSurfaceFinish}</span>}
+                      </div>
+                    </section>
+                  )}
+
+                  {ocrAnnotations.length > 0 && (
+                    <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
+                      <h3 className="font-semibold text-sm">Review warnings</h3>
+                      <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+                        {ocrAnnotations.map((annotation, index) => <li key={index}>{annotation}</li>)}
+                      </ul>
+                    </div>
+                  )}
+
+                  <details className="rounded-xl border border-border p-3">
+                    <summary className="cursor-pointer font-semibold text-sm">Show raw OCR text</summary>
+                    <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-words text-xs leading-5">{ocrRawText || "No text was recognized."}</pre>
+                  </details>
+                </>
+              ) : (
+                <div role="status" className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-sm">
+                  <p className="font-semibold">OCR was not completed</p>
+                  <p className="mt-1 text-muted-foreground">{ocrError}</p>
+                  <p className="mt-2 text-muted-foreground">Your original file remains stored privately. No CAD geometry was generated from this upload.</p>
+                </div>
+              )}
+              <p className="text-sm leading-6 text-muted-foreground">
+                Safety note: OCR does not determine an unambiguous 3D shape from a drawing. Verify every dimension, unit, tolerance, fit, datum, and view association against the original. Automatic drawing-to-parametric-CAD generation is not implemented yet. You can use the reviewed text as a starting point in <Link className="underline" href="/dashboard/projects/new">New text-to-CAD project</Link>, but only supported dimensioned shapes will generate.
+              </p>
+            </CardContent>
+          </Card>
+        )}
+
         {project.status === "SUCCEEDED" && version ? (
           <Card className="mt-5"><CardHeader><CardTitle>Generated exports</CardTitle><CardDescription>Version {version.version} · Download links are authenticated and limited to your account.</CardDescription></CardHeader><CardContent className="grid gap-3 sm:grid-cols-2">
             {version.stepFilePath && <a href={`/api/projects/${project.id}/files/step`} className="flex items-center gap-3 rounded-xl border border-border p-4 hover:border-primary/50"><Download className="size-5 text-primary" /><span><span className="block font-semibold">STEP file</span><span className="mt-1 block text-xs text-muted-foreground">CAD interchange format</span></span></a>}
@@ -119,7 +208,7 @@ export default async function ProjectDetailPage({ params }: Props) {
         ) : project.status === "FAILED" ? (
           <Card className="mt-5 border-destructive/30"><CardHeader><CardTitle className="text-destructive">Generation failed</CardTitle><CardDescription>No successful export was stored. Review the description or check the deployment&apos;s CAD service logs.</CardDescription></CardHeader><CardContent><Button asChild><Link href="/dashboard/projects/new">Try again</Link></Button></CardContent></Card>
         ) : (
-          <Card className="mt-5"><CardHeader><CardTitle>Project files</CardTitle><CardDescription>This project has not generated CAD exports yet.</CardDescription></CardHeader><CardContent><div className="flex items-start gap-3 text-sm leading-6 text-muted-foreground"><FileText className="mt-1 size-5 shrink-0" /> Drawing upload currently stores source files securely. Automated OCR and drawing-to-CAD conversion are not implemented in this version.</div></CardContent></Card>
+          <Card className="mt-5"><CardHeader><CardTitle>Project files</CardTitle><CardDescription>This project has not generated CAD exports yet.</CardDescription></CardHeader><CardContent><div className="flex items-start gap-3 text-sm leading-6 text-muted-foreground"><FileText className="mt-1 size-5 shrink-0" /> This upload has not generated CAD exports. Review the OCR candidates above if available, or use New Project for supported dimensioned text-to-CAD. Automatic drawing-to-parametric-CAD generation is still incomplete.</div></CardContent></Card>
         )}
       </div>
     </main>
