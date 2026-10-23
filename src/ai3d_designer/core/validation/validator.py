@@ -116,6 +116,8 @@ class SpecValidator:
             PrimitiveType.CONE: ["radius_bottom", "radius_top", "height"],
             PrimitiveType.TORUS: ["major_radius", "minor_radius"],
             PrimitiveType.WEDGE: ["width", "depth", "height"],
+            PrimitiveType.EXTRUSION: ["height"],
+            PrimitiveType.REVOLUTION: [],
         }
 
         # Check every supplied value for finiteness, including optional parameters.
@@ -231,6 +233,55 @@ class SpecValidator:
                             feature_id=feature.id,
                             field="parameters",
                         ))
+
+        if feature.type in {PrimitiveType.EXTRUSION, PrimitiveType.REVOLUTION}:
+            profile = feature.metadata.get("profile")
+            profile_valid = isinstance(profile, list) and len(profile) >= 3
+            if not profile_valid:
+                issues.append(ValidationIssue(
+                    severity=ValidationSeverity.ERROR,
+                    code="PROFILE_MISSING_OR_INVALID",
+                    message=f"{feature.type.value} requires metadata.profile with at least three two-coordinate points in millimetres.",
+                    feature_id=feature.id,
+                    field="metadata.profile",
+                    suggestion="Provide a closed, non-self-intersecting polygon profile in millimetres.",
+                ))
+            else:
+                for index, point in enumerate(profile):
+                    if not isinstance(point, (list, tuple)) or len(point) != 2:
+                        issues.append(ValidationIssue(
+                            severity=ValidationSeverity.ERROR,
+                            code="PROFILE_POINT_INVALID",
+                            message=f"Profile point {index + 1} must contain exactly two coordinates.",
+                            feature_id=feature.id,
+                            field=f"metadata.profile[{index}]",
+                        ))
+                        profile_valid = False
+                        break
+                    try:
+                        coordinates = (float(point[0]), float(point[1]))
+                    except (TypeError, ValueError):
+                        coordinates = (math.nan, math.nan)
+                    if not all(math.isfinite(value) for value in coordinates):
+                        issues.append(ValidationIssue(
+                            severity=ValidationSeverity.ERROR,
+                            code="PROFILE_POINT_NON_FINITE",
+                            message=f"Profile point {index + 1} must contain finite numeric coordinates.",
+                            feature_id=feature.id,
+                            field=f"metadata.profile[{index}]",
+                        ))
+                        profile_valid = False
+                        break
+                    if feature.type == PrimitiveType.REVOLUTION and coordinates[0] < 0:
+                        issues.append(ValidationIssue(
+                            severity=ValidationSeverity.ERROR,
+                            code="PROFILE_NEGATIVE_RADIUS",
+                            message="Revolution profile radius cannot be negative.",
+                            feature_id=feature.id,
+                            field=f"metadata.profile[{index}][0]",
+                        ))
+                        profile_valid = False
+                        break
 
         return issues
 
