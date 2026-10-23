@@ -3,6 +3,8 @@
 Slicing module for 3D printing - integrates with CuraEngine or provides basic slicing.
 """
 import os
+import math
+import shutil
 import subprocess
 import json
 import tempfile
@@ -73,62 +75,101 @@ class SliceSettings:
     enable_prime_tower: bool = False
     wipe_tower_enabled: bool = False
     
-    def to_cura_json(self) -> Dict[str, Any]:
-        """Convert to CuraEngine JSON format."""
+    def validation_errors(self) -> List[str]:
+        """Validate machine and material settings before invoking a slicer."""
+        errors: List[str] = []
+        numeric = {
+            "bed_size_x": self.bed_size_x,
+            "bed_size_y": self.bed_size_y,
+            "bed_size_z": self.bed_size_z,
+            "layer_height": self.layer_height,
+            "initial_layer_height": self.initial_layer_height,
+            "wall_thickness": self.wall_thickness,
+            "top_bottom_thickness": self.top_bottom_thickness,
+            "infill_density": self.infill_density,
+            "print_speed": self.print_speed,
+            "infill_speed": self.infill_speed,
+            "wall_speed": self.wall_speed,
+            "travel_speed": self.travel_speed,
+            "initial_layer_speed": self.initial_layer_speed,
+            "nozzle_temp": self.nozzle_temp,
+            "bed_temp": self.bed_temp,
+            "initial_layer_bed_temp": self.initial_layer_bed_temp,
+            "filament_diameter": self.filament_diameter,
+            "flow_rate": self.flow_rate,
+            "brim_width": self.brim_width,
+            "support_density": self.support_density,
+            "support_z_distance": self.support_z_distance,
+            "support_xy_distance": self.support_xy_distance,
+            "retraction_distance": self.retraction_distance,
+            "retraction_speed": self.retraction_speed,
+            "fan_speed": self.fan_speed,
+            "fan_speed_max": self.fan_speed_max,
+        }
+        for key, value in numeric.items():
+            if not math.isfinite(float(value)):
+                errors.append(f"{key} must be a finite number.")
+
+        for key in ("bed_size_x", "bed_size_y", "bed_size_z", "layer_height", "initial_layer_height",
+                    "wall_thickness", "top_bottom_thickness", "print_speed", "infill_speed",
+                    "wall_speed", "travel_speed", "initial_layer_speed", "filament_diameter",
+                    "flow_rate", "retraction_speed"):
+            if math.isfinite(float(numeric[key])) and numeric[key] <= 0:
+                errors.append(f"{key} must be greater than zero.")
+
+        for key in ("infill_density", "support_density", "fan_speed", "fan_speed_max"):
+            if math.isfinite(float(numeric[key])) and not 0 <= numeric[key] <= 100:
+                errors.append(f"{key} must be between 0 and 100 percent.")
+
+        if math.isfinite(float(self.nozzle_temp)) and not 0 < self.nozzle_temp <= 400:
+            errors.append("nozzle_temp must be between 0 and 400 °C.")
+        for key in ("bed_temp", "initial_layer_bed_temp"):
+            value = getattr(self, key)
+            if math.isfinite(float(value)) and not 0 <= value <= 200:
+                errors.append(f"{key} must be between 0 and 200 °C.")
+        if self.adhesion_type not in {"none", "skirt", "brim", "raft"}:
+            errors.append("adhesion_type must be none, skirt, brim, or raft.")
+        if self.infill_pattern not in {"grid", "lines", "triangles", "cubic", "gyroid", "concentric", "zigzag", "cross", "trihexagon"}:
+            errors.append("Unsupported infill_pattern.")
+        if self.retraction_distance < 0 or self.support_z_distance < 0 or self.support_xy_distance < 0:
+            errors.append("Retraction and support clearances cannot be negative.")
+        if self.brim_width < 0 or self.brim_line_count < 0:
+            errors.append("Brim dimensions cannot be negative.")
+        return errors
+
+    def to_cura_settings(self) -> Dict[str, Any]:
+        """Return flat CuraEngine setting overrides, not a fabricated definitions file."""
         return {
-            "machine_settings": {
-                "machine_width": {"value": self.bed_size_x},
-                "machine_depth": {"value": self.bed_size_y},
-                "machine_height": {"value": self.bed_size_z},
-            },
-            "quality": {
-                "layer_height": {"value": self.layer_height},
-                "initial_layer_height": {"value": self.initial_layer_height},
-                "wall_thickness": {"value": self.wall_thickness},
-                "top_bottom_thickness": {"value": self.top_bottom_thickness},
-            },
-            "infill": {
-                "infill_sparse_density": {"value": self.infill_density},
-                "infill_pattern": {"value": self.infill_pattern},
-            },
-            "speed": {
-                "speed_print": {"value": self.print_speed},
-                "speed_infill": {"value": self.infill_speed},
-                "speed_wall": {"value": self.wall_speed},
-                "speed_travel": {"value": self.travel_speed},
-                "speed_initial_layer": {"value": self.initial_layer_speed},
-            },
-            "temperature": {
-                "material_print_temperature": {"value": self.nozzle_temp},
-                "material_bed_temperature": {"value": self.bed_temp},
-                "material_bed_temperature_layer_0": {"value": self.initial_layer_bed_temp},
-            },
-            "material": {
-                "material_diameter": {"value": self.filament_diameter},
-                "material_flow": {"value": self.flow_rate},
-            },
-            "adhesion": {
-                "adhesion_type": {"value": self.adhesion_type},
-                "brim_width": {"value": self.brim_width},
-                "brim_line_count": {"value": self.brim_line_count},
-            },
-            "support": {
-                "support_enable": {"value": self.support_enabled},
-                "support_pattern": {"value": self.support_pattern},
-                "support_density": {"value": self.support_density},
-                "support_z_distance": {"value": self.support_z_distance},
-                "support_xy_distance": {"value": self.support_xy_distance},
-            },
-            "retraction": {
-                "retraction_enable": {"value": self.retraction_enabled},
-                "retraction_amount": {"value": self.retraction_distance},
-                "retraction_speed": {"value": self.retraction_speed},
-            },
-            "cooling": {
-                "cool_fan_enabled": {"value": self.fan_enabled},
-                "cool_fan_speed": {"value": self.fan_speed},
-                "cool_fan_speed_max": {"value": self.fan_speed_max},
-            }
+            "layer_height": self.layer_height,
+            "layer_height_0": self.initial_layer_height,
+            "wall_thickness": self.wall_thickness,
+            "top_bottom_thickness": self.top_bottom_thickness,
+            "infill_sparse_density": self.infill_density,
+            "infill_pattern": self.infill_pattern,
+            "speed_print": self.print_speed,
+            "speed_infill": self.infill_speed,
+            "speed_wall": self.wall_speed,
+            "speed_travel": self.travel_speed,
+            "speed_layer_0": self.initial_layer_speed,
+            "material_print_temperature": self.nozzle_temp,
+            "material_bed_temperature": self.bed_temp,
+            "material_bed_temperature_layer_0": self.initial_layer_bed_temp,
+            "material_diameter": self.filament_diameter,
+            "material_flow": self.flow_rate,
+            "adhesion_type": self.adhesion_type,
+            "brim_width": self.brim_width,
+            "brim_line_count": self.brim_line_count,
+            "support_enable": self.support_enabled,
+            "support_type": self.support_pattern,
+            "support_density": self.support_density,
+            "support_z_distance": self.support_z_distance,
+            "support_xy_distance": self.support_xy_distance,
+            "retraction_enable": self.retraction_enabled,
+            "retraction_amount": self.retraction_distance,
+            "retraction_speed": self.retraction_speed,
+            "cool_fan_enabled": self.fan_enabled,
+            "cool_fan_speed": self.fan_speed,
+            "cool_fan_speed_max": self.fan_speed_max,
         }
 
 
@@ -189,90 +230,187 @@ class Slicer:
         
         return None
     
+    def _find_cura_definitions_dir(self) -> Optional[Path]:
+        """Locate Cura's installed machine/extruder definition resources."""
+        search_dirs: List[Path] = []
+        env_dirs = os.environ.get("CURA_ENGINE_SEARCH_PATH", "")
+        search_dirs.extend(Path(part) for part in env_dirs.split(os.pathsep) if part.strip())
+
+        engine = self.cura_engine_path
+        if engine:
+            resolved = shutil.which(engine) or engine
+            try:
+                parent = Path(resolved).resolve().parent
+                search_dirs.extend([
+                    parent / "resources" / "definitions",
+                    parent / "share" / "cura" / "resources" / "definitions",
+                    parent.parent / "share" / "cura" / "resources" / "definitions",
+                    parent.parent / "resources" / "definitions",
+                ])
+            except OSError:
+                pass
+
+        search_dirs.extend([
+            Path("/usr/share/cura/resources/definitions"),
+            Path("/usr/local/share/cura/resources/definitions"),
+            Path("/usr/share/cura-engine/resources/definitions"),
+        ])
+        for root in (Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")),
+                     Path(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"))):
+            for company in ("UltiMaker Cura", "Ultimaker Cura"):
+                install_root = root / company
+                if install_root.is_dir():
+                    search_dirs.extend(install_root.glob("*/share/cura/resources/definitions"))
+                    search_dirs.extend(install_root.glob("*/resources/definitions"))
+
+        for directory in search_dirs:
+            if (directory / "fdmprinter.def.json").is_file() and (directory / "fdmextruder.def.json").is_file():
+                return directory
+        return None
+
     def slice(
         self,
         stl_path: str,
         output_path: str,
         settings: Optional[SliceSettings] = None,
-        printer_definition: Optional[str] = None
+        printer_definition: Optional[str] = None,
     ) -> SliceResult:
-        """
-        Slice an STL file to G-code.
-        
-        Args:
-            stl_path: Path to input STL file
-            output_path: Path to output G-code file
-            settings: Slice settings (uses defaults if None)
-            printer_definition: Path to printer definition JSON (for CuraEngine)
-            
-        Returns:
-            SliceResult with outcome
-        """
-        if settings is None:
-            settings = self.settings
-        
-        if self.cura_available:
-            return self._slice_with_cura(stl_path, output_path, settings, printer_definition)
-        else:
-            return self._slice_basic(stl_path, output_path, settings)
-    
+        """Slice a mesh with CuraEngine; never emit placeholder G-code as a successful result."""
+        settings = settings or self.settings
+        settings_errors = settings.validation_errors()
+        if settings_errors:
+            return SliceResult(success=False, errors=settings_errors)
+
+        source = Path(stl_path)
+        if not source.is_file():
+            return SliceResult(success=False, errors=["The source STL file does not exist."])
+        if source.suffix.lower() != ".stl":
+            return SliceResult(success=False, errors=["Only STL input is currently supported by the slicer."])
+
+        try:
+            mesh = trimesh.load(str(source), force="mesh")
+        except Exception as exc:
+            return SliceResult(success=False, errors=[f"Could not read STL mesh: {exc}"])
+        if mesh.is_empty or len(mesh.faces) == 0 or len(mesh.vertices) == 0:
+            return SliceResult(success=False, errors=["STL mesh is empty or has no triangles."])
+        if not mesh.is_watertight:
+            return SliceResult(
+                success=False,
+                errors=["STL is not watertight. Repair and validate the mesh before slicing."],
+            )
+        extents = mesh.extents
+        if extents[0] > settings.bed_size_x or extents[1] > settings.bed_size_y or extents[2] > settings.bed_size_z:
+            return SliceResult(
+                success=False,
+                errors=[
+                    "The model exceeds the configured printer build volume "
+                    f"({extents[0]:.2f} × {extents[1]:.2f} × {extents[2]:.2f} mm model; "
+                    f"{settings.bed_size_x:.2f} × {settings.bed_size_y:.2f} × {settings.bed_size_z:.2f} mm bed)."
+                ],
+            )
+
+        if not self.cura_engine_path:
+            return SliceResult(
+                success=False,
+                errors=[
+                    "CuraEngine was not found. No G-code was generated because the old fallback only wrote "
+                    "a few rectangular preview moves and was not safe or complete for printing. Install CuraEngine "
+                    "with its definition resources before slicing."
+                ],
+            )
+
+        definitions_dir = self._find_cura_definitions_dir()
+        if not definitions_dir:
+            return SliceResult(
+                success=False,
+                errors=[
+                    "CuraEngine was found, but fdmprinter.def.json and fdmextruder.def.json were not found. "
+                    "Install the matching Cura definition resources or set CURA_ENGINE_SEARCH_PATH."
+                ],
+            )
+
+        definition_files = [
+            definitions_dir / "fdmprinter.def.json",
+            definitions_dir / "fdmextruder.def.json",
+        ]
+        if printer_definition:
+            custom_definition = Path(printer_definition).expanduser()
+            if not custom_definition.is_file():
+                return SliceResult(success=False, errors=["The selected printer definition file does not exist."])
+            if custom_definition.resolve() not in {item.resolve() for item in definition_files}:
+                definition_files.append(custom_definition)
+
+        return self._slice_with_cura(source, Path(output_path), settings, definition_files)
+
     def _slice_with_cura(
         self,
-        stl_path: str,
-        output_path: str,
+        stl_path: Path,
+        output_path: Path,
         settings: SliceSettings,
-        printer_definition: Optional[str]
+        definition_files: List[Path],
     ) -> SliceResult:
-        """Slice using CuraEngine."""
+        """Invoke CuraEngine with its machine/extruder definitions and explicit overrides."""
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        command = [self.cura_engine_path, "slice", "-v"]
+        for definition in definition_files:
+            command.extend(["-j", str(definition)])
+
+        # Apply machine settings globally, then print settings at mesh-group scope.
+        command.extend([
+            "-s", f"machine_width={settings.bed_size_x}",
+            "-s", f"machine_depth={settings.bed_size_y}",
+            "-s", f"machine_height={settings.bed_size_z}",
+            "-g",
+        ])
+        for key, value in settings.to_cura_settings().items():
+            if isinstance(value, bool):
+                serialized = "true" if value else "false"
+            else:
+                serialized = str(value)
+            command.extend(["-s", f"{key}={serialized}"])
+
+        command.extend(["-o", str(output_path), "-l", str(stl_path)])
         try:
-            # Build command
-            cmd = [
-                self.cura_engine_path,
-                "slice",
-                "-v",
-                "-o", output_path,
-                "-l", stl_path,
-            ]
-            
-            # Add settings as JSON
-            settings_json = settings.to_cura_json()
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-                json.dump(settings_json, f)
-                settings_file = f.name
-            
-            cmd.extend(["-j", settings_file])
-            
-            if printer_definition:
-                cmd.extend(["-j", printer_definition])
-            
-            # Run slicing
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-            
-            # Clean up temp file
-            os.unlink(settings_file)
-            
-            if result.returncode != 0:
-                return SliceResult(
-                    success=False,
-                    errors=[f"CuraEngine failed: {result.stderr}"]
-                )
-            
-            # Parse output for stats
-            print_time, filament_used, layers = self._parse_cura_output(result.stdout)
-            
-            return SliceResult(
-                success=True,
-                gcode_path=output_path,
-                print_time=print_time,
-                filament_used=filament_used,
-                layers=layers
-            )
-            
+            result = subprocess.run(command, capture_output=True, text=True, timeout=300, check=False)
         except subprocess.TimeoutExpired:
-            return SliceResult(success=False, errors=["Slicing timed out"])
-        except Exception as e:
-            return SliceResult(success=False, errors=[str(e)])
-    
+            return SliceResult(success=False, errors=["CuraEngine slicing timed out after 300 seconds."])
+        except OSError as exc:
+            return SliceResult(success=False, errors=[f"Could not launch CuraEngine: {exc}"])
+
+        combined_output = "\n".join(part for part in (result.stdout, result.stderr) if part)
+        if result.returncode != 0:
+            return SliceResult(
+                success=False,
+                errors=[f"CuraEngine failed with exit code {result.returncode}: {combined_output[-3000:]}"],
+            )
+        if not output_path.is_file() or output_path.stat().st_size == 0:
+            return SliceResult(success=False, errors=["CuraEngine returned success but did not produce a G-code file."])
+
+        validation = self.validate_gcode(str(output_path))
+        if not validation.get("valid"):
+            return SliceResult(
+                success=False,
+                errors=[str(validation.get("error", "Generated G-code failed validation."))],
+            )
+        if not validation["stats"].get("has_extrusion"):
+            return SliceResult(
+                success=False,
+                errors=["Generated G-code contains no extrusion moves; the output is not a usable print."],
+            )
+
+        print_time, filament_used, layers = self._parse_cura_output(combined_output)
+        warnings: List[str] = []
+        if print_time is None or filament_used is None or layers is None:
+            warnings.append("CuraEngine did not report all print statistics in its captured output.")
+        return SliceResult(
+            success=True,
+            gcode_path=str(output_path),
+            print_time=print_time,
+            filament_used=filament_used,
+            layers=layers,
+            warnings=warnings,
+        )
+
     def _parse_cura_output(self, output: str) -> tuple:
         """Parse CuraEngine output for print statistics."""
         print_time = None
