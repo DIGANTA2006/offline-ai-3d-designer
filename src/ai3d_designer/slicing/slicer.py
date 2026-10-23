@@ -4,6 +4,7 @@ Slicing module for 3D printing. Produces G-code only through a configured CuraEn
 """
 import os
 import math
+import re
 import shutil
 import subprocess
 import json
@@ -474,50 +475,109 @@ class Slicer:
         return total
     
     def validate_gcode(self, gcode_path: str) -> Dict[str, Any]:
-        """Basic G-code validation."""
+        """Check basic G-code structure and required print commands.
+
+        This is a sanity check, not a substitute for validating the machine,
+        firmware, extrusion calibration, material and actual printer profile.
+        """
         try:
-            with open(gcode_path, 'r') as f:
-                lines = f.readlines()
-            
+            text = Path(gcode_path).read_text(encoding="utf-8", errors="replace")
+            if not text.strip():
+                return {"valid": False, "error": "G-code file is empty."}
+
             stats = {
-                "total_lines": len(lines),
+                "total_lines": len(text.splitlines()),
                 "g_commands": 0,
                 "m_commands": 0,
                 "has_home": False,
                 "has_temp": False,
                 "has_extrusion": False,
-                "max_x": 0, "max_y": 0, "max_z": 0,
-                "min_x": 0, "min_y": 0, "min_z": 0,
+                "max_x": 0.0, "max_y": 0.0, "max_z": 0.0,
+                "min_x": 0.0, "min_y": 0.0, "min_z": 0.0,
             }
-            
-            for line in lines:
-                line = line.strip()
-                if line.startswith('G'):
+            seen_position: dict[str, bool] = {"x": False, "y": False, "z": False}
+            position: dict[str, float] = {"X": 0.0, "Y": 0.0, "Z": 0.0}
+            absolute_xyz = True
+
+            for raw_line in text.splitlines():
+                # Ignore human-readable comments so words like "E" or "G28"
+                # inside comments cannot make an invalid file pass validation.
+                line = raw_line.split(";", 1)[0].strip().upper()
+                if not line:
+                    continue
+
+                command_match = re.match(r"^([GMT])\s*(-?\d+)", line)
+                if not command_match:
+                    continue
+                command_type = command_match.group(1)
+                command_number = int(command_match.group(2))
+                command = f"{command_type}{command_number}"
+
+                if command_type == "G":
                     stats["g_commands"] += 1
-                    if line.startswith('G28'):
+                    if command == "G90":
+                        absolute_xyz = True
+                    elif command == "G91":
+                        absolute_xyz = False
+                    elif command == "G28":
                         stats["has_home"] = True
-                    # Parse coordinates
-                    for axis in ['X', 'Y', 'Z']:
-                        if axis in line:
-                            try:
-                                val = float(line.split(axis)[1].split()[0])
-                                if val > stats[f"max_{axis.lower()}"]:
-                                    stats[f"max_{axis.lower()}"] = val
-                                if val < stats[f"min_{axis.lower()}"]:
-                                    stats[f"min_{axis.lower()}"] = val
-                            except:
-                                pass
-                elif line.startswith('M'):
+                        for axis in ("X", "Y", "Z"):
+                            position[axis] = 0.0
+                            seen_position[axis.lower()] = True
+
+                    if command in {"G0", "G1", "G2", "G3"}:
+                        values = {
+                            key.upper(): float(value)
+                            for key, value in re.findall(
+                                r"(?<![A-Z])([XYZEF])\s*(-?(?:\d+(?:\.\d*)?|\.\d+))",
+                                line,
+                            )
+                        }
+                        for axis in ("X", "Y", "Z"):
+                            if axis not in values:
+                                continue
+                            value = values[axis]
+                            position[axis] = value if absolute_xyz else position[axis] + value
+                            low_key = f"min_{axis.lower()}"
+                            high_key = f"max_{axis.lower()}"
+                            if not seen_position[axis.lower()]:
+                                stats[low_key] = position[axis]
+                                stats[high_key] = position[axis]
+                                seen_position[axis.lower()] = True
+                            else:
+                                stats[low_key] = min(stats[low_key], position[axis])
+                                stats[high_key] = max(stats[high_key], position[axis])
+
+                        # Detect extrusion on a motion command only, with E parsed as a token.
+                        if "E" in values and values["E"] != 0:
+                            stats["has_extrusion"] = True
+                elif command_type == "M":
                     stats["m_commands"] += 1
-                    if line.startswith('M104') or line.startswith('M109'):
+                    if command in {"M104", "M109"}:
                         stats["has_temp"] = True
-                if 'E' in line and ('G1' in line or 'G0' in line):
-                    stats["has_extrusion"] = True
-            
+
+            missing = []
+            if not stats["has_home"]:
+                missing.append("homing command (G28)")
+            if not stats["has_temp"]:
+                missing.append("hotend temperature command (M104/M109)")
+            if not stats["has_extrusion"]:
+                missing.append("extrusion move")
+            if stats["g_commands"] == 0:
+                missing.append("motion/control commands")
+
+            if missing:
+                return {
+                    "valid": False,
+                    "error": "G-code is missing required commands: " + ", ".join(missing) + ".",
+                    "stats": stats,
+                }
             return {"valid": True, "stats": stats}
-            
-        except Exception as e:
-            return {"valid": False, "error": str(e)}
+
+        except OSError as exc:
+            return {"valid": False, "error": f"Could not read G-code file: {exc}"}
+        except Exception as exc:
+            return {"valid": False, "error": f"G-code validation failed: {exc}"}
 
 
 def create_default_printer_definition() -> Dict[str, Any]:
