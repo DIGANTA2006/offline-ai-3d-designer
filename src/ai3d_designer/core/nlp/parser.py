@@ -55,7 +55,7 @@ The PartSpec schema:
 Rules:
 1. Use ONLY the primitive types listed above
 2. All dimensions in the specified unit_system
-3. Position/rotation in mm
+3. Position/rotation in mm; build123d primitives are centered at their local origin unless a documented profile says otherwise
 4. Operations: first feature is union, subsequent can be union/difference/intersection
 5. For holes, use cylinder with difference operation
 6. Output ONLY valid JSON, no extra text
@@ -105,7 +105,7 @@ Output JSON only:"""
                             "radius": {"name": "radius", "value": 2.5, "unit": "mm", "description": "Hole radius"},
                             "height": {"name": "height", "value": 12, "unit": "mm", "description": "Hole height (longer than box)"}
                         },
-                        "position": [25, 15, -1],
+                        "position": [0, 0, 0],
                         "rotation": [0, 0, 0],
                         "operation": "difference",
                         "parent_id": "base"
