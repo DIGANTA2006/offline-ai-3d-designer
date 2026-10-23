@@ -137,3 +137,11 @@ def test_bounded_number_grammar_keeps_normal_decimal_dimensions():
     assert feature.parameters["width"].value == 12.5
     assert feature.parameters["depth"].value == 8.25
     assert feature.parameters["height"].value == 3.75
+
+
+def test_public_parser_entry_point_enforces_description_limit():
+    from ai3d_designer.core.nlp.parser import parse_natural_language
+
+    result = parse_natural_language("box " + ("x" * 5000), use_llm=False)
+    assert result.success is False
+    assert "character parser limit" in (result.error or "").lower()
