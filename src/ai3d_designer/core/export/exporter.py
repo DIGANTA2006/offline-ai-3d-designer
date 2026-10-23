@@ -230,7 +230,7 @@ def _validate_stl(file_path: str) -> tuple[List[str], List[str]]:
         if manifold.is_empty():
             errors.append("Manifold3d reports an empty solid.")
         else:
-            manifold_volume = float(manifold.get_volume())
+            manifold_volume = float(manifold.volume())
             if not np.isfinite(manifold_volume) or manifold_volume <= 0:
                 errors.append("Manifold3d reports non-positive or non-finite volume.")
     except Exception as exc:
