@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 MAX_DOCUMENT_BYTES = 5 * 1024 * 1024
-MAX_PDF_PAGES = 8
+MAX_PDF_PAGES = 4
 MAX_IMAGE_PIXELS = 24_000_000
 SUPPORTED_SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
 SUPPORTED_MIME_TYPES = {
@@ -47,6 +47,7 @@ FIT_PATTERN = re.compile(r"\b[A-Z]{1,2}\d{1,2}\s*/\s*[a-z]{1,2}\d{1,2}\b")
 SURFACE_PATTERN = re.compile(r"\b(?:Ra|Rz|Rq)\s*[=:]?\s*\d+(?:\.\d+)?\s*(?:µm|um|μm)?", re.IGNORECASE)
 TOLERANCE_PATTERN = re.compile(
     rf"(?:±\s*{NUMBER_PATTERN}\s*(?:{UNIT_PATTERN})?|"
+    rf"\+\s*/\s*-\s*{NUMBER_PATTERN}\s*(?:{UNIT_PATTERN})?|"
     rf"\+\s*{NUMBER_PATTERN}\s*/\s*-\s*{NUMBER_PATTERN}\s*(?:{UNIT_PATTERN})?)",
     re.IGNORECASE,
 )
@@ -213,7 +214,7 @@ def _run_tesseract(image: Any) -> tuple[str, float]:
             image,
             config="--psm 11",
             output_type=pytesseract.Output.DICT,
-            timeout=20,
+            timeout=10,
         )
     except Exception as exc:
         raise OCRProcessingError(f"Tesseract could not read this drawing: {exc}") from exc
@@ -250,6 +251,7 @@ def extract_drawing_text(file_bytes: bytes, file_name: str, mime_type: str) -> d
 
     page_text: list[str] = []
     confidence_scores: list[float] = []
+    pages_processed = 0
     try:
         if suffix == ".pdf":
             if not file_bytes.startswith(b"%PDF-"):
@@ -264,6 +266,11 @@ def extract_drawing_text(file_bytes: bytes, file_name: str, mime_type: str) -> d
                 if document.page_count > MAX_PDF_PAGES:
                     raise OCRInputError(f"PDF has {document.page_count} pages; the OCR limit is {MAX_PDF_PAGES}.")
                 for page in document:
+                    pages_processed += 1
+                    page_width_px = page.rect.width * (200 / 72)
+                    page_height_px = page.rect.height * (200 / 72)
+                    if page_width_px * page_height_px > MAX_IMAGE_PIXELS:
+                        raise OCRInputError("A rendered PDF page exceeds the 24-megapixel OCR safety limit.")
                     native_text = page.get_text("text").strip()
                     if len(native_text) >= 12:
                         page_text.append(native_text)
@@ -280,14 +287,17 @@ def extract_drawing_text(file_bytes: bytes, file_name: str, mime_type: str) -> d
         else:
             try:
                 image = Image.open(io.BytesIO(file_bytes))
+                if image.width * image.height > MAX_IMAGE_PIXELS:
+                    raise OCRInputError("Image exceeds the 24-megapixel OCR safety limit.")
                 image.verify()
                 image = Image.open(io.BytesIO(file_bytes))
-            except (UnidentifiedImageError, OSError, ValueError) as exc:
+            except OCRInputError:
+                raise
+            except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError) as exc:
                 raise OCRInputError(f"Could not decode image file: {exc}") from exc
             if getattr(image, "n_frames", 1) > 1:
                 raise OCRInputError("Animated/multi-frame images are not supported. Export the required frame as a single image.")
-            if image.width * image.height > MAX_IMAGE_PIXELS:
-                raise OCRInputError("Image exceeds the 24-megapixel OCR safety limit.")
+            pages_processed = 1
             text, confidence = _run_tesseract(ImageOps.exif_transpose(image).convert("RGB"))
             page_text.append(text)
             confidence_scores.append(confidence)
@@ -305,7 +315,7 @@ def extract_drawing_text(file_bytes: bytes, file_name: str, mime_type: str) -> d
         **metadata,
         "rawText": raw_text,
         "confidence": max(0.0, min(1.0, float(confidence))),
-        "pageCount": len(page_text),
+        "pageCount": pages_processed or 1,
         "needsReview": True,
         "limitations": [
             "OCR text and dimensions are machine-extracted and may contain recognition errors.",
