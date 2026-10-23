@@ -7,13 +7,10 @@ import math
 import re
 import shutil
 import subprocess
-import json
-import tempfile
 from pathlib import Path
 from typing import Optional, Dict, Any, List
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 import trimesh
-import numpy as np
 
 @dataclass
 class SliceSettings:
