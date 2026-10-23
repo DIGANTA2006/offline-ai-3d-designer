@@ -1,6 +1,6 @@
 
 """
-Slicing module for 3D printing - integrates with CuraEngine or provides basic slicing.
+Slicing module for 3D printing. Produces G-code only through a configured CuraEngine.
 """
 import os
 import math
@@ -208,28 +208,31 @@ class Slicer:
         self.settings = SliceSettings()
     
     def _find_cura_engine(self) -> Optional[str]:
-        """Try to find CuraEngine executable."""
-        # Common locations
-        possible_paths = [
-            "CuraEngine",
-            "curaengine",
-            r"C:\Program Files\UltiMaker Cura 5.x\CuraEngine.exe",
-            r"C:\Program Files\Ultimaker Cura 5.x\CuraEngine.exe",
-            r"C:\Program Files\Cura\CuraEngine.exe",
-            "/usr/bin/CuraEngine",
-            "/usr/local/bin/CuraEngine",
-        ]
-        
-        for path in possible_paths:
-            try:
-                result = subprocess.run([path, "--version"], capture_output=True, timeout=5)
-                if result.returncode == 0:
-                    return path
-            except (FileNotFoundError, subprocess.TimeoutExpired):
+        """Find a real CuraEngine executable by PATH or common installation path."""
+        possible_paths = ["CuraEngine", "curaengine", "/usr/bin/CuraEngine", "/usr/local/bin/CuraEngine"]
+        for root in (
+            Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")),
+            Path(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")),
+        ):
+            for company in ("UltiMaker Cura", "Ultimaker Cura", "Cura"):
+                install_root = root / company
+                if install_root.is_dir():
+                    possible_paths.extend(str(item) for item in install_root.glob("*/CuraEngine.exe"))
+                    possible_paths.extend(str(item) for item in install_root.glob("CuraEngine.exe"))
+
+        for candidate in possible_paths:
+            located = shutil.which(candidate)
+            executable = located or candidate
+            if not located and not Path(executable).is_file():
                 continue
-        
+            try:
+                result = subprocess.run([executable, "--version"], capture_output=True, timeout=5, check=False)
+                if result.returncode == 0:
+                    return executable
+            except (OSError, subprocess.TimeoutExpired):
+                continue
         return None
-    
+
     def _find_cura_definitions_dir(self) -> Optional[Path]:
         """Locate Cura's installed machine/extruder definition resources."""
         search_dirs: List[Path] = []
@@ -402,10 +405,17 @@ class Slicer:
                 success=False,
                 errors=[str(validation.get("error", "Generated G-code failed validation."))],
             )
-        if not validation["stats"].get("has_extrusion"):
+        stats = validation["stats"]
+        required_checks = {
+            "home command": stats.get("has_home"),
+            "hotend temperature command": stats.get("has_temp"),
+            "extrusion move": stats.get("has_extrusion"),
+        }
+        missing_checks = [label for label, passed in required_checks.items() if not passed]
+        if missing_checks:
             return SliceResult(
                 success=False,
-                errors=["Generated G-code contains no extrusion moves; the output is not a usable print."],
+                errors=["Generated G-code failed safety checks: missing " + ", ".join(missing_checks) + "."],
             )
 
         print_time, filament_used, layers = self._parse_cura_output(combined_output)
