@@ -151,6 +151,12 @@ class GeometryEngine:
         for name in self.REQUIRED_PARAMETERS.get(feature.type, ()):
             params[name] = self._length_parameter(feature, name)
 
+        for name, value in params.items():
+            if value < 0 or (
+                value == 0
+                and not (feature.type == PrimitiveType.CONE and name == "radius_top")
+            ):
+                raise ValueError(f"Dimension '{name}' must be positive.")
         match feature.type:
             case PrimitiveType.BOX:
                 return Box(params["width"], params["depth"], params["height"])
