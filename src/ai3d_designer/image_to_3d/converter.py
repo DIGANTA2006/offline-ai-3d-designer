@@ -60,10 +60,13 @@ def _build_watertight_heightfield(heights: np.ndarray, scale_x: float, scale_y: 
         top_b = perimeter[(index + 1) % len(perimeter)]
         bottom_a = offset + top_a
         bottom_b = offset + top_b
-        faces.extend(([top_a, bottom_a, bottom_b], [top_a, bottom_b, top_b]))
+        # The perimeter is traversed clockwise in XY. These triangles preserve
+        # consistent outward winding without relying on trimesh's optional networkx.
+        faces.extend(([top_a, top_b, bottom_b], [top_a, bottom_b, bottom_a]))
 
     mesh = trimesh.Trimesh(vertices=np.vstack((top, bottom)), faces=np.asarray(faces), process=True)
-    mesh.fix_normals(multibody=True)
+    if np.isfinite(mesh.volume) and mesh.volume < 0:
+        mesh.invert()
     if not mesh.is_watertight or not mesh.is_volume or not np.isfinite(mesh.volume) or mesh.volume <= 0:
         raise ValueError("Generated height-field mesh is not a valid watertight solid.")
     return mesh
