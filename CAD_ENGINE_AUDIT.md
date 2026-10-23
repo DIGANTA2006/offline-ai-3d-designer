@@ -29,7 +29,7 @@ This document separates capabilities that exist in code from capabilities that a
 | --- | --- | --- |
 | General engineering drawing OCR | Not implemented in the web workflow | Secure raster/PDF processing, OCR engine deployment, structured extraction, and confidence/provenance reporting |
 | Drawing annotations/tolerances/fits | Schema fields exist, but extraction pipeline is not implemented | Dimension and GD&T parsing, unit recognition, datum/feature association, and human review |
-| Image-to-parametric CAD | Not implemented as an accurate engineering pipeline | Multiple views/calibration, feature correspondence, constraints, ambiguity handling, and validation |
+| Single-image depth relief/lithophane | Experimental prototype; work on this branch makes the generated relief/lithophane a validated watertight solid. Depth is relative, not metric. | Real image-quality benchmarks, optional MiDaS model deployment, quality/performance limits, and user review before printing |\n| Image-to-parametric CAD | Not implemented as an accurate engineering pipeline | Multiple views/calibration, feature correspondence, constraints, ambiguity handling, and validation |
 | Complex parametric features | Extrusion/revolution/loft/sweep are declared but the geometry engine currently does not implement them | Explicit validated profiles, paths, axis definitions, dependency handling, and kernel tests |
 | Fillets/chamfers/threads/gears/freeform surfaces | Not supported by the deterministic parser | Feature-history operations, standards-aware parameters, geometric failure handling, and tests |
 | Automatic 3D printing slicer in the web app | Not implemented | Server/job orchestration, machine profiles, safe storage of G-code, and detailed print-setting UI |
