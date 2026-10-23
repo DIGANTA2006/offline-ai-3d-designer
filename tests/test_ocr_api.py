@@ -56,3 +56,19 @@ def test_generation_refuses_to_guess_missing_dimensions():
 
     assert result.success is False
     assert "explicit" in (result.error or "").lower()
+
+
+def test_ocr_generation_does_not_infer_a_shape_from_dimensions_alone():
+    request = cad_service.GenerationRequest(
+        spec=cad_service.ExtractedSpec(rawText="40 x 20 x 10 mm"),
+        jobId="ocr-shape-required",
+        userId="test-user",
+        reviewed=True,
+        reviewedDescription="40 x 20 x 10 mm",
+    )
+
+    result = cad_service.generate_cad(request)
+
+    assert result.success is False
+    assert "shape explicitly" in (result.error or "").lower()
+    assert "will not infer a shape" in " ".join(result.validationErrors).lower()
