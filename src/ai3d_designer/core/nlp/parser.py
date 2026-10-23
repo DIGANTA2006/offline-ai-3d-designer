@@ -504,6 +504,10 @@ class RuleBasedParser:
                 rf"(?P<num>{number})\s*(?P<unit>{unit})?\s*wall\s*thickness\b",
                 rf"\bwall\s*thickness\s*(?:of|=|:)?\s*(?P<num>{number})\s*(?P<unit>{unit})?",
             ],
+            "thickness": [
+                rf"(?P<num>{number})\s*(?P<unit>{unit})?\s*(?:thick|thickness)\b",
+                rf"\bthickness\s*(?:of|=|:)?\s*(?P<num>{number})\s*(?P<unit>{unit})?",
+            ],
             "major_radius": [
                 rf"(?P<num>{number})\s*(?P<unit>{unit})?\s*major\s*radius\b",
                 rf"\bmajor\s*radius\s*(?:of|=|:)?\s*(?P<num>{number})\s*(?P<unit>{unit})?",
@@ -520,8 +524,8 @@ class RuleBasedParser:
         for key, patterns in scalar_rules.items():
             capture(key, patterns)
 
-        if "plate" in text and "height" not in dims and "wall_thickness" in dims:
-            dims["height"] = dims["wall_thickness"]
+        if "plate" in text and "height" not in dims and "thickness" in dims:
+            dims["height"] = dims["thickness"]
 
         if "hole" in text or "bore" in text:
             hole_patterns = [
