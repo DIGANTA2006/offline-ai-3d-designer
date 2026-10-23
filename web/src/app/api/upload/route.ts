@@ -1,4 +1,5 @@
 import { put } from "@vercel/blob";
+import type { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { getCurrentUser } from "@/lib/auth/server";
@@ -16,7 +17,7 @@ const OCR_TIMEOUT_MS = 35_000;
 type StoredOcrResult = {
   success: boolean;
   jobId?: string;
-  spec?: Record<string, unknown>;
+  spec?: Prisma.InputJsonValue;
   error?: string;
 };
 
