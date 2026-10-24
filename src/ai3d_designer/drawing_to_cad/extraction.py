@@ -44,6 +44,7 @@ class ExtractionResult(BaseModel):
     source_pages: int
     dimension_inventory: list[DimensionToken]
     cleared_fields: list[str]
+    vector_geometry: list[dict[str, Any]] = Field(default_factory=list, max_length=250)
     vision_model: str | None = None
 
 
@@ -56,6 +57,7 @@ class RenderedDrawing:
     images_png: list[bytes]
     source: str
     page_texts: list[str]
+    vector_geometry: list[dict[str, Any]]
 
 
 SYSTEM_PROMPT = """You are a cautious mechanical drawing interpreter. Return only one JSON object matching the provided Blueprint schema.
@@ -137,17 +139,47 @@ def _render_drawing(data: bytes, file_name: str, mime_type: str) -> RenderedDraw
                     raise ValueError(f"Drawing pack exceeds the {MAX_BLUEPRINT_PAGES}-page blueprint review limit")
                 pages: list[bytes] = []
                 texts: list[str] = []
+                vector_geometry: list[dict[str, Any]] = []
                 vector_pages = 0
                 scale = 144 / 72
-                for page in document:
+                for page_number, page in enumerate(document, start=1):
                     words = page.get_text("words")
                     if len(words) >= 5:
                         vector_pages += 1
                     texts.append(page.get_text("text")[:20_000])
+                    # Treat vector paths as geometric evidence, not as fully understood features.
+                    for drawing in page.get_drawings():
+                        rect = drawing.get("rect")
+                        if rect is None:
+                            continue
+                        width, height = float(rect.width), float(rect.height)
+                        if width < 2.0 or height < 2.0:
+                            continue
+                        items = drawing.get("items", [])
+                        curve_count = sum(1 for item in items if item and item[0] == "c")
+                        rect_count = sum(1 for item in items if item and item[0] == "re")
+                        aspect = width / height if height else 0.0
+                        kind = None
+                        if 0.92 <= aspect <= 1.08 and curve_count >= 4:
+                            kind = "circle_candidate"
+                        elif rect_count >= 1:
+                            kind = "rectangle_candidate"
+                        if kind and len(vector_geometry) < 250:
+                            vector_geometry.append(
+                                {
+                                    "page": page_number,
+                                    "kind": kind,
+                                    "center_x_pt": round((float(rect.x0) + float(rect.x1)) / 2, 3),
+                                    "center_y_pt": round((float(rect.y0) + float(rect.y1)) / 2, 3),
+                                    "width_pt": round(width, 3),
+                                    "height_pt": round(height, 3),
+                                    "curve_segments": curve_count,
+                                }
+                            )
                     pixmap = page.get_pixmap(matrix=pymupdf.Matrix(scale, scale), alpha=False)
                     pages.append(_fit_png(pixmap.tobytes("png")))
                 source = "vector_pdf" if vector_pages else "scanned_pdf"
-                return RenderedDrawing(pages, source, texts)
+                return RenderedDrawing(pages, source, texts, vector_geometry)
         except Exception as exc:
             if isinstance(exc, ValueError):
                 raise
@@ -167,7 +199,7 @@ def _render_drawing(data: bytes, file_name: str, mime_type: str) -> RenderedDraw
         if isinstance(exc, ValueError):
             raise
         raise ValueError(f"Could not decode the image for visual inspection: {exc}") from exc
-    return RenderedDrawing([png], "raster", [""])
+    return RenderedDrawing([png], "raster", [""], [])
 
 
 def _dimension_inventory(
@@ -269,7 +301,9 @@ def _dimension_inventory(
     return found[:200]
 
 
-def _inventory_message(inventory: list[DimensionToken], page_count: int) -> str:
+def _inventory_message(
+    inventory: list[DimensionToken], page_count: int, vector_geometry: list[dict[str, Any]]
+) -> str:
     if inventory:
         lines = "\n".join(
             f'{token.id}: "{token.raw}" => {token.kind}, {token.value:g} mm-equivalent, page {token.page}'
@@ -277,10 +311,20 @@ def _inventory_message(inventory: list[DimensionToken], page_count: int) -> str:
         )
     else:
         lines = "(no dimension tokens were grounded; leave all dimension fields null)"
+    vector_counts: dict[str, int] = {}
+    for item in vector_geometry:
+        key = f"page {item.get('page', '?')} {item.get('kind', 'path')}"
+        vector_counts[key] = vector_counts.get(key, 0) + 1
+    geometry_summary = (
+        "\n".join(f"{key}: {count}" for key, count in sorted(vector_counts.items()))
+        if vector_counts else "(no simple vector circle/rectangle candidates were detected)"
+    )
     return (
         f"Drawing has {page_count} page(s). Classify all supplied views together.\n"
         f"DIMENSION INVENTORY — only these numeric measurements may populate blueprint dimensions:\n"
-        f"{lines}\n\nReturn Blueprint JSON. Add unsupported_geometry rather than approximating unsupported features."
+        f"{lines}\n"
+        f"VECTOR PDF GEOMETRY CANDIDATES — approximate path counts only, not dimensions:\n{geometry_summary}\n\n"
+        f"Return Blueprint JSON. Add unsupported_geometry rather than approximating unsupported features."
     )
 
 
@@ -445,8 +489,14 @@ def _heuristic_blueprint(raw_text: str, inventory: list[DimensionToken]) -> Blue
     )
 
 
-async def _extract_with_vision(vision: VisionBackend, images: list[bytes], inventory: list[DimensionToken], pages: int) -> Blueprint:
-    prompt = _inventory_message(inventory, pages)
+async def _extract_with_vision(
+    vision: VisionBackend,
+    images: list[bytes],
+    inventory: list[DimensionToken],
+    pages: int,
+    vector_geometry: list[dict[str, Any]],
+) -> Blueprint:
+    prompt = _inventory_message(inventory, pages, vector_geometry)
     last_error: Exception | None = None
     for attempt in range(2):
         try:
@@ -476,7 +526,7 @@ async def extract_blueprint(
     vision_model: str | None = None
     if vision is not None:
         try:
-            blueprint = await _extract_with_vision(vision, rendered.images_png, inventory, len(rendered.images_png))
+            blueprint = await _extract_with_vision(vision, rendered.images_png, inventory, len(rendered.images_png), rendered.vector_geometry)
             vision_model = getattr(vision, "model", type(vision).__name__)
         except (httpx.HTTPError, TimeoutError, ValueError, ValidationError) as exc:
             blueprint = _heuristic_blueprint(raw_text, inventory)
@@ -508,5 +558,6 @@ async def extract_blueprint(
         source_pages=len(rendered.images_png),
         dimension_inventory=inventory,
         cleared_fields=cleared,
+        vector_geometry=rendered.vector_geometry,
         vision_model=vision_model,
     )
