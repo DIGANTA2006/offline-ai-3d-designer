@@ -232,7 +232,7 @@ export function SlicePanel({ projectId, versions }: { projectId: string; version
           />
           <span>
             <span className="block font-medium">Enable support structures</span>
-            <span className="text-muted-foreground">Uses the configured Cura profile's support strategy.</span>
+            <span className="text-muted-foreground">Uses the configured Cura profile&apos;s support strategy.</span>
           </span>
         </label>
 

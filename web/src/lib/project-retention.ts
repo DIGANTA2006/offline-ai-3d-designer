@@ -1,7 +1,6 @@
 import { del } from "@vercel/blob";
 import { prisma } from "@/lib/prisma";
 import {
-  compactStoredJson,
   MAX_ACTIVE_PROJECTS,
   selectProjectIdsToPrune,
   selectUnprotectedVersionIdsToPrune,
