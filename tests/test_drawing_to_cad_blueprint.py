@@ -16,6 +16,7 @@ from ai3d_designer.drawing_to_cad.blueprint import (
 )
 from ai3d_designer.drawing_to_cad.extraction import (
     DimensionToken,
+    OpenAICompatibleVision,
     _dimension_inventory,
     _heuristic_blueprint,
     extract_blueprint,
@@ -137,6 +138,66 @@ def test_text_only_fallback_uses_explicit_labels_for_flange_parameters():
     assert blueprint.features[0].pitch_radius == 50
     assert blueprint.features[0].diameter == 8
     assert not notes
+
+
+def test_openai_compatible_vision_sends_image_and_strict_schema(monkeypatch):
+    captured: dict[str, Any] = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": Blueprint(
+                part_name="response",
+                primary_body_type="rotational_flange",
+                base_sketch=BaseSketch(profile="circle", outer_diameter=50, thickness=10),
+            ).model_dump_json()}}]}
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            captured["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, url, headers, json):
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["body"] = json
+            return FakeResponse()
+
+    import ai3d_designer.drawing_to_cad.extraction as extraction
+
+    monkeypatch.setattr(extraction.httpx, "AsyncClient", FakeAsyncClient)
+
+    adapter = OpenAICompatibleVision(
+        "https://vision.example/v1",
+        "vision-model",
+        "test-secret",
+    )
+    import asyncio
+
+    result = asyncio.run(adapter.chat_json(
+        [b"fake-png"],
+        "system",
+        "inspect the drawing",
+        Blueprint.model_json_schema(),
+    ))
+
+    assert result["part_name"] == "response"
+    assert captured["url"] == "https://vision.example/v1/chat/completions"
+    assert captured["headers"]["Authorization"] == "Bearer test-secret"
+    body = captured["body"]
+    assert body["temperature"] == 0
+    assert body["response_format"]["json_schema"]["strict"] is True
+    assert body["messages"][1]["content"][1]["image_url"]["url"].startswith("data:image/png;base64,")
+    schema = body["response_format"]["json_schema"]["schema"]
+    assert schema["required"] == list(schema["properties"].keys())
+    assert schema["additionalProperties"] is False
 
 
 def test_deterministic_generator_exports_a_watertight_flange():
