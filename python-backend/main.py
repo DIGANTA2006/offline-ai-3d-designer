@@ -267,10 +267,13 @@ async def health():
     ready = cad_runtime_available and (is_development or token_configured)
     status = "healthy" if ready else "degraded"
     ocr_available = is_ocr_available()
-    vision_available = bool(
-        os.environ.get("DRAWING_VISION_URL", "").strip()
-        or os.environ.get("OLLAMA_URL", "").strip()
-    )
+    vision_provider = os.environ.get("DRAWING_VISION_PROVIDER", "ollama").strip().lower()
+    vision_url = os.environ.get("DRAWING_VISION_URL", "").strip()
+    if vision_provider == "ollama":
+        vision_url = vision_url or os.environ.get("OLLAMA_URL", "").strip()
+    vision_available = bool(vision_url) and vision_provider in {
+        "ollama", "openai", "openai_compatible", "openai-compatible"
+    }
     limitations = [
         "Drawing OCR recognizes text and common annotations; it does not guarantee reconstruction of arbitrary 3D geometry from drawing views.",
         "The v1 deterministic generator supports a limited set of primitive/mechanical features; teeth, bends, threads and other unsupported shapes are blocked rather than approximated.",
