@@ -47,3 +47,9 @@ def test_total_vision_deadline_includes_schema_retries_and_returns_fallback():
 
     assert result.blueprint.needs_review is True
     assert any("TimeoutError" in warning for warning in result.blueprint.warnings)
+
+
+
+def test_legacy_long_vision_timeout_is_capped_to_web_deadline(monkeypatch):
+    monkeypatch.setenv("DRAWING_VISION_TIMEOUT_SECONDS", "110")
+    assert extraction._vision_timeout_seconds() == 30.0
