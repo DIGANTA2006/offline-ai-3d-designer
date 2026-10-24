@@ -20,8 +20,8 @@ from ai3d_designer.drawing_to_cad.blueprint import Blueprint, apply_defaults, li
 
 MAX_BLUEPRINT_PAGES = 4
 VISION_MAX_SIDE = 2048
-VISION_DEFAULT_TIMEOUT_SECONDS = 110.0
-VISION_MAX_RESPONSE_TOKENS = 8192
+VISION_DEFAULT_TIMEOUT_SECONDS = 25.0
+VISION_MAX_RESPONSE_TOKENS = 2048
 logger = logging.getLogger(__name__)
 DIAMETER_MARKS = {"ø", "Ø", "Φ", "φ", "⌀", "∅"}
 DIMENSION_TOKEN_RE = re.compile(
