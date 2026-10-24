@@ -77,6 +77,41 @@ type OCRSpec = {
 
 type SourceFile = { index: number; name: string; ocrResult?: OCRSpec };
 type Props = { projectId: string; sourceFiles: SourceFile[] };
+type SketchNumberKey = "outer_diameter" | "inner_bore_diameter" | "width" | "length" | "thickness" | "wall_thickness";
+type FeatureNumberKey = "count" | "pitch_radius" | "start_angle" | "angular_pitch" | "diameter" | "length" | "width" | "depth" | "radius" | "x" | "y";
+
+const blueprintSketchFields: Array<{ key: SketchNumberKey; label: string; defaultFlag?: "thickness_is_default" | "wall_thickness_is_default" }> = [
+  { key: "outer_diameter", label: "Outer diameter (mm)" },
+  { key: "inner_bore_diameter", label: "Central bore diameter (mm)" },
+  { key: "length", label: "Length / X (mm)" },
+  { key: "width", label: "Width / Y (mm)" },
+  { key: "thickness", label: "Height / depth (mm)", defaultFlag: "thickness_is_default" },
+  { key: "wall_thickness", label: "Enclosure wall (mm)", defaultFlag: "wall_thickness_is_default" },
+];
+
+const blueprintFeatureFields: Array<{ key: FeatureNumberKey; label: string }> = [
+  { key: "count", label: "Count" },
+  { key: "diameter", label: "Diameter (mm)" },
+  { key: "pitch_radius", label: "Pitch radius (mm)" },
+  { key: "start_angle", label: "First angle (deg)" },
+  { key: "angular_pitch", label: "Angular pitch (deg)" },
+  { key: "length", label: "Pocket length (mm)" },
+  { key: "width", label: "Pocket width (mm)" },
+  { key: "depth", label: "Blind depth (mm; blank = through)" },
+  { key: "radius", label: "Fillet radius (mm)" },
+  { key: "x", label: "X offset (mm)" },
+  { key: "y", label: "Y offset (mm)" },
+];
+
+const blueprintInputClass = (flagged: boolean) =>
+  "mt-1 w-full rounded-md border px-2 py-2 text-sm " +
+  (flagged ? "border-amber-500 bg-amber-50 text-amber-950" : "border-input bg-background");
+
+function numericInputValue(raw: string): number | null {
+  if (!raw.trim()) return null;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
 
 export function DrawingProcessor({ projectId, sourceFiles }: Props) {
   const router = useRouter();
@@ -94,6 +129,100 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
   const [notice, setNotice] = useState("");
   const selected = useMemo(() => ocrSourceFiles.find((file) => file.index === selectedIndex), [ocrSourceFiles, selectedIndex]);
   const currentResult = results[selectedIndex] ?? null;
+  const blueprint = currentResult?.blueprint ?? null;
+
+  function updateCurrentResult(updater: (result: OCRSpec) => OCRSpec) {
+    setResults((previous) => {
+      const current = previous[selectedIndex];
+      if (!current) return previous;
+      return { ...previous, [selectedIndex]: updater(current) };
+    });
+  }
+
+  function updateBlueprintSketch(key: SketchNumberKey, raw: string) {
+    updateCurrentResult((result) => {
+      if (!result.blueprint) return result;
+      return {
+        ...result,
+        blueprint: {
+          ...result.blueprint,
+          base_sketch: { ...result.blueprint.base_sketch, [key]: numericInputValue(raw) },
+          needs_review: true,
+        },
+      };
+    });
+  }
+
+  function updateBlueprintFeature(index: number, key: FeatureNumberKey, raw: string) {
+    updateCurrentResult((result) => {
+      if (!result.blueprint) return result;
+      const value = numericInputValue(raw);
+      return {
+        ...result,
+        blueprint: {
+          ...result.blueprint,
+          features: result.blueprint.features.map((feature, i) => i !== index ? feature : {
+            ...feature,
+            [key]: key === "count" ? Math.max(1, Math.min(360, Math.round(value ?? 1))) : value,
+          }),
+          needs_review: true,
+        },
+      };
+    });
+  }
+
+  function updateBlueprintBodyType(value: string) {
+    const allowed: BlueprintBodyType[] = ["rotational_flange", "prismatic_box", "sheet_enclosure", "revolved_profile"];
+    updateCurrentResult((result) => !result.blueprint ? result : ({
+      ...result,
+      blueprint: {
+        ...result.blueprint,
+        primary_body_type: allowed.includes(value as BlueprintBodyType) ? value as BlueprintBodyType : null,
+        needs_review: true,
+      },
+    }));
+  }
+
+  function updateBlueprintProfile(value: string) {
+    const allowed: BlueprintProfile[] = ["circle", "rectangle", "polygon", "complex_path"];
+    updateCurrentResult((result) => !result.blueprint ? result : ({
+      ...result,
+      blueprint: {
+        ...result.blueprint,
+        base_sketch: {
+          ...result.blueprint.base_sketch,
+          profile: allowed.includes(value as BlueprintProfile) ? value as BlueprintProfile : "circle",
+        },
+        needs_review: true,
+      },
+    }));
+  }
+
+  function addBlueprintFeature() {
+    updateCurrentResult((result) => {
+      if (!result.blueprint || result.blueprint.features.length >= 100) return result;
+      const feature: BlueprintFeature = {
+        type: "through_hole", count: 1, pitch_radius: null, start_angle: 0,
+        angular_pitch: null, diameter: null, length: null, width: null,
+        depth: null, radius: null, edge_scope: "all", x: 0, y: 0,
+      };
+      return {
+        ...result,
+        blueprint: { ...result.blueprint, features: [...result.blueprint.features, feature], needs_review: true },
+      };
+    });
+  }
+
+  function removeBlueprintFeature(index: number) {
+    updateCurrentResult((result) => !result.blueprint ? result : ({
+      ...result,
+      blueprint: {
+        ...result.blueprint,
+        features: result.blueprint.features.filter((_feature, i) => i !== index),
+        needs_review: true,
+      },
+    }));
+  }
 
   function changeSource(value: string) {
     const index = Number(value);
