@@ -69,3 +69,49 @@ Guides: `docs/CAD_ENGINE_RELIABILITY.md`, `WORK_STATUS.md`.
 - Passing CI is not a substitute for Windows GUI testing, representative engineering-drawing validation or printer-specific verification.
 
 No production environment variables, live Razorpay configuration, database records, or Production deployment were changed by this work session.
+
+
+## Structured Drawing-to-CAD v1 — 24 October 2026
+
+The main code additions were verified at source HEAD `38ac1ed6470283494ec8bdb3d2f15c2e67d855e2`. The subsequent WORK_STATUS/handoff commits are documentation-only, so check the latest Actions for the final branch tip before making deployment claims.
+
+### Added code
+
+- `src/ai3d_designer/drawing_to_cad/blueprint.py`: typed Pydantic blueprint and geometry linting.
+- `src/ai3d_designer/drawing_to_cad/extraction.py`: PDF page rendering (up to 4 pages), vector text and path evidence, dimension inventory, semantic extraction through either Ollama or an OpenAI-compatible image/JSON-schema provider, type-aware grounding, and conservative label-only fallback.
+- `src/ai3d_designer/drawing_to_cad/generator.py`: deterministic build123d/OpenCASCADE models, STEP/STL export, solid validation, dimension checks where applicable and watertight STL validation.
+- `python-backend/main.py`: the existing authenticated OCR endpoint now includes Blueprint JSON/provenance; the generate endpoint accepts a reviewed blueprint without relying on a shape prompt.
+- `web/src/components/projects/drawing-processor.tsx`: displays and edits blueprint parameters; highlights cleared/defaulted values and displays unsupported geometry.
+- `web/src/app/api/projects/[projectId]/generate-from-drawing/route.ts`: forwards reviewed blueprint fields and blocks generation if the saved source extraction marked unsupported geometry.
+- `docs/DRAWING_TO_CAD_V1.md`: schema, endpoints, supported geometry, provider configuration, limitations and tests.
+
+### Provider setup
+
+To make the web app populate semantic fields from drawing pixels, configure the isolated Railway Preview service:
+
+- Ollama: `DRAWING_VISION_PROVIDER=ollama`, `DRAWING_VISION_URL=<reachable Ollama base URL>`, `DRAWING_VISION_MODEL=<vision-capable model>`.
+- OpenAI-compatible API: `DRAWING_VISION_PROVIDER=openai_compatible`, `DRAWING_VISION_URL=<provider base URL ending in /v1>`, `DRAWING_VISION_MODEL=<vision-capable model>`, and `DRAWING_VISION_API_KEY=<secret>` if required.
+
+A model URL must be reachable from Railway; `localhost` in Railway is not the developer's laptop. API mode transmits drawing images and the dimension inventory to that provider. If no model is configured, the service performs conservative explicit-label extraction only. `/health` reports `drawingVisionAvailable` as a configuration flag, not a reachability or accuracy guarantee.
+
+### Supported v1 and limits
+
+- Bodies: circular rotational flange (central bore supported), prismatic rectangular/polygonal extrusion, simple open-top rectangular enclosure, and a revolved profile whose coordinates are grounded to the expected dimension types.
+- Features: equal full-circle pattern of cylindrical cuts, single through/blind cylindrical hole, round/rectangular pocket, and fillet with explicit edge scope.
+- Provisional defaults: 10 mm solid height and 2.5 mm enclosure wall, visibly flagged for review.
+- Blocked rather than approximated: gear/sprocket teeth, sheet-metal bends, threads, arbitrary freeform shapes, partial/uneven angular patterns, ungrounded profile coordinates, and unsupported feature operations on revolved profiles. A future tooth-profile/vector-contour milestone is required for exact sprocket reconstruction.
+- OpenCASCADE validity and a watertight STL prove model/mesh properties, not that all dimensions, hidden geometry, GD&T, tolerances or manufacturing intent match the original drawing.
+
+### Verified source HEAD `38ac1ed`
+
+- CAD Engine Tests: **97 passed**, Docker build passed with `CAD_RUNTIME_AVAILABLE=true OCR_AVAILABLE=true`.
+- Web Frontend Checks: lint, TypeScript and production build passed.
+- CodeQL Advanced: Python and JS/TS passed; each SARIF scan contained 0 findings under the configured gate. SARIF artifacts are downloadable; the repository's current settings prevent upload to the GitHub Security tab.
+- Runs: [CAD](https://github.com/DIGANTA2006/offline-ai-3d-designer/actions/runs/40062651779), [Web](https://github.com/DIGANTA2006/offline-ai-3d-designer/actions/runs/40062651924), [CodeQL](https://github.com/DIGANTA2006/offline-ai-3d-designer/actions/runs/40062651755).
+
+### Next actions
+
+1. Check Actions on the latest branch tip after the status/handoff documentation-only updates.
+2. Keep PR #3 open and Draft. Do not merge or touch Production settings.
+3. Configure/redeploy the isolated Railway Preview and Vercel Preview as described in `DEPLOYMENT.md`; test private upload, OCR, blueprint prefill/edit, supported-part STEP/STL generation, private downloads, and refusal paths.
+4. For the reported sprocket drawing, do not accept a smooth flange as a substitute. If the vision extraction marks teeth unsupported, that is the intended safety block until a dedicated tooth-profile or traceable vector-contour generator is implemented.
