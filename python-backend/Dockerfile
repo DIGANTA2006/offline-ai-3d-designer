@@ -23,6 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     tesseract-ocr \
     tesseract-ocr-eng \
+    cura-engine \
     fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 

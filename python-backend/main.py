@@ -2,7 +2,7 @@
 
 import asyncio
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Any, Optional
 import uuid
 import base64
 import io
@@ -67,6 +67,8 @@ class HealthResponse(BaseModel):
     slicingAvailable: bool = False
     slicingEngine: Optional[str] = None
     slicingStatusReason: Optional[str] = None
+    imageTo3dStatus: str = "not offered"
+    telemetry: dict[str, dict[str, Any]] = Field(default_factory=dict)
     limitations: list[str] = Field(default_factory=list)
 
 

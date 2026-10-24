@@ -518,8 +518,10 @@ def get_slicing_capability() -> dict[str, Any]:
             "reason": "CuraEngine was not found on the backend PATH or in known installation locations.",
         }
 
+    default_definition_dir = Path(__file__).resolve().parents[3] / "python-backend" / "cura_resources" / "definitions"
+    default_definitions = [default_definition_dir / "generic_fdm_printer.def.json", default_definition_dir / "generic_fdm_extruder.def.json"]
     configured = os.environ.get("CURA_PRINTER_DEFINITION", "").strip()
-    definitions = [value.strip() for value in configured.split(";") if value.strip()]
+    definitions = ([value.strip() for value in configured.split(";") if value.strip()] if configured else [str(p) for p in default_definitions if p.is_file()])
     if not definitions:
         return {
             "available": False,
