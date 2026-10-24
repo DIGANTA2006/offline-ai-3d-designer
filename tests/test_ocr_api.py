@@ -102,6 +102,51 @@ def test_ocr_endpoint_returns_structured_blueprint_alongside_ocr(monkeypatch):
     assert result.spec.blueprintVisionModel == "test-vision"
 
 
+def test_ocr_endpoint_can_return_visual_blueprint_when_ocr_has_no_text(monkeypatch):
+    monkeypatch.setattr(cad_service, "is_ocr_available", lambda: True)
+
+    def no_text(*_args):
+        raise cad_service.OCRProcessingError("No drawing text was recognized. Try a clearer, higher-resolution scan.")
+
+    monkeypatch.setattr(cad_service, "extract_drawing_text", no_text)
+    observed: dict = {}
+
+    async def fake_extract_blueprint(**kwargs):
+        observed.update(kwargs)
+        return ExtractionResult(
+            blueprint=Blueprint(
+                part_name="unresolved visual drawing",
+                primary_body_type=None,
+                warnings=["No readable dimensions; numeric fields remain unresolved."],
+                needs_review=True,
+            ),
+            source="raster",
+            source_pages=1,
+            dimension_inventory=[],
+            cleared_fields=[],
+            vector_geometry=[],
+            vision_model="test-vision",
+        )
+
+    monkeypatch.setattr(cad_service, "extract_blueprint", fake_extract_blueprint)
+    request = cad_service.OcrRequest(
+        fileBase64=base64.b64encode(b"fake-image-payload").decode("ascii"),
+        fileName="drawing.png",
+        mimeType="image/png",
+    )
+
+    result = asyncio.run(cad_service.ocr_extract(request))
+
+    assert result.success is True
+    assert result.spec is not None
+    assert result.spec.confidenceMethod == "no_readable_text"
+    assert result.spec.rawText == ""
+    assert result.spec.blueprint is not None
+    assert result.spec.blueprint.primary_body_type is None
+    assert observed["raw_text"] == ""
+    assert observed["dimension_data"]["dimensions"]["diameters"] == []
+
+
 def test_reviewed_blueprint_generates_real_exports_without_a_free_text_prompt():
     request = cad_service.GenerationRequest(
         spec=cad_service.ExtractedSpec(rawText="CAD Practice Drawings s 50+ R67 R155"),
