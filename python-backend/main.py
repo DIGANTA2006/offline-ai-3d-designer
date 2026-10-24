@@ -38,6 +38,7 @@ from ai3d_designer.ocr.pipeline import (
     OCRInputError,
     OCRProcessingError,
     OCRUnavailableError,
+    extract_drawing_annotations,
     extract_drawing_text,
     is_ocr_available,
 )
@@ -316,9 +317,27 @@ async def ocr_extract(request: OcrRequest):
         if len(file_bytes) > MAX_DOCUMENT_BYTES:
             raise OCRInputError("Drawing exceeds the 5 MiB OCR input limit.")
 
-        extracted = await asyncio.to_thread(
-            extract_drawing_text, file_bytes, request.fileName, request.mimeType
-        )
+        try:
+            extracted = await asyncio.to_thread(
+                extract_drawing_text, file_bytes, request.fileName, request.mimeType
+            )
+        except OCRProcessingError as exc:
+            # A vision-capable extractor can still classify the rendered views when
+            # text recognition fails. It must not invent measurements: an empty
+            # dimension inventory leaves numeric blueprint fields ungrounded/cleared.
+            if "No drawing text was recognized" not in str(exc):
+                raise
+            extracted = {
+                **extract_drawing_annotations(""),
+                "rawText": "",
+                "confidence": 0.0,
+                "confidenceMethod": "no_readable_text",
+                "pageCount": 1,
+                "needsReview": True,
+                "limitations": [
+                    "No readable drawing text was recognized. Visual classification may still run, but numeric dimensions remain ungrounded and must not be inferred as fact."
+                ],
+            }
         structured = await extract_blueprint(
             file_bytes=file_bytes,
             file_name=request.fileName,
