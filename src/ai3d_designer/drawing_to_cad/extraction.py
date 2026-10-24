@@ -97,6 +97,12 @@ class OpenAICompatibleVision:
                     # to be required. Nullable fields remain nullable via their schema.
                     node["required"] = list(properties.keys())
                     node["additionalProperties"] = False
+                # Keep the schema within common Structured Outputs subsets; semantic
+                # range checks are repeated by Pydantic after the response is parsed.
+                node.pop("default", None)
+                node.pop("examples", None)
+                node.pop("exclusiveMinimum", None)
+                node.pop("exclusiveMaximum", None)
                 for value in node.values():
                     make_strict(value)
             elif isinstance(node, list):
@@ -353,10 +359,14 @@ def _dimension_inventory(
             for entry in entries:
                 if not isinstance(entry, dict):
                     continue
-                value = entry.get("valueMm", entry.get("value"))
                 unit = str(entry.get("unit") or "mm").lower()
-                if kind != "linear" and value is not None:
-                    value = float(value) * UNIT_MULTIPLIER.get(unit, 1.0)
+                if entry.get("valueMm") is not None:
+                    # valueMm is already normalized; never multiply it by the source unit again.
+                    value = entry.get("valueMm")
+                else:
+                    value = entry.get("value")
+                    if value is not None:
+                        value = float(value) * UNIT_MULTIPLIER.get(unit, 1.0)
                 add(value, str(entry.get("raw", value)), kind)
 
     # Add labelled values such as OD 155, PCD 98 and hole dia 8.
