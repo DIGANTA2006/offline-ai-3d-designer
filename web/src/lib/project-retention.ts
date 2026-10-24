@@ -1,49 +1,20 @@
 import { del } from "@vercel/blob";
 import { prisma } from "@/lib/prisma";
+import {
+  compactStoredJson,
+  MAX_ACTIVE_PROJECTS,
+  MAX_UNPROTECTED_OUTPUT_VERSIONS,
+  selectProjectIdsToPrune,
+  selectUnprotectedVersionIdsToPrune,
+} from "@/lib/project-retention-core";
 
-export const MAX_ACTIVE_PROJECTS = 10;
-export const MAX_UNPROTECTED_OUTPUT_VERSIONS = 2;
+export { compactStoredJson, MAX_ACTIVE_PROJECTS, MAX_UNPROTECTED_OUTPUT_VERSIONS } from "@/lib/project-retention-core";
 
 export class ProjectCapacityError extends Error {
   constructor() {
     super("You have reached the 10-project storage limit. Mark an older project unimportant or delete it before creating another project.");
     this.name = "ProjectCapacityError";
   }
-}
-
-const HEAVY_JSON_KEY =
-  /base64|data[_-]?(?:url|uri)|(?:raw[_-]?)?mesh(?:data|bytes|payload|base64)?$|(?:image|file|binary)[_-]?(?:bytes|buffer|payload)|^(?:vertices|faces|triangles)$/i;
-
-function isInlineBinaryString(value: string): boolean {
-  if (value.startsWith("data:image/") || value.startsWith("data:application/") || value.startsWith("data:model/")) return true;
-  if (value.length < 256_000) return false;
-  const compact = value.replace(/\s/g, "");
-  if (compact.length < 256_000 || compact.length % 4 !== 0) return false;
-  return /^[A-Za-z0-9+/]+={0,2}$/.test(compact);
-}
-
-/**
- * Strip transient data URLs, Base64 exports, and raw vertex/face arrays before a
- * value reaches a JSON database column. Keep small dimensions and feature parameters.
- */
-export function compactStoredJson<T>(value: T): T {
-  const visit = (node: unknown, key = ""): unknown => {
-    if (HEAVY_JSON_KEY.test(key)) return undefined;
-    if (typeof node === "string") return isInlineBinaryString(node) ? undefined : node;
-    if (Array.isArray(node)) {
-      return node.map((item) => visit(item)).filter((item) => item !== undefined);
-    }
-    if (node && typeof node === "object") {
-      const result: Record<string, unknown> = {};
-      for (const [childKey, childValue] of Object.entries(node)) {
-        const compacted = visit(childValue, childKey);
-        if (compacted !== undefined) result[childKey] = compacted;
-      }
-      return result;
-    }
-    return node;
-  };
-  return visit(value) as T;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -140,23 +111,17 @@ export async function pruneUserProjects(
   });
   let excess = projects.length - MAX_ACTIVE_PROJECTS;
   if (excess <= 0) return [];
-  const candidates = projects.filter((project) =>
-    !project.isImportant
-    && project.status !== "PROCESSING"
-    && project.status !== "QUEUED"
-    && project.id !== options.excludeProjectId
-  );
+  const pruneIds = new Set(selectProjectIdsToPrune(projects, options));
   const deleted: string[] = [];
-  for (const project of candidates) {
+  for (const project of projects) {
     if (excess <= 0) break;
+    if (!pruneIds.has(project.id)) continue;
     if (await deleteProjectAndBlobs(project.id, userId, token)) {
       deleted.push(project.id);
       excess -= 1;
     }
   }
-  if (excess > 0) {
-    throw new ProjectCapacityError();
-  }
+  if (excess > 0) throw new ProjectCapacityError();
   return deleted;
 }
 
@@ -186,8 +151,8 @@ export async function pruneProjectVersions(projectId: string, userId: string, to
       glbFilePath: true,
     },
   });
-  const unprotected = versions.filter((version) => !version.isProtected);
-  const excess = unprotected.slice(MAX_UNPROTECTED_OUTPUT_VERSIONS);
+  const pruneIds = new Set(selectUnprotectedVersionIdsToPrune(versions));
+  const excess = versions.filter((version) => pruneIds.has(version.id));
   const prefix = projectPathPrefix(userId, projectId);
   const deleted: number[] = [];
   for (const version of excess) {

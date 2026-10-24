@@ -57,6 +57,8 @@ jobs:
         run: npm ci
       - name: Generate Prisma client
         run: npx prisma generate
+      - name: Project retention unit tests
+        run: npm run test:retention
       - name: ESLint
         run: npm run lint
       - name: TypeScript typecheck

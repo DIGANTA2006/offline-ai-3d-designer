@@ -32,3 +32,12 @@ This Next.js 15 application is being built beside the existing Python CAD engine
 ## Important
 
 The environment template contains placeholders, not working credentials. Put local web variables in `web/.env.local` or `web/.env`. Do not commit `.env`, database URLs, Firebase service-account keys, CAD service tokens, or Razorpay secrets. Set provider credentials in the deployment secret manager. Razorpay recurring subscriptions are integrated for the ₹500/month Pro plan. Only users with an active verified subscription can generate CAD; ADMIN accounts bypass billing. Before enabling checkout, create a Razorpay Subscriptions Plan for INR 500 per month and set RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_PLAN_ID, and RAZORPAY_WEBHOOK_SECRET in Vercel. Configure the Razorpay webhook at https://YOUR-PRODUCTION-DOMAIN/api/billing/webhook for subscription.activated, subscription.charged, subscription.pending, subscription.halted, subscription.paused, subscription.resumed, subscription.cancelled, and subscription.completed.
+
+## Project storage retention
+
+- PDF page rendering, OCR preprocessing, and vision image preparation are in-memory; CAD exporters use scoped `tempfile.TemporaryDirectory` contexts. Scratch STEP/STL files are removed after success or failure.
+- Persisted project JSON is compacted to remove Base64 exports, data URLs, and raw mesh/vertex/face arrays. Array placeholders preserve source/OCR indexes instead of shifting them when a heavy payload is stripped.
+- Each project keeps its two newest **unprotected** generated output versions; each version's STEP/STL files are one output pair. Protected versions remain until manually deleted.
+- Each account has a 10-project history cap. Important projects and queued/processing projects are excluded from automatic pruning. Failed text-to-CAD attempts run best-effort cleanup so failed jobs do not grow history indefinitely.
+- Export Protect/Delete controls are on project details. Mark/unmark Important is per project. Cleanup failures are logged and surfaced as warnings instead of being silently reported as successful.
+- Run `npm run test:retention` for pure policy tests without Supabase or Vercel Blob credentials.

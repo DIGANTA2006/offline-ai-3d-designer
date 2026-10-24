@@ -291,6 +291,10 @@ export async function POST(request: Request) {
     if (projectId) {
       try { await prisma.project.update({ where: { id: projectId }, data: { status: "FAILED" } }); }
       catch (updateError) { console.error("Could not mark failed CAD project.", updateError); }
+      // A failed run still created a project row. Restore the cap while keeping the
+      // new failed project visible; remove the oldest eligible older project instead.
+      try { await pruneUserProjects(user.id, privateBlobToken); }
+      catch (retentionError) { console.error("Failed-generation project history cleanup failed.", retentionError); }
     }
     if (usageReserved) {
       try {

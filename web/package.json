@@ -7,6 +7,7 @@
     "build": "prisma generate && next build --turbopack",
     "start": "next start",
     "lint": "eslint",
+    "test:retention": "node scripts/test-project-retention.mjs",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy"
