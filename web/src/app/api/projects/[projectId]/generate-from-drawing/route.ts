@@ -11,7 +11,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const MAX_BODY_BYTES = 16 * 1024;
+const MAX_BODY_BYTES = 256 * 1024;
 const MAX_CAD_RESPONSE_BYTES = 15 * 1024 * 1024;
 const MAX_BASE64_LENGTH = 10 * 1024 * 1024;
 const CAD_TIMEOUT_MS = 50_000;
@@ -133,13 +133,20 @@ export async function POST(request: Request, { params }: Context) {
     if (!body || typeof body !== "object" || Array.isArray(body)) throw new RouteError("A JSON object is required.", 400);
     const input = body as Record<string, unknown>;
     if (input.reviewed !== true) throw new RouteError("Review the extracted text, dimensions and shape assumptions before generation.", 409);
-    if (typeof input.reviewedDescription !== "string" || input.reviewedDescription.trim().length < 5 || input.reviewedDescription.length > 4000) {
-      throw new RouteError("Provide a reviewed dimensioned description between 5 and 4,000 characters.", 400);
+    const reviewedDescription = typeof input.reviewedDescription === "string" ? input.reviewedDescription.trim() : "";
+    if (reviewedDescription.length > 4000) {
+      throw new RouteError("The reviewed text description must be 4,000 characters or fewer.", 400);
+    }
+    const reviewedBlueprint =
+      input.reviewedBlueprint && typeof input.reviewedBlueprint === "object" && !Array.isArray(input.reviewedBlueprint)
+        ? input.reviewedBlueprint as Record<string, unknown>
+        : undefined;
+    if (!reviewedBlueprint && reviewedDescription.length < 5) {
+      throw new RouteError("A reviewed structured blueprint or a dimensioned part description is required.", 400);
     }
     if (typeof input.fileIndex !== "number" || !Number.isSafeInteger(input.fileIndex) || input.fileIndex < 0) {
       throw new RouteError("fileIndex must be a non-negative integer.", 400);
     }
-    const reviewedDescription = input.reviewedDescription.trim();
     const fileIndex = input.fileIndex;
 
     const blobToken = process.env.PRIVATE_BLOB_READ_WRITE_TOKEN?.trim();
@@ -169,6 +176,10 @@ export async function POST(request: Request, { params }: Context) {
     const storedSpec = sourceVersion.spec as Record<string, unknown>;
     const ocrResult = getOcrResult(storedSpec, fileIndex);
     if (!ocrResult) throw new RouteError("No stored OCR result exists for this file. Analyze it first.", 409);
+    const storedBlueprint = ocrResult.spec.blueprint;
+    if (reviewedBlueprint && (!storedBlueprint || typeof storedBlueprint !== "object" || Array.isArray(storedBlueprint))) {
+      throw new RouteError("This drawing has no saved structured blueprint. Click Analyze again before editing blueprint fields.", 409);
+    }
     const rawSources = storedSpec.uploadedFiles;
     const source = Array.isArray(rawSources) ? rawSources[fileIndex] as Partial<StoredSource> | undefined : undefined;
     if (!source || typeof source.name !== "string") throw new RouteError("Source file metadata is invalid.", 422);
@@ -212,6 +223,7 @@ export async function POST(request: Request, { params }: Context) {
           userId: user.id,
           reviewed: true,
           reviewedDescription,
+          blueprint: reviewedBlueprint ?? storedBlueprint,
         }),
         cache: "no-store",
         signal: controller.signal,
@@ -237,20 +249,27 @@ export async function POST(request: Request, { params }: Context) {
     ]);
 
     const sourceRecords = Array.isArray(storedSpec.uploadedFiles) ? storedSpec.uploadedFiles : [];
+    const generatedBlueprintName =
+      reviewedBlueprint && typeof reviewedBlueprint.part_name === "string" ? reviewedBlueprint.part_name : "";
+    const versionInputText =
+      reviewedDescription || `Structured drawing blueprint: ${generatedBlueprintName || source.name}`;
     const nextSpec = {
       uploadedFiles: sourceRecords,
       rejected: storedSpec.rejected ?? [],
       ocrResults: Array.isArray(storedSpec.ocrResults) ? storedSpec.ocrResults : [],
       sourceOCR: ocrResult.spec,
-      reviewedDescription,
+      reviewedDescription: reviewedDescription || null,
+      reviewedBlueprint: reviewedBlueprint ?? storedBlueprint ?? null,
       partSpec: cad.partSpec ?? {},
       fitReport: cad.fitReport ?? null,
+      generationMetrics: cad.metrics ?? null,
+      generationWarnings: cad.warnings ?? [],
     };
     const version = await prisma.projectVersion.create({
       data: {
         projectId: project.id,
         version: nextVersion,
-        inputText: reviewedDescription,
+        inputText: versionInputText,
         sourceFileName: source.name,
         spec: nextSpec as Prisma.InputJsonValue,
         stepFilePath: stepBlob.pathname,
