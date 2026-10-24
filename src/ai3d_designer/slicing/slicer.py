@@ -538,7 +538,7 @@ def get_slicing_capability() -> dict[str, Any]:
         try:
             with open(profile_path, "r", encoding="utf-8") as stream:
                 profile = json.load(stream)
-        except (OSError, json.JSONDecodeError) as exc:
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
             return {
                 "available": False,
                 "engine": os.path.basename(engine),
