@@ -255,12 +255,15 @@ export async function POST(request: Request) {
     versionPersisted = true;
     outputPathsForCleanup = [];
     await prisma.project.update({ where: { id: project.id }, data: { status: "SUCCEEDED" } });
-    try {
-      await pruneProjectVersions(project.id, user.id, privateBlobToken);
-      await pruneUserProjects(user.id, privateBlobToken, { excludeProjectId: project.id });
-    } catch (error) {
-      console.error("Project storage retention pruning failed after successful generation.", error);
-      retentionWarning = "Generation succeeded, but automatic storage cleanup could not finish. Retry cleanup later.";
+    try { await pruneProjectVersions(project.id, user.id, privateBlobToken); }
+    catch (error) {
+      console.error("CAD output pruning failed after successful generation.", error);
+      retentionWarning = "Generation succeeded, but older unprotected outputs could not be pruned. Retry cleanup later.";
+    }
+    try { await pruneUserProjects(user.id, privateBlobToken, { excludeProjectId: project.id }); }
+    catch (error) {
+      console.error("Project history pruning failed after successful generation.", error);
+      retentionWarning = "Generation succeeded, but project history cleanup could not finish. Retry cleanup later.";
     }
 
     try {

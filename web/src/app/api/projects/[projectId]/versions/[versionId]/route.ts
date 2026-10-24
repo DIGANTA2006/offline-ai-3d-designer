@@ -28,8 +28,10 @@ export async function PATCH(request: Request, { params }: Context) {
   if (!body || typeof body !== "object" || Array.isArray(body) || typeof (body as Record<string, unknown>).isProtected !== "boolean") {
     return NextResponse.json({ error: "isProtected must be a boolean." }, { status: 400 });
   }
+  const ownedProject = await prisma.project.findFirst({ where: { id: projectId, userId: user.id }, select: { id: true } });
+  if (!ownedProject) return NextResponse.json({ error: "Project not found." }, { status: 404 });
   const version = await prisma.projectVersion.findFirst({
-    where: { id: versionId, projectId, project: { userId: user.id } },
+    where: { id: versionId, projectId: ownedProject.id },
     select: { id: true, version: true, isProtected: true, stepFilePath: true, stlFilePath: true, glbFilePath: true },
   });
   if (!version || !isGenerated(version)) return NextResponse.json({ error: "Generated export version not found." }, { status: 404 });
@@ -66,8 +68,10 @@ export async function DELETE(request: Request, { params }: Context) {
   try { ({ projectId, versionId } = await params); }
   catch { return NextResponse.json({ error: "Invalid export URL." }, { status: 400 }); }
 
+  const ownedProject = await prisma.project.findFirst({ where: { id: projectId, userId: user.id }, select: { id: true } });
+  if (!ownedProject) return NextResponse.json({ error: "Project not found." }, { status: 404 });
   const version = await prisma.projectVersion.findFirst({
-    where: { id: versionId, projectId, project: { userId: user.id } },
+    where: { id: versionId, projectId: ownedProject.id },
     select: { id: true, version: true, stepFilePath: true, stlFilePath: true, glbFilePath: true },
   });
   if (!version || !isGenerated(version)) return NextResponse.json({ error: "Generated export version not found." }, { status: 404 });

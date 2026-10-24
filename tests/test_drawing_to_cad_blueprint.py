@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import io
+from pathlib import Path
 from typing import Any
 
 from PIL import Image
@@ -417,6 +418,35 @@ def test_openai_compatible_vision_sends_image_and_strict_schema(monkeypatch):
                 assert_no_unsupported_defaults(value)
 
     assert_no_unsupported_defaults(schema)
+
+
+def test_cad_export_scratch_directory_is_removed_when_export_fails(monkeypatch):
+    import ai3d_designer.drawing_to_cad.generator as generator_module
+
+    scratch_paths: list[Path] = []
+    original_temporary_directory = generator_module.tempfile.TemporaryDirectory
+
+    class TrackingTemporaryDirectory(original_temporary_directory):
+        def __enter__(self):
+            path = super().__enter__()
+            scratch_paths.append(Path(path))
+            return path
+
+    def fail_step_export(*_args, **_kwargs):
+        raise RuntimeError("synthetic STEP export failure")
+
+    monkeypatch.setattr(generator_module.tempfile, "TemporaryDirectory", TrackingTemporaryDirectory)
+    monkeypatch.setattr(generator_module, "export_step", fail_step_export)
+    blueprint = Blueprint(
+        primary_body_type="rotational_flange",
+        base_sketch=BaseSketch(profile="circle", outer_diameter=50, thickness=10),
+    )
+
+    with pytest.raises(RuntimeError, match="synthetic STEP export failure"):
+        generator_module.export_blueprint(blueprint)
+
+    assert len(scratch_paths) == 1
+    assert not scratch_paths[0].exists()
 
 
 def test_deterministic_generator_exports_scalloped_flange_with_pcd_holes():

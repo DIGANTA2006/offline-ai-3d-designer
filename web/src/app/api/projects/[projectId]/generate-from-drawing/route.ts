@@ -6,7 +6,7 @@ import { getCurrentUser } from "@/lib/auth/server";
 import { isSameOriginRequest } from "@/lib/security/same-origin";
 import { prisma } from "@/lib/prisma";
 import { getCadServiceConfig } from "@/lib/cad-service-config";
-import { compactStoredJson, pruneProjectVersions } from "@/lib/project-retention";
+import { compactStoredJson, pruneProjectVersions, pruneUserProjects } from "@/lib/project-retention";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -305,6 +305,11 @@ export async function POST(request: Request, { params }: Context) {
     catch (error) {
       console.error("CAD version retention pruning failed after successful generation.", error);
       retentionWarning = "Generation succeeded, but older unprotected exports could not be pruned. Retry cleanup later.";
+    }
+    try { await pruneUserProjects(user.id, blobToken, { excludeProjectId: project.id }); }
+    catch (error) {
+      console.error("Project history pruning failed after drawing generation.", error);
+      retentionWarning = "Generation succeeded, but project history cleanup could not finish. Retry cleanup later.";
     }
 
     try {
