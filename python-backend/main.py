@@ -60,6 +60,7 @@ class HealthResponse(BaseModel):
     serviceTokenConfigured: bool = False
     cadRuntimeError: Optional[str] = None
     ocrAvailable: bool = False
+    drawingVisionAvailable: bool = False
     imageTo3dAvailable: bool = False
     limitations: list[str] = Field(default_factory=list)
 
@@ -265,10 +266,19 @@ async def health():
     ready = cad_runtime_available and (is_development or token_configured)
     status = "healthy" if ready else "degraded"
     ocr_available = is_ocr_available()
+    vision_available = bool(
+        os.environ.get("DRAWING_VISION_URL", "").strip()
+        or os.environ.get("OLLAMA_URL", "").strip()
+    )
     limitations = [
-        "Drawing OCR recognizes text and common annotations; it does not reconstruct arbitrary 3D geometry from drawing views.",
+        "Drawing OCR recognizes text and common annotations; it does not guarantee reconstruction of arbitrary 3D geometry from drawing views.",
+        "The v1 deterministic generator supports a limited set of primitive/mechanical features; teeth, bends, threads and other unsupported shapes are blocked rather than approximated.",
         "Single-view image-to-3D reconstruction is not available in this service.",
     ]
+    if not vision_available:
+        limitations.append(
+            "No vision model endpoint is configured. Structured extraction uses conservative explicit-label fallback; configure DRAWING_VISION_URL and DRAWING_VISION_MODEL for visual semantic extraction."
+        )
     return HealthResponse(
         status=status,
         cadAvailable=ready,
@@ -276,6 +286,7 @@ async def health():
         serviceTokenConfigured=token_configured,
         cadRuntimeError=CAD_RUNTIME_IMPORT_ERROR,
         ocrAvailable=ocr_available,
+        drawingVisionAvailable=vision_available,
         imageTo3dAvailable=False,
         limitations=limitations,
     )
