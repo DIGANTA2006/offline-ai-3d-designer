@@ -69,6 +69,83 @@ For teeth, involute gears, sprocket tooth forms, sheet-metal bends/flanges, thre
 Defaults will be applied by deterministic code and marked for review. Put uncertainties in warnings and set needs_review=true."""
 
 
+class OpenAICompatibleVision:
+    """OpenAI Chat Completions adapter with strict JSON-schema output and image input."""
+
+    def __init__(self, base_url: str, model: str, api_key: str | None, timeout: float = 38.0):
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.api_key = api_key
+        self.timeout = timeout
+
+    async def chat_json(
+        self, images_png: list[bytes], system: str, user: str, schema: dict[str, Any]
+    ) -> dict[str, Any]:
+        import copy
+
+        strict_schema = copy.deepcopy(schema)
+
+        def make_strict(node: Any) -> None:
+            if isinstance(node, dict):
+                properties = node.get("properties")
+                if isinstance(properties, dict):
+                    # The strict Structured Outputs subset requires every object key
+                    # to be required. Nullable fields remain nullable via their schema.
+                    node["required"] = list(properties.keys())
+                    node["additionalProperties"] = False
+                for value in node.values():
+                    make_strict(value)
+            elif isinstance(node, list):
+                for value in node:
+                    make_strict(value)
+
+        make_strict(strict_schema)
+        user_content: list[dict[str, Any]] = [{"type": "text", "text": user}]
+        for image_png in images_png:
+            encoded = base64.b64encode(image_png).decode("ascii")
+            user_content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{encoded}", "detail": "high"},
+                }
+            )
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        payload = {
+            "model": self.model,
+            "temperature": 0,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user_content},
+            ],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "engineering_drawing_blueprint",
+                    "strict": True,
+                    "schema": strict_schema,
+                },
+            },
+        }
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.post(f"{self.base_url}/chat/completions", headers=headers, json=payload)
+            response.raise_for_status()
+        choices = response.json().get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise ValueError("Vision API returned no completion choices")
+        message = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
+        answer = message.get("content") if isinstance(message, dict) else None
+        if isinstance(answer, list):
+            answer = "".join(part.get("text", "") for part in answer if isinstance(part, dict))
+        if not isinstance(answer, str) or not answer.strip():
+            raise ValueError("Vision API returned no JSON message content")
+        parsed = json.loads(answer)
+        if not isinstance(parsed, dict):
+            raise ValueError("Vision API result must be a JSON object")
+        return parsed
+
+
 class OllamaVision:
     """JSON-schema-constrained Ollama chat adapter for a vision-capable model."""
 
@@ -107,7 +184,7 @@ class OllamaVision:
         return parsed
 
 
-def get_vision_backend() -> OllamaVision | None:
+def get_vision_backend() -> VisionBackend | None:
     """Only call a vision model when an endpoint is explicitly configured."""
     base_url = (os.getenv("DRAWING_VISION_URL") or os.getenv("OLLAMA_URL") or "").strip()
     if not base_url:
@@ -115,7 +192,13 @@ def get_vision_backend() -> OllamaVision | None:
     model = (os.getenv("DRAWING_VISION_MODEL") or os.getenv("VISION_MODEL") or "qwen2.5vl:7b").strip()
     if not model:
         return None
-    return OllamaVision(base_url, model)
+    provider = (os.getenv("DRAWING_VISION_PROVIDER") or "ollama").strip().lower()
+    if provider == "ollama":
+        return OllamaVision(base_url, model)
+    if provider in {"openai", "openai_compatible", "openai-compatible"}:
+        api_key = os.getenv("DRAWING_VISION_API_KEY", "").strip() or None
+        return OpenAICompatibleVision(base_url, model, api_key)
+    raise ValueError("DRAWING_VISION_PROVIDER must be 'ollama' or 'openai_compatible'")
 
 
 def _fit_png(image_bytes: bytes) -> bytes:
