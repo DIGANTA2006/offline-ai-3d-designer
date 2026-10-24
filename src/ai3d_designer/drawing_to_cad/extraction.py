@@ -33,7 +33,7 @@ class DimensionToken(BaseModel):
     raw: str
     value: float = Field(gt=0, le=1_000_000)
     kind: str
-    page: int = Field(ge=1, le=MAX_BLUEPRINT_PAGES)
+    page: int | None = Field(default=None, ge=1, le=MAX_BLUEPRINT_PAGES)
     x: float | None = None
     y: float | None = None
 
@@ -207,9 +207,16 @@ def _dimension_inventory(
 ) -> list[DimensionToken]:
     """Build a millimetre inventory from the existing parser's explicit annotations."""
     found: list[DimensionToken] = []
-    keys: set[tuple[str, float]] = set()
+    keys: dict[tuple[str, float], DimensionToken] = {}
 
-    def add(value: Any, raw: str, kind: str, page: int = 1, x: float | None = None, y: float | None = None) -> None:
+    def add(
+        value: Any,
+        raw: str,
+        kind: str,
+        page: int | None = None,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> None:
         try:
             numeric = float(value)
         except (TypeError, ValueError):
@@ -219,19 +226,23 @@ def _dimension_inventory(
         normalized_kind = kind.lower()
         key = (normalized_kind, round(numeric, 4))
         if key in keys:
+            existing = keys[key]
+            if existing.page is None and page is not None:
+                existing.page = max(1, min(page, MAX_BLUEPRINT_PAGES))
+                existing.x = x
+                existing.y = y
             return
-        keys.add(key)
-        found.append(
-            DimensionToken(
-                id=f"D{len(found) + 1}",
-                raw=raw[:100] if raw else f"{numeric:g}",
-                value=numeric,
-                kind=normalized_kind,
-                page=max(1, min(page, MAX_BLUEPRINT_PAGES)),
-                x=x,
-                y=y,
-            )
+        token = DimensionToken(
+            id=f"D{len(found) + 1}",
+            raw=raw[:100] if raw else f"{numeric:g}",
+            value=numeric,
+            kind=normalized_kind,
+            page=max(1, min(page, MAX_BLUEPRINT_PAGES)) if page is not None else None,
+            x=x,
+            y=y,
         )
+        keys[key] = token
+        found.append(token)
 
     dimensions = dimension_data.get("dimensions", {})
     if not isinstance(dimensions, dict):
@@ -298,6 +309,36 @@ def _dimension_inventory(
             number *= UNIT_MULTIPLIER.get(unit, 1.0)
         add(number, raw, kind)
 
+    # Prefer exact page attribution from a vector PDF's text layer where available.
+    page_texts = dimension_data.get("pageTexts", [])
+    if isinstance(page_texts, list):
+        labels = (
+            (["outer diameter", "outside diameter", "outer dia", "od"], "diameter"),
+            (["inner bore diameter", "bore diameter", "bore dia", "inner diameter", "id"], "diameter"),
+            (["pitch circle diameter", "pitch circle dia", "pcd", "bcd", "bolt circle diameter"], "diameter"),
+            (["hole diameter", "hole dia", "dia of holes"], "diameter"),
+            (["width", "overall width"], "linear"),
+            (["length", "overall length"], "linear"),
+            (["overall thickness", "plate thickness", "thickness", "thk", "height"], "linear"),
+            (["wall thickness", "sheet thickness"], "linear"),
+        )
+        for page_index, page_text in enumerate(page_texts[:MAX_BLUEPRINT_PAGES], start=1):
+            if not isinstance(page_text, str):
+                continue
+            for match in DIMENSION_TOKEN_RE.finditer(page_text[:20_000]):
+                raw = match.group(0).strip()
+                prefix = match.group("prefix")
+                unit = (match.group("unit") or "").strip().lower()
+                number = float(match.group("number").replace(",", "."))
+                kind = "diameter" if prefix in DIAMETER_MARKS else "radius" if prefix and prefix.lower() == "r" else "linear"
+                if unit:
+                    number *= UNIT_MULTIPLIER.get(unit, 1.0)
+                add(number, raw, kind, page=page_index)
+            for field_labels, kind in labels:
+                value = _labeled_value(page_text, list(field_labels))
+                if value is not None:
+                    add(value, f"{field_labels[0]} {value:g} mm", kind, page=page_index)
+
     return found[:200]
 
 
@@ -306,7 +347,7 @@ def _inventory_message(
 ) -> str:
     if inventory:
         lines = "\n".join(
-            f'{token.id}: "{token.raw}" => {token.kind}, {token.value:g} mm-equivalent, page {token.page}'
+            f'{token.id}: "{token.raw}" => {token.kind}, {token.value:g} mm-equivalent, page {token.page if token.page is not None else "unknown"}'
             for token in inventory[:200]
         )
     else:
@@ -519,7 +560,8 @@ async def extract_blueprint(
 ) -> ExtractionResult:
     """Render all supported pages, optionally call a VLM, and ground numeric fields."""
     rendered = await asyncio.to_thread(_render_drawing, file_bytes, file_name, mime_type)
-    inventory = _dimension_inventory(raw_text, dimension_data, len(rendered.images_png))
+    inventory_data = {**dimension_data, "pageTexts": rendered.page_texts}
+    inventory = _dimension_inventory(raw_text, inventory_data, len(rendered.images_png))
     if vision is None:
         vision = get_vision_backend()
 
