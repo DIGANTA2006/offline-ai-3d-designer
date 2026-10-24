@@ -6,6 +6,7 @@ import pytest
 from fastapi import HTTPException
 
 import main as cad_service
+from ai3d_designer.drawing_to_cad.blueprint import BaseSketch, Blueprint, Feature
 
 
 @pytest.mark.parametrize("ocr_available", [True, False])
@@ -45,6 +46,38 @@ def test_health_distinguishes_cad_runtime_failure_from_missing_service_token(
     assert result.cadRuntimeAvailable is runtime_available
     assert result.serviceTokenConfigured is token_configured
     assert result.ocrAvailable is True
+
+
+def test_reviewed_blueprint_generates_real_exports_without_a_free_text_prompt():
+    request = cad_service.GenerationRequest(
+        spec=cad_service.ExtractedSpec(rawText="CAD Practice Drawings s 50+ R67 R155"),
+        jobId="structured-blueprint-smoke",
+        userId="test-user",
+        reviewed=True,
+        reviewedDescription=None,
+        blueprint=Blueprint(
+            part_name="grounded flange",
+            primary_body_type="rotational_flange",
+            base_sketch=BaseSketch(
+                profile="circle",
+                outer_diameter=100,
+                inner_bore_diameter=20,
+                thickness=10,
+            ),
+            features=[
+                Feature(type="circular_pattern_cut", count=6, pitch_radius=38, diameter=8)
+            ],
+            needs_review=True,
+        ),
+    )
+
+    result = cad_service.generate_cad(request)
+
+    assert result.success is True, result.error
+    assert result.stepBase64 and len(result.stepBase64) > 100
+    assert result.stlBase64 and len(result.stlBase64) > 100
+    assert result.metrics and result.metrics["stl_watertight"] is True
+    assert result.partSpec and result.partSpec["primary_body_type"] == "rotational_flange"
 
 
 def test_generation_requires_user_review_before_model_creation():
