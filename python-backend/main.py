@@ -106,6 +106,7 @@ class ExtractedSpec(BaseModel):
     # Structured geometry is returned in parallel with OCR and is persisted with the OCR result.
     blueprint: Optional[Blueprint] = None
     dimensionInventory: list[dict] = Field(default_factory=list, max_length=200)
+    vectorGeometry: list[dict] = Field(default_factory=list, max_length=250)
     blueprintSource: Optional[str] = None
     blueprintSourcePages: int = Field(default=1, ge=1, le=4)
     blueprintClearedFields: list[str] = Field(default_factory=list)
@@ -328,6 +329,7 @@ async def ocr_extract(request: OcrRequest):
                 "dimensionInventory": [
                     token.model_dump(mode="json") for token in structured.dimension_inventory
                 ],
+                "vectorGeometry": structured.vector_geometry,
                 "blueprintSource": structured.source,
                 "blueprintSourcePages": structured.source_pages,
                 "blueprintClearedFields": structured.cleared_fields,
