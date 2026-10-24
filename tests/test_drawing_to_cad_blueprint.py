@@ -1,0 +1,212 @@
+"""Regression tests for grounded structured drawing blueprints and deterministic CAD."""
+
+import base64
+from typing import Any
+
+import pymupdf
+import pytest
+
+from ai3d_designer.drawing_to_cad.blueprint import (
+    BaseSketch,
+    Blueprint,
+    Feature,
+    apply_defaults,
+    lint,
+)
+from ai3d_designer.drawing_to_cad.extraction import (
+    DimensionToken,
+    _heuristic_blueprint,
+    extract_blueprint,
+    ground_blueprint,
+)
+from ai3d_designer.drawing_to_cad.generator import GeometryError, export_blueprint
+
+
+def test_default_height_is_explicitly_flagged_for_review():
+    blueprint = Blueprint(
+        primary_body_type="rotational_flange",
+        base_sketch=BaseSketch(profile="circle", outer_diameter=100),
+    )
+
+    notes = apply_defaults(blueprint)
+
+    assert blueprint.base_sketch.thickness == 10
+    assert blueprint.base_sketch.thickness_is_default is True
+    assert blueprint.needs_review is True
+    assert any("10 mm" in note for note in notes)
+
+
+def test_grounding_clears_unlisted_dimensions_but_accepts_half_of_pcd():
+    blueprint = Blueprint(
+        primary_body_type="rotational_flange",
+        base_sketch=BaseSketch(
+            profile="circle",
+            outer_diameter=100,
+            inner_bore_diameter=20,
+            thickness=10,
+        ),
+        features=[
+            Feature(
+                type="circular_pattern_cut",
+                count=6,
+                pitch_radius=40,
+                diameter=8,
+            )
+        ],
+    )
+    inventory = [
+        DimensionToken(id="D1", raw="OD 100", value=100, kind="diameter", page=1),
+        DimensionToken(id="D2", raw="Bore 20", value=20, kind="diameter", page=1),
+        DimensionToken(id="D3", raw="PCD 80", value=80, kind="diameter", page=1),
+        DimensionToken(id="D4", raw="Hole 8", value=8, kind="diameter", page=1),
+        DimensionToken(id="D5", raw="Thickness 10", value=10, kind="linear", page=1),
+    ]
+
+    cleared = ground_blueprint(blueprint, inventory)
+
+    assert cleared == []
+    assert blueprint.features[0].pitch_radius == 40
+
+
+def test_grounding_clears_an_unrecognized_feature_size():
+    blueprint = Blueprint(
+        primary_body_type="rotational_flange",
+        base_sketch=BaseSketch(profile="circle", outer_diameter=100, thickness=10),
+        features=[Feature(type="through_hole", diameter=7.5)],
+    )
+    inventory = [
+        DimensionToken(id="D1", raw="OD 100", value=100, kind="diameter", page=1),
+        DimensionToken(id="D2", raw="THK 10", value=10, kind="linear", page=1),
+    ]
+
+    cleared = ground_blueprint(blueprint, inventory)
+
+    assert blueprint.features[0].diameter is None
+    assert any("features[0].diameter=7.5" in item for item in cleared)
+
+
+def test_sprocket_is_not_silently_replaced_by_a_smooth_flange():
+    blueprint = _heuristic_blueprint("Sprocket, 8 teeth, OD 100 mm", [])
+
+    errors, _warnings = lint(blueprint)
+
+    assert blueprint.primary_body_type is None
+    assert blueprint.unsupported_geometry
+    assert any("Unsupported geometry" in message for message in errors)
+
+
+def test_text_only_fallback_uses_explicit_labels_for_flange_parameters():
+    text = "Flange OD 150 mm BORE DIA 30 mm PCD 100 mm 6 holes equally spaced HOLE DIA 8 mm THICKNESS 10 mm"
+    blueprint = _heuristic_blueprint(text, [])
+    notes = apply_defaults(blueprint)
+
+    assert blueprint.primary_body_type == "rotational_flange"
+    assert blueprint.base_sketch.outer_diameter == 150
+    assert blueprint.base_sketch.inner_bore_diameter == 30
+    assert blueprint.base_sketch.thickness == 10
+    assert blueprint.features[0].count == 6
+    assert blueprint.features[0].pitch_radius == 50
+    assert blueprint.features[0].diameter == 8
+    assert not notes
+
+
+def test_deterministic_generator_exports_a_watertight_flange():
+    blueprint = Blueprint(
+        part_name="test flange",
+        primary_body_type="rotational_flange",
+        base_sketch=BaseSketch(
+            profile="circle",
+            outer_diameter=100,
+            inner_bore_diameter=20,
+            thickness=10,
+        ),
+        features=[
+            Feature(type="circular_pattern_cut", count=6, pitch_radius=38, diameter=8)
+        ],
+    )
+
+    result = export_blueprint(blueprint)
+
+    assert len(base64.b64decode(result["stepBase64"])) > 100
+    assert len(base64.b64decode(result["stlBase64"])) > 100
+    assert result["metrics"]["solid_count"] == 1
+    assert result["metrics"]["stl_watertight"] is True
+
+
+def test_generator_blocks_missing_dimensions_and_unsupported_geometry():
+    missing = Blueprint(
+        primary_body_type="rotational_flange",
+        base_sketch=BaseSketch(profile="circle"),
+    )
+    with pytest.raises(GeometryError, match="outer_diameter"):
+        export_blueprint(missing)
+
+    unsupported = Blueprint(
+        primary_body_type="rotational_flange",
+        base_sketch=BaseSketch(profile="circle", outer_diameter=100, thickness=10),
+        unsupported_geometry=["sprocket tooth profile"],
+    )
+    with pytest.raises(GeometryError, match="Unsupported geometry"):
+        export_blueprint(unsupported)
+
+
+class FakeVision:
+    model = "test-vision"
+
+    async def chat_json(
+        self, images_png: list[bytes], system: str, user: str, schema: dict[str, Any]
+    ) -> dict[str, Any]:
+        assert images_png and schema["title"] == "Blueprint"
+        return Blueprint(
+            part_name="grounded flange",
+            primary_body_type="rotational_flange",
+            base_sketch=BaseSketch(
+                profile="circle",
+                outer_diameter=100,
+                inner_bore_diameter=20,
+                thickness=10,
+            ),
+            features=[
+                Feature(type="circular_pattern_cut", count=6, pitch_radius=40, diameter=8)
+            ],
+            needs_review=True,
+        ).model_dump(mode="json")
+
+
+@pytest.mark.asyncio
+async def test_extract_blueprint_renders_pdf_and_returns_grounded_structured_fields():
+    document = pymupdf.open()
+    page = document.new_page(width=600, height=400)
+    page.insert_text((50, 50), "FLANGE OD 100 mm BORE DIA 20 mm THICKNESS 10 mm PCD 80 mm HOLE DIA 8 mm")
+    pdf_bytes = document.tobytes()
+    document.close()
+    text = "FLANGE OD 100 mm BORE DIA 20 mm THICKNESS 10 mm PCD 80 mm HOLE DIA 8 mm"
+    dimensions = {
+        "dimensions": {
+            "triplets": [],
+            "linear": [{"raw": "THICKNESS 10 mm", "valueMm": 10, "unit": "mm"}],
+            "diameters": [
+                {"raw": "OD 100 mm", "value": 100, "unit": "mm"},
+                {"raw": "BORE DIA 20 mm", "value": 20, "unit": "mm"},
+                {"raw": "PCD 80 mm", "value": 80, "unit": "mm"},
+                {"raw": "HOLE DIA 8 mm", "value": 8, "unit": "mm"},
+            ],
+            "radii": [],
+        }
+    }
+
+    result = await extract_blueprint(
+        file_bytes=pdf_bytes,
+        file_name="flange.pdf",
+        mime_type="application/pdf",
+        raw_text=text,
+        dimension_data=dimensions,
+        vision=FakeVision(),
+    )
+
+    assert result.source == "vector_pdf"
+    assert result.source_pages == 1
+    assert result.vision_model == "test-vision"
+    assert result.blueprint.base_sketch.outer_diameter == 100
+    assert result.blueprint.features[0].pitch_radius == 40
+    assert result.cleared_fields == []
