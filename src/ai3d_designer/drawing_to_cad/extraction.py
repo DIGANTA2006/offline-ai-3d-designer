@@ -229,6 +229,22 @@ def _dimension_inventory(
                     value = float(value) * UNIT_MULTIPLIER.get(unit, 1.0)
                 add(value, str(entry.get("raw", value)), kind)
 
+    # Add labelled values such as OD 155, PCD 98 and hole dia 8.
+    # Labels are strong semantic evidence and also let the half-PCD grounding rule work.
+    for labels, kind in (
+        (["outer diameter", "outside diameter", "outer dia", "od"], "diameter"),
+        (["inner bore diameter", "bore diameter", "bore dia", "inner diameter", "id"], "diameter"),
+        (["pitch circle diameter", "pitch circle dia", "pcd", "bcd", "bolt circle diameter"], "diameter"),
+        (["hole diameter", "hole dia", "dia of holes"], "diameter"),
+        (["width", "overall width"], "linear"),
+        (["length", "overall length"], "linear"),
+        (["overall thickness", "plate thickness", "thickness", "thk", "height"], "linear"),
+        (["wall thickness", "sheet thickness"], "linear"),
+    ):
+        value = _labeled_value(raw_text, labels)
+        if value is not None:
+            add(value, f"{labels[0]} {value:g} mm", kind)
+
     # Add explicitly marked Ø/R/angle/unit-bearing values from native text and OCR.
     # Bare title-block numbers are deliberately not treated as dimensions.
     for match in DIMENSION_TOKEN_RE.finditer(raw_text[:50_000]):
@@ -327,16 +343,16 @@ def ground_blueprint(bp: Blueprint, inventory: list[DimensionToken]) -> list[str
 
 def _labeled_value(text: str, labels: list[str]) -> float | None:
     """Return a number only when adjacent to a recognized dimension label."""
-    label_group = "|".join(labels)
+    label_group = "(?:" + "|".join(re.escape(label) for label in labels) + ")"
     pattern = re.compile(
-        rf"(?:{label_group})\s*(?:[:=]|is|of)?\s*[ØøΦ⌀∅]?\s*(\d{{1,7}}(?:[.,]\d{{1,4}})?)\s*(mm|cm|inches?|inch|in)?\b",
+        rf"(?<![A-Za-z]){label_group}(?![A-Za-z])\s*(?:[:=]|is|of)?\s*[ØøΦ⌀∅]?\s*(\d{{1,7}}(?:[.,]\d{{1,4}})?)\s*(mm|cm|inches?|inch|in)?\b",
         re.IGNORECASE,
     )
     match = pattern.search(text[:50_000])
     if not match:
         # Also support forms such as 'Ø155 OD'.
         reverse = re.compile(
-            rf"[ØøΦ⌀∅]\s*(\d{{1,7}}(?:[.,]\d{{1,4}})?)\s*(?:mm\s*)?(?:{label_group})\b",
+            rf"[ØøΦ⌀∅]\s*(\d{{1,7}}(?:[.,]\d{{1,4}})?)\s*(?:mm\s*)?{label_group}(?![A-Za-z])",
             re.IGNORECASE,
         ).search(text[:50_000])
         if not reverse:
