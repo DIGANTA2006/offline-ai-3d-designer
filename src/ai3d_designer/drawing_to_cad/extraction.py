@@ -196,19 +196,22 @@ class OllamaVision:
 
 def get_vision_backend() -> VisionBackend | None:
     """Only call a vision model when an endpoint is explicitly configured."""
-    base_url = (os.getenv("DRAWING_VISION_URL") or os.getenv("OLLAMA_URL") or "").strip()
+    provider = (os.getenv("DRAWING_VISION_PROVIDER") or "ollama").strip().lower()
+    if provider == "ollama":
+        base_url = (os.getenv("DRAWING_VISION_URL") or os.getenv("OLLAMA_URL") or "").strip()
+    elif provider in {"openai", "openai_compatible", "openai-compatible"}:
+        base_url = os.getenv("DRAWING_VISION_URL", "").strip()
+    else:
+        raise ValueError("DRAWING_VISION_PROVIDER must be 'ollama' or 'openai_compatible'")
     if not base_url:
         return None
     model = (os.getenv("DRAWING_VISION_MODEL") or os.getenv("VISION_MODEL") or "qwen2.5vl:7b").strip()
     if not model:
         return None
-    provider = (os.getenv("DRAWING_VISION_PROVIDER") or "ollama").strip().lower()
     if provider == "ollama":
         return OllamaVision(base_url, model)
-    if provider in {"openai", "openai_compatible", "openai-compatible"}:
-        api_key = os.getenv("DRAWING_VISION_API_KEY", "").strip() or None
-        return OpenAICompatibleVision(base_url, model, api_key)
-    raise ValueError("DRAWING_VISION_PROVIDER must be 'ollama' or 'openai_compatible'")
+    api_key = os.getenv("DRAWING_VISION_API_KEY", "").strip() or None
+    return OpenAICompatibleVision(base_url, model, api_key)
 
 
 def _fit_png(image_bytes: bytes) -> bytes:
