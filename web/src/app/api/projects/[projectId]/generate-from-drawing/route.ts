@@ -1,4 +1,4 @@
-import { put } from "@vercel/blob";
+import { del, put } from "@vercel/blob";
 import { NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
@@ -6,6 +6,7 @@ import { getCurrentUser } from "@/lib/auth/server";
 import { isSameOriginRequest } from "@/lib/security/same-origin";
 import { prisma } from "@/lib/prisma";
 import { getCadServiceConfig } from "@/lib/cad-service-config";
+import { compactStoredJson, pruneProjectVersions } from "@/lib/project-retention";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -124,6 +125,9 @@ export async function POST(request: Request, { params }: Context) {
   let usageReserved = false;
   let projectMarkedProcessing = false;
   let periodStart: Date | null = null;
+  let outputPathsForCleanup: string[] = [];
+  let versionPersisted = false;
+  let retentionWarning: string | undefined;
 
   try {
     const statedLength = Number(request.headers.get("content-length") ?? 0);
@@ -258,10 +262,10 @@ export async function POST(request: Request, { params }: Context) {
     const stlBytes = decodeBase64(cad.stlBase64, "STL");
     const nextVersion = sourceVersion.version + 1;
     const basePath = `projects/${user.id}/${project.id}/v${nextVersion}`;
-    const [stepBlob, stlBlob] = await Promise.all([
-      put(`${basePath}/part-${randomUUID()}.step`, stepBytes, { access: "private", token: blobToken, contentType: "model/step", addRandomSuffix: true }),
-      put(`${basePath}/part-${randomUUID()}.stl`, stlBytes, { access: "private", token: blobToken, contentType: "model/stl", addRandomSuffix: true }),
-    ]);
+    const stepBlob = await put(`${basePath}/part-${randomUUID()}.step`, stepBytes, { access: "private", token: blobToken, contentType: "model/step", addRandomSuffix: true });
+    outputPathsForCleanup.push(stepBlob.pathname);
+    const stlBlob = await put(`${basePath}/part-${randomUUID()}.stl`, stlBytes, { access: "private", token: blobToken, contentType: "model/stl", addRandomSuffix: true });
+    outputPathsForCleanup.push(stlBlob.pathname);
 
     const sourceRecords = Array.isArray(storedSpec.uploadedFiles) ? storedSpec.uploadedFiles : [];
     const generatedBlueprintName =
@@ -286,7 +290,7 @@ export async function POST(request: Request, { params }: Context) {
         version: nextVersion,
         inputText: versionInputText,
         sourceFileName: source.name,
-        spec: nextSpec as Prisma.InputJsonValue,
+        spec: compactStoredJson(nextSpec) as Prisma.InputJsonValue,
         stepFilePath: stepBlob.pathname,
         stlFilePath: stlBlob.pathname,
         confidence: typeof ocrResult.spec.confidence === "number" ? ocrResult.spec.confidence : null,
@@ -294,7 +298,14 @@ export async function POST(request: Request, { params }: Context) {
       },
       select: { id: true, version: true },
     });
+    versionPersisted = true;
+    outputPathsForCleanup = [];
     await prisma.project.update({ where: { id: project.id }, data: { status: "SUCCEEDED" } });
+    try { await pruneProjectVersions(project.id, user.id, blobToken); }
+    catch (error) {
+      console.error("CAD version retention pruning failed after successful generation.", error);
+      retentionWarning = "Generation succeeded, but older unprotected exports could not be pruned. Retry cleanup later.";
+    }
 
     try {
       await prisma.auditLog.create({
@@ -317,9 +328,17 @@ export async function POST(request: Request, { params }: Context) {
       status: "SUCCEEDED",
       isApproximation: true,
       message: "CAD exports were stored. Compare the model against the reviewed drawing; this is not a certified interpretation.",
+      ...(retentionWarning ? { retentionWarning } : {}),
     }, { status: 201 });
   } catch (error) {
     console.error("Drawing-to-CAD generation failed.", error);
+    if (!versionPersisted && outputPathsForCleanup.length) {
+      const cleanupToken = process.env.PRIVATE_BLOB_READ_WRITE_TOKEN?.trim();
+      if (cleanupToken) {
+        try { await del([...new Set(outputPathsForCleanup)], { token: cleanupToken }); }
+        catch (cleanupError) { console.error("Could not clean partially uploaded CAD exports.", cleanupError); }
+      }
+    }
     if (projectMarkedProcessing) {
       try { await prisma.project.update({ where: { id: projectId }, data: { status: "FAILED" } }); }
       catch (updateError) { console.error("Could not mark drawing CAD project failed.", updateError); }

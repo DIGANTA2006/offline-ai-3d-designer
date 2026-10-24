@@ -1,10 +1,11 @@
-import { put } from "@vercel/blob";
+import { del, put } from "@vercel/blob";
 import { NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { getCurrentUser } from "@/lib/auth/server";
 import { isSameOriginRequest } from "@/lib/security/same-origin";
 import { prisma } from "@/lib/prisma";
 import { getCadServiceConfig } from "@/lib/cad-service-config";
+import { assertProjectCapacity, compactStoredJson, ProjectCapacityError, pruneProjectVersions, pruneUserProjects } from "@/lib/project-retention";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -79,7 +80,7 @@ function cadServiceUrl(): URL {
 }
 
 function safeErrorMessage(error: unknown): string {
-  if (error instanceof RouteError) return error.message;
+  if (error instanceof RouteError || error instanceof ProjectCapacityError) return error.message;
   return "CAD generation failed. Check that the CAD service is online and review its runtime logs.";
 }
 
@@ -149,6 +150,9 @@ export async function POST(request: Request) {
 
   let usageReserved = false;
   let projectId: string | null = null;
+  let outputPathsForCleanup: string[] = [];
+  let versionPersisted = false;
+  let retentionWarning: string | undefined;
   let hasCadAccess = user.role === "ADMIN";
   try {
     const subscription = await prisma.subscription.findUnique({ where: { userId: user.id } });
@@ -171,6 +175,7 @@ export async function POST(request: Request) {
   };
 
   try {
+    await assertProjectCapacity(user.id);
     await prisma.usageRecord.upsert({
       where: usageWhere,
       update: {},
@@ -231,23 +236,32 @@ export async function POST(request: Request) {
     const stepBytes = decodeBase64(cad.stepBase64, "STEP");
     const stlBytes = decodeBase64(cad.stlBase64, "STL");
     const blobBase = `projects/${user.id}/${project.id}/v1`;
-    const [stepBlob, stlBlob] = await Promise.all([
-      put(`${blobBase}/part.step`, stepBytes, { access: "private", token: privateBlobToken, contentType: "model/step", addRandomSuffix: true }),
-      put(`${blobBase}/part.stl`, stlBytes, { access: "private", token: privateBlobToken, contentType: "model/stl", addRandomSuffix: true }),
-    ]);
+    const stepBlob = await put(`${blobBase}/part.step`, stepBytes, { access: "private", token: privateBlobToken, contentType: "model/step", addRandomSuffix: true });
+    outputPathsForCleanup.push(stepBlob.pathname);
+    const stlBlob = await put(`${blobBase}/part.stl`, stlBytes, { access: "private", token: privateBlobToken, contentType: "model/stl", addRandomSuffix: true });
+    outputPathsForCleanup.push(stlBlob.pathname);
 
     const version = await prisma.projectVersion.create({
       data: {
         projectId: project.id,
         version: 1,
         inputText: text,
-        spec: (cad.partSpec ?? {}) as Prisma.InputJsonValue,
+        spec: compactStoredJson(cad.partSpec ?? {}) as Prisma.InputJsonValue,
         stepFilePath: stepBlob.pathname,
         stlFilePath: stlBlob.pathname,
       },
       select: { id: true, version: true },
     });
+    versionPersisted = true;
+    outputPathsForCleanup = [];
     await prisma.project.update({ where: { id: project.id }, data: { status: "SUCCEEDED" } });
+    try {
+      await pruneProjectVersions(project.id, user.id, privateBlobToken);
+      await pruneUserProjects(user.id, privateBlobToken, { excludeProjectId: project.id });
+    } catch (error) {
+      console.error("Project storage retention pruning failed after successful generation.", error);
+      retentionWarning = "Generation succeeded, but automatic storage cleanup could not finish. Retry cleanup later.";
+    }
 
     try {
       await prisma.auditLog.create({
@@ -264,9 +278,13 @@ export async function POST(request: Request) {
       console.error("CAD project succeeded but its audit log could not be saved.", auditError);
     }
 
-    return NextResponse.json({ ok: true, projectId: project.id, versionId: version.id, version: version.version, status: "SUCCEEDED" }, { status: 201 });
+    return NextResponse.json({ ok: true, projectId: project.id, versionId: version.id, version: version.version, status: "SUCCEEDED", ...(retentionWarning ? { retentionWarning } : {}) }, { status: 201 });
   } catch (error) {
     console.error("Text-to-CAD project creation failed.", error);
+    if (!versionPersisted && outputPathsForCleanup.length) {
+      try { await del([...new Set(outputPathsForCleanup)], { token: privateBlobToken }); }
+      catch (cleanupError) { console.error("Could not clean partially uploaded CAD exports.", cleanupError); }
+    }
     if (projectId) {
       try { await prisma.project.update({ where: { id: projectId }, data: { status: "FAILED" } }); }
       catch (updateError) { console.error("Could not mark failed CAD project.", updateError); }
@@ -276,7 +294,7 @@ export async function POST(request: Request) {
         await prisma.usageRecord.updateMany({ where: { userId: user.id, action: "generation", periodStart, count: { gt: 0 } }, data: { count: { decrement: 1 } } });
       } catch (usageError) { console.error("Could not release failed-generation reservation.", usageError); }
     }
-    const status = error instanceof RouteError ? error.status : error instanceof Error && error.name === "AbortError" ? 504 : 500;
+    const status = error instanceof ProjectCapacityError ? 409 : error instanceof RouteError ? error.status : error instanceof Error && error.name === "AbortError" ? 504 : 500;
     const message = error instanceof Error && error.name === "AbortError" ? "CAD service request timed out. Check the backend's health and logs." : safeErrorMessage(error);
     return NextResponse.json({ error: message }, { status });
   }
