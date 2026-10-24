@@ -127,7 +127,7 @@ def _apply_features(part: Any, blueprint: Blueprint, height: float) -> None:
             if outer_radius is None or feature.radius is None:
                 raise GeometryError(f"Feature {index}: radial cutouts need a flange radius and cutout radius")
             centre_radius = (
-                outer_radius + feature.radius - feature.root_radius
+                feature.root_radius + feature.radius
                 if feature.root_radius is not None
                 else feature.pitch_radius
             )

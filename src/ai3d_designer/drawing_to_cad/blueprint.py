@@ -169,7 +169,7 @@ def lint(bp: Blueprint) -> tuple[list[str], list[str]]:
                         errors.append(f"{tag}: root_radius must be smaller than the flange outer radius")
                     if feature.root_radius <= bore_r:
                         errors.append(f"{tag}: root_radius reaches or crosses the central bore")
-                    derived_pitch = outer_r + feature.radius - feature.root_radius
+                    derived_pitch = feature.root_radius + feature.radius
                     if feature.pitch_radius is not None and abs(feature.pitch_radius - derived_pitch) > max(0.02, derived_pitch * 0.001):
                         errors.append(f"{tag}: pitch_radius conflicts with the specified outer radius, cutout radius and root_radius")
                     centre_radius = derived_pitch
