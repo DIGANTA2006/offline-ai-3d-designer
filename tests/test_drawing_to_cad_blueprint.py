@@ -1,5 +1,6 @@
 """Regression tests for grounded structured drawing blueprints and deterministic CAD."""
 
+import asyncio
 import base64
 from typing import Any
 
@@ -173,8 +174,7 @@ class FakeVision:
         ).model_dump(mode="json")
 
 
-@pytest.mark.asyncio
-async def test_extract_blueprint_renders_pdf_and_returns_grounded_structured_fields():
+def test_extract_blueprint_renders_pdf_and_returns_grounded_structured_fields():
     document = pymupdf.open()
     page = document.new_page(width=600, height=400)
     page.insert_text((50, 50), "FLANGE OD 100 mm BORE DIA 20 mm THICKNESS 10 mm PCD 80 mm HOLE DIA 8 mm")
@@ -195,13 +195,15 @@ async def test_extract_blueprint_renders_pdf_and_returns_grounded_structured_fie
         }
     }
 
-    result = await extract_blueprint(
-        file_bytes=pdf_bytes,
-        file_name="flange.pdf",
-        mime_type="application/pdf",
-        raw_text=text,
-        dimension_data=dimensions,
-        vision=FakeVision(),
+    result = asyncio.run(
+        extract_blueprint(
+            file_bytes=pdf_bytes,
+            file_name="flange.pdf",
+            mime_type="application/pdf",
+            raw_text=text,
+            dimension_data=dimensions,
+            vision=FakeVision(),
+        )
     )
 
     assert result.source == "vector_pdf"
