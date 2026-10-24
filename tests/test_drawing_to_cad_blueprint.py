@@ -20,6 +20,7 @@ from ai3d_designer.drawing_to_cad.extraction import (
     _dimension_inventory,
     _heuristic_blueprint,
     extract_blueprint,
+    get_vision_backend,
     ground_blueprint,
 )
 from ai3d_designer.drawing_to_cad.generator import GeometryError, export_blueprint
@@ -203,6 +204,23 @@ def test_text_only_fallback_uses_explicit_labels_for_flange_parameters():
     assert blueprint.features[0].pitch_radius == 50
     assert blueprint.features[0].diameter == 8
     assert not notes
+
+
+def test_selected_vision_provider_does_not_reuse_another_providers_url(monkeypatch):
+    monkeypatch.setenv("DRAWING_VISION_PROVIDER", "openai_compatible")
+    monkeypatch.delenv("DRAWING_VISION_URL", raising=False)
+    monkeypatch.setenv("OLLAMA_URL", "http://ollama.internal:11434")
+
+    assert get_vision_backend() is None
+
+    monkeypatch.setenv("DRAWING_VISION_URL", "https://vision.example/v1")
+    monkeypatch.setenv("DRAWING_VISION_MODEL", "vision-model")
+    monkeypatch.setenv("DRAWING_VISION_API_KEY", "unit-test-secret")
+    provider = get_vision_backend()
+
+    assert isinstance(provider, OpenAICompatibleVision)
+    assert provider.base_url == "https://vision.example/v1"
+    assert provider.api_key == "unit-test-secret"
 
 
 def test_openai_compatible_vision_sends_image_and_strict_schema(monkeypatch):
