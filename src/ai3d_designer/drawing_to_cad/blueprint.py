@@ -112,6 +112,8 @@ def lint(bp: Blueprint) -> tuple[list[str], list[str]]:
         elif any(point[0] <= 0 for point in sk.points):
             errors.append("Revolved profile radii must be positive and cannot cross the rotation axis")
 
+    if body == "revolved_profile" and bp.features:
+        errors.append("Features on revolved_profile bodies are not supported in v1; model those cuts/fillets directly in the revolved profile before export")
     if body != "revolved_profile" and not _positive(sk.thickness):
         errors.append("Thickness must be positive")
     if _positive(sk.inner_bore_diameter):
@@ -141,7 +143,7 @@ def lint(bp: Blueprint) -> tuple[list[str], list[str]]:
                 if feature.pitch_radius - feature.diameter / 2 <= bore_r:
                     errors.append(f"{tag}: holes cut into the bore")
                 if feature.angular_pitch is not None and abs(feature.angular_pitch - 360 / feature.count) > 0.5:
-                    warnings.append(f"{tag}: v1 supports full circles only; the generator will use 360 / count")
+                    errors.append(f"{tag}: partial/uneven angular patterns are not supported in v1; no model will be generated using a full-circle substitute")
             elif feature.type in {"through_hole", "pocket"}:
                 if feature.type == "through_hole" and not _positive(feature.diameter):
                     errors.append(f"{tag}: needs a positive diameter")
