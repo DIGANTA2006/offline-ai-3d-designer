@@ -16,6 +16,7 @@ from ai3d_designer.drawing_to_cad.blueprint import (
 )
 from ai3d_designer.drawing_to_cad.extraction import (
     DimensionToken,
+    _dimension_inventory,
     _heuristic_blueprint,
     extract_blueprint,
     ground_blueprint,
@@ -84,6 +85,33 @@ def test_grounding_clears_an_unrecognized_feature_size():
 
     assert blueprint.features[0].diameter is None
     assert any("features[0].diameter=7.5" in item for item in cleared)
+
+
+def test_grounding_requires_a_dimension_of_the_correct_kind():
+    blueprint = Blueprint(
+        primary_body_type="rotational_flange",
+        base_sketch=BaseSketch(profile="circle", outer_diameter=100, thickness=100),
+    )
+    inventory = [
+        DimensionToken(id="D1", raw="OD 100", value=100, kind="diameter", page=1),
+    ]
+
+    cleared = ground_blueprint(blueprint, inventory)
+
+    assert blueprint.base_sketch.outer_diameter == 100
+    assert blueprint.base_sketch.thickness is None
+    assert "base_sketch.thickness=100" in cleared
+
+
+def test_dimension_inventory_recognizes_angle_and_labeled_pcd():
+    inventory = _dimension_inventory(
+        "PCD 80 mm, hole spacing 30 degrees (30°)",
+        {"dimensions": {}},
+        1,
+    )
+
+    assert any(token.kind == "diameter" and token.value == 80 for token in inventory)
+    assert any(token.kind == "angle" and token.value == 30 for token in inventory)
 
 
 def test_sprocket_is_not_silently_replaced_by_a_smooth_flange():
