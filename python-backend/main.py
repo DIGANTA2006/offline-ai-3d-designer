@@ -439,6 +439,8 @@ def slice_stl(request: SliceRequest):
             status_code = 422 if any(marker in lowered for marker in invalid_model_markers) else 502
             raise HTTPException(status_code=status_code, detail=detail)
 
+        if os.path.getsize(result.gcode_path) > 40 * 1024 * 1024:
+            raise HTTPException(status_code=502, detail="Generated G-code exceeds the 40 MiB download limit.")
         with open(result.gcode_path, "rb") as handle:
             gcode_bytes = handle.read()
         if not gcode_bytes:
