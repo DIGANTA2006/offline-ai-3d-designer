@@ -115,6 +115,53 @@ def test_dimension_inventory_recognizes_angle_and_labeled_pcd():
     assert any(token.kind == "angle" and token.value == 30 for token in inventory)
 
 
+def test_dimension_inventory_does_not_convert_mm_values_twice():
+    inventory = _dimension_inventory(
+        "",
+        {"dimensions": {"diameters": [{"valueMm": 25.4, "value": 1, "unit": "in"}]}},
+        1,
+    )
+
+    assert len(inventory) == 1
+    assert inventory[0].value == 25.4
+    assert inventory[0].kind == "diameter"
+
+
+def test_partial_angular_pattern_is_blocked_instead_of_moved_to_full_circle():
+    blueprint = Blueprint(
+        primary_body_type="rotational_flange",
+        base_sketch=BaseSketch(profile="circle", outer_diameter=100, thickness=10),
+        features=[
+            Feature(
+                type="circular_pattern_cut",
+                count=6,
+                pitch_radius=35,
+                diameter=8,
+                angular_pitch=30,
+            )
+        ],
+    )
+
+    errors, _warnings = lint(blueprint)
+
+    assert any("partial/uneven angular patterns are not supported" in error for error in errors)
+
+
+def test_revolved_profile_rejects_unsupported_separate_features():
+    blueprint = Blueprint(
+        primary_body_type="revolved_profile",
+        base_sketch=BaseSketch(
+            profile="polygon",
+            points=[[10, 0], [20, 0], [20, 40], [10, 40]],
+        ),
+        features=[Feature(type="through_hole", diameter=5)],
+    )
+
+    errors, _warnings = lint(blueprint)
+
+    assert any("Features on revolved_profile bodies are not supported" in error for error in errors)
+
+
 def test_sprocket_is_not_silently_replaced_by_a_smooth_flange():
     blueprint = _heuristic_blueprint("Sprocket, 8 teeth, OD 100 mm", [])
 
@@ -198,6 +245,19 @@ def test_openai_compatible_vision_sends_image_and_strict_schema(monkeypatch):
     schema = body["response_format"]["json_schema"]["schema"]
     assert schema["required"] == list(schema["properties"].keys())
     assert schema["additionalProperties"] is False
+
+    def assert_no_unsupported_defaults(node):
+        if isinstance(node, dict):
+            assert "default" not in node
+            assert "exclusiveMinimum" not in node
+            assert "exclusiveMaximum" not in node
+            for value in node.values():
+                assert_no_unsupported_defaults(value)
+        elif isinstance(node, list):
+            for value in node:
+                assert_no_unsupported_defaults(value)
+
+    assert_no_unsupported_defaults(schema)
 
 
 def test_deterministic_generator_exports_a_watertight_flange():
