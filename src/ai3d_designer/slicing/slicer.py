@@ -44,8 +44,6 @@ class SliceSettings:
     initial_layer_bed_temp: float = 60.0
     nozzle_diameter: float = 0.4
     filament_diameter: float = 1.75
-    # Used only when Cura reports length but omits mass; the resulting mass is approximate.
-    filament_density_g_cm3: float = 1.24
     flow_rate: float = 100.0
     adhesion_type: str = "brim"
     brim_width: float = 8.0
@@ -63,6 +61,8 @@ class SliceSettings:
     fan_speed_max: float = 100.0
     enable_prime_tower: bool = False
     wipe_tower_enabled: bool = False
+    # Used only when Cura reports length but omits mass; the resulting mass is approximate.
+    filament_density_g_cm3: float = 1.24
 
     def validate(self) -> list[str]:
         """Return actionable validation errors before calling the external slicer."""
