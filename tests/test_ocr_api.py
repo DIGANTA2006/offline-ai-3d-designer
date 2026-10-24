@@ -1,12 +1,14 @@
 """FastAPI OCR/generation endpoint checks using the production CAD engine."""
 
 import asyncio
+import base64
 
 import pytest
 from fastapi import HTTPException
 
 import main as cad_service
 from ai3d_designer.drawing_to_cad.blueprint import BaseSketch, Blueprint, Feature
+from ai3d_designer.drawing_to_cad.extraction import DimensionToken, ExtractionResult
 
 
 @pytest.mark.parametrize("ocr_available", [True, False])
@@ -46,6 +48,58 @@ def test_health_distinguishes_cad_runtime_failure_from_missing_service_token(
     assert result.cadRuntimeAvailable is runtime_available
     assert result.serviceTokenConfigured is token_configured
     assert result.ocrAvailable is True
+
+
+def test_ocr_endpoint_returns_structured_blueprint_alongside_ocr(monkeypatch):
+    monkeypatch.setattr(cad_service, "is_ocr_available", lambda: True)
+    monkeypatch.setattr(
+        cad_service,
+        "extract_drawing_text",
+        lambda *_args: {
+            "rawText": "FLANGE OD 100 mm THICKNESS 10 mm",
+            "dimensions": {},
+            "confidence": 0.9,
+            "confidenceMethod": "native_pdf_text",
+            "pageCount": 1,
+            "needsReview": True,
+            "limitations": [],
+        },
+    )
+
+    async def fake_extract_blueprint(**_kwargs):
+        return ExtractionResult(
+            blueprint=Blueprint(
+                part_name="test flange",
+                primary_body_type="rotational_flange",
+                base_sketch=BaseSketch(profile="circle", outer_diameter=100, thickness=10),
+                needs_review=True,
+            ),
+            source="vector_pdf",
+            source_pages=1,
+            dimension_inventory=[
+                DimensionToken(id="D1", raw="OD 100 mm", value=100, kind="diameter", page=1),
+                DimensionToken(id="D2", raw="THICKNESS 10 mm", value=10, kind="linear", page=1),
+            ],
+            cleared_fields=[],
+            vector_geometry=[],
+            vision_model="test-vision",
+        )
+
+    monkeypatch.setattr(cad_service, "extract_blueprint", fake_extract_blueprint)
+    request = cad_service.OcrRequest(
+        fileBase64=base64.b64encode(b"%PDF-test-payload").decode("ascii"),
+        fileName="test.pdf",
+        mimeType="application/pdf",
+    )
+
+    result = asyncio.run(cad_service.ocr_extract(request))
+
+    assert result.success is True
+    assert result.spec is not None
+    assert result.spec.blueprint is not None
+    assert result.spec.blueprint.base_sketch.outer_diameter == 100
+    assert len(result.spec.dimensionInventory) == 2
+    assert result.spec.blueprintVisionModel == "test-vision"
 
 
 def test_reviewed_blueprint_generates_real_exports_without_a_free_text_prompt():
