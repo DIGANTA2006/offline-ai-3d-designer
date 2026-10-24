@@ -54,12 +54,14 @@ model Project {
   name        String
   description String?
   status      ProjectStatus    @default(DRAFT)
+  isImportant Boolean          @default(false)
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
   user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   versions    ProjectVersion[]
 
   @@index([userId, updatedAt])
+  @@index([userId, isImportant, createdAt])
   @@index([status, createdAt])
 }
 
@@ -75,6 +77,7 @@ model ProjectVersion {
   glbFilePath     String?
   confidence      Float?
   isApproximation Boolean  @default(false)
+  isProtected     Boolean  @default(false)
   createdAt       DateTime @default(now())
   project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
