@@ -465,11 +465,22 @@ def _inventory_message(
         "\n".join(f"{key}: {count}" for key, count in sorted(vector_counts.items()))
         if vector_counts else "(no simple vector circle/rectangle candidates were detected)"
     )
+    vector_details = (
+        "\n".join(
+            f"P{item.get('page', '?')} V{index + 1}: {item.get('kind', 'path')}, "
+            f"center=({item.get('center_x_pt')}, {item.get('center_y_pt')}) pt, "
+            f"size=({item.get('width_pt')} x {item.get('height_pt')}) pt, "
+            f"curve_segments={item.get('curve_segments', 0)}"
+            for index, item in enumerate(vector_geometry[:80])
+        )
+        if vector_geometry else "(no detailed vector candidates)"
+    )
     return (
         f"Drawing has {page_count} page(s). Classify all supplied views together.\n"
         f"DIMENSION INVENTORY — only these numeric measurements may populate blueprint dimensions:\n"
         f"{lines}\n"
-        f"VECTOR PDF GEOMETRY CANDIDATES — approximate path counts only, not dimensions:\n{geometry_summary}\n\n"
+        f"VECTOR PDF GEOMETRY CANDIDATES — path sizes are PDF points, not millimetres; use as spatial clues only:\n"
+        f"Summary:\n{geometry_summary}\nFirst candidate details:\n{vector_details}\n\n"
         f"Return Blueprint JSON. Add unsupported_geometry rather than approximating unsupported features."
     )
 
