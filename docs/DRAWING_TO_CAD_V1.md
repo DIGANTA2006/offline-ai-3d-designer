@@ -32,7 +32,7 @@ Do not set the URL to http://localhost:11434 on Railway unless Ollama actually r
 - DRAWING_VISION_MODEL=<vision-capable-model-name>
 - DRAWING_VISION_API_KEY=<secret> (only if the provider requires one)
 
-The provider must support image input and strict response_format: json_schema output. Keep the key server-side; do not create a NEXT_PUBLIC_... variable for it. If the provider is unreachable or rejects the schema, extraction falls back to labelled-text mode and marks the blueprint for review. A configured endpoint only means configured, not that the model is reachable or that its interpretation is accurate.
+The provider must support image input and strict response_format: json_schema output. Keep the key server-side; do not create a NEXT_PUBLIC_... variable for it. If the provider is unreachable or rejects the schema, extraction falls back to labelled-text mode and marks the blueprint for review. A configured endpoint only means configured, not that the model is reachable or that its interpretation is accurate. In OpenAI-compatible mode, drawing page images and the extracted dimension inventory are sent to that provider. Use only an endpoint approved for the drawing's confidentiality requirements; if the drawings must remain within your own environment, use a private/reachable Ollama server instead.
 
 When no vision provider is configured, the feature remains useful for explicit dimensions labelled in recognized text, but it is not a visual scene-understanding engine. An unlabelled or scanned blueprint may produce an unresolved blueprint and require review.
 
