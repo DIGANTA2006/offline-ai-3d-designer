@@ -49,7 +49,7 @@ type Blueprint = {
 
 type OCRSpec = {
   blueprint?: Blueprint | null;
-  dimensionInventory?: Array<{ id: string; raw: string; value: number; kind: string; page: number }>;
+  dimensionInventory?: Array<{ id: string; raw: string; value: number; kind: string; page: number | null }>;
   vectorGeometry?: Array<{ page: number; kind: string; center_x_pt: number; center_y_pt: number; width_pt: number; height_pt: number; curve_segments?: number }>;
   blueprintSource?: string;
   blueprintSourcePages?: number;
@@ -559,7 +559,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
                 <summary className="cursor-pointer text-sm font-medium">Grounded dimension inventory ({currentResult.dimensionInventory.length})</summary>
                 <div className="mt-2 max-h-48 overflow-auto text-xs">
                   {currentResult.dimensionInventory.map((item) => (
-                    <p key={item.id} className="py-1 text-muted-foreground">{item.id}: {item.raw} → {item.value} mm ({item.kind}, page {item.page})</p>
+                    <p key={item.id} className="py-1 text-muted-foreground">{item.id}: {item.raw} → {item.value} mm ({item.kind}, page {item.page ?? "unknown"})</p>
                   ))}
                 </div>
               </details>
