@@ -372,6 +372,13 @@ class Slicer:
             weight_match = re.search(r"(?:Filament weight|Filament used)\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)\s*(?:g|grams)\b", line, re.IGNORECASE)
             if weight_match:
                 filament_used = float(weight_match.group(1))
+            engine_filament_match = re.search(
+                r"\bFilament\s*:\s*[0-9]+(?:\.[0-9]+)?\s*(?:mm|cm|m)\s+([0-9]+(?:\.[0-9]+)?)\s*g\b",
+                line,
+                re.IGNORECASE,
+            )
+            if engine_filament_match:
+                filament_used = float(engine_filament_match.group(1))
             layer_match = re.search(r"(?:;LAYER_COUNT:\s*|(?:Total\s+)?Layers:\s*)(\d+)", line, re.IGNORECASE)
             if layer_match:
                 layers = int(layer_match.group(1))
@@ -381,7 +388,7 @@ class Slicer:
     def _parse_filament_length_m(output: str) -> Optional[float]:
         """Parse filament length without mistaking millimetres or centimetres for grams."""
         length_m: Optional[float] = None
-        for match in re.finditer(r"Filament used\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)\s*(mm|cm|m)\b", output, re.IGNORECASE):
+        for match in re.finditer(r"(?:Filament used|Filament)\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)\s*(mm|cm|m)\b", output, re.IGNORECASE):
             value = float(match.group(1))
             unit = match.group(2).lower()
             length_m = value / 1000 if unit == "mm" else value / 100 if unit == "cm" else value
@@ -390,7 +397,7 @@ class Slicer:
     @staticmethod
     def _read_gcode_metrics(path: Path) -> str:
         """Read only slicer metadata lines, avoiding a second whole-file memory copy."""
-        needles = ("filament used", "filament weight", "print time", ";time:", "print.time", "layer_count", "total layers")
+        needles = ("filament used", "filament weight", "filament:", "print time", ";time:", "print.time", "layer_count", "total layers")
         collected: list[str] = []
         with path.open("r", encoding="utf-8", errors="replace") as stream:
             for line in stream:
