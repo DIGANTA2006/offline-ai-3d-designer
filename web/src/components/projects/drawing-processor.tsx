@@ -9,7 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 
 type BlueprintBodyType = "rotational_flange" | "prismatic_box" | "sheet_enclosure" | "revolved_profile";
 type BlueprintProfile = "circle" | "rectangle" | "polygon" | "complex_path";
-type BlueprintFeatureType = "circular_pattern_cut" | "through_hole" | "pocket" | "fillet";
+type BlueprintFeatureType = "circular_pattern_cut" | "hole_pattern" | "radial_cutout_pattern" | "ring_step" | "through_hole" | "pocket" | "fillet";
 type BlueprintFeature = {
   type: BlueprintFeatureType;
   count: number;
@@ -17,6 +17,9 @@ type BlueprintFeature = {
   start_angle: number;
   angular_pitch: number | null;
   diameter: number | null;
+  inner_diameter: number | null;
+  root_radius: number | null;
+  ring_mode: "cut" | "boss";
   length: number | null;
   width: number | null;
   depth: number | null;
@@ -79,7 +82,7 @@ type OCRSpec = {
 type SourceFile = { index: number; name: string; ocrResult?: OCRSpec };
 type Props = { projectId: string; sourceFiles: SourceFile[] };
 type SketchNumberKey = "outer_diameter" | "inner_bore_diameter" | "width" | "length" | "thickness" | "wall_thickness";
-type FeatureNumberKey = "count" | "pitch_radius" | "start_angle" | "angular_pitch" | "diameter" | "length" | "width" | "depth" | "radius" | "x" | "y";
+type FeatureNumberKey = "count" | "pitch_radius" | "start_angle" | "angular_pitch" | "diameter" | "inner_diameter" | "root_radius" | "length" | "width" | "depth" | "radius" | "x" | "y";
 
 const blueprintSketchFields: Array<{ key: SketchNumberKey; label: string; defaultFlag?: "thickness_is_default" | "wall_thickness_is_default" }> = [
   { key: "outer_diameter", label: "Outer diameter (mm)" },
@@ -93,7 +96,9 @@ const blueprintSketchFields: Array<{ key: SketchNumberKey; label: string; defaul
 const blueprintFeatureFields: Array<{ key: FeatureNumberKey; label: string }> = [
   { key: "count", label: "Count" },
   { key: "diameter", label: "Diameter (mm)" },
-  { key: "pitch_radius", label: "Pitch radius (mm)" },
+  { key: "inner_diameter", label: "Inner diameter (mm)" },
+  { key: "root_radius", label: "Root radius (mm)" },
+  { key: "pitch_radius", label: "Pattern / cutter-centre radius (mm)" },
   { key: "start_angle", label: "First angle (deg)" },
   { key: "angular_pitch", label: "Angular pitch (deg)" },
   { key: "length", label: "Pocket length (mm)" },
@@ -204,8 +209,9 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
       if (!result.blueprint || result.blueprint.features.length >= 100) return result;
       const feature: BlueprintFeature = {
         type: "through_hole", count: 1, pitch_radius: null, start_angle: 0,
-        angular_pitch: null, diameter: null, length: null, width: null,
-        depth: null, radius: null, edge_scope: "all", x: 0, y: 0,
+        angular_pitch: null, diameter: null, inner_diameter: null, root_radius: null,
+        ring_mode: "cut", length: null, width: null, depth: null, radius: null,
+        edge_scope: "all", x: 0, y: 0,
       };
       return {
         ...result,
@@ -455,7 +461,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
                             value={feature.type}
                             onChange={(event) => updateCurrentResult((result) => {
                               if (!result.blueprint) return result;
-                              const allowed: BlueprintFeatureType[] = ["circular_pattern_cut", "through_hole", "pocket", "fillet"];
+                              const allowed: BlueprintFeatureType[] = ["circular_pattern_cut", "hole_pattern", "radial_cutout_pattern", "ring_step", "through_hole", "pocket", "fillet"];
                               const type = allowed.includes(event.target.value as BlueprintFeatureType) ? event.target.value as BlueprintFeatureType : "through_hole";
                               return {
                                 ...result,
@@ -467,7 +473,10 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
                               };
                             })}
                           >
-                            <option value="circular_pattern_cut">Circular hole pattern</option>
+                            <option value="circular_pattern_cut">Circular cut pattern (legacy)</option>
+                            <option value="hole_pattern">Bolt-circle hole pattern</option>
+                            <option value="radial_cutout_pattern">Radial gullet / perimeter cutout pattern</option>
+                            <option value="ring_step">Concentric ring step</option>
                             <option value="through_hole">Through hole</option>
                             <option value="pocket">Pocket</option>
                             <option value="fillet">Fillet</option>
@@ -477,10 +486,12 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
                       </div>
                       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                         {blueprintFeatureFields.filter(({ key }) => {
-                          if (feature.type === "circular_pattern_cut") return ["count", "diameter", "pitch_radius", "start_angle", "angular_pitch", "depth", "x", "y"].includes(key);
+                          if (feature.type === "circular_pattern_cut" || feature.type === "hole_pattern") return ["count", "diameter", "pitch_radius", "start_angle", "angular_pitch", "depth", "x", "y"].includes(key);
+                          if (feature.type === "radial_cutout_pattern") return ["count", "radius", "root_radius", "pitch_radius", "start_angle", "x", "y"].includes(key);
+                          if (feature.type === "ring_step") return ["diameter", "inner_diameter", "depth"].includes(key);
                           if (feature.type === "through_hole") return ["diameter", "depth", "x", "y"].includes(key);
                           if (feature.type === "pocket") return ["diameter", "length", "width", "depth", "x", "y"].includes(key);
-                          return key === "radius";
+                          return feature.type === "fillet" && key === "radius";
                         }).map(({ key, label }) => {
                           const cleared = (currentResult.blueprintClearedFields ?? []).some((field) => field.startsWith("features[" + index + "]." + key + "="));
                           return (
@@ -497,6 +508,25 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
                           );
                         })}
                       </div>
+                      {feature.type === "ring_step" && (
+                        <label className="block text-sm font-medium">Ring operation
+                          <select
+                            className={blueprintInputClass(false)}
+                            value={feature.ring_mode}
+                            onChange={(event) => updateCurrentResult((result) => !result.blueprint ? result : ({
+                              ...result,
+                              blueprint: {
+                                ...result.blueprint,
+                                features: result.blueprint.features.map((item, i) => i === index ? { ...item, ring_mode: event.target.value === "boss" ? "boss" : "cut" } : item),
+                                needs_review: true,
+                              },
+                            }))}
+                          >
+                            <option value="cut">Annular recess / counterbore</option>
+                            <option value="boss">Raised annular ring</option>
+                          </select>
+                        </label>
+                      )}
                       {feature.type === "fillet" && (
                         <label className="block text-sm font-medium">Edge scope
                           <select
