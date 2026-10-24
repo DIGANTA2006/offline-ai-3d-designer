@@ -60,7 +60,7 @@ assert.deepEqual(
   ["old-a", "old-b"],
   "pruning must remove the oldest eligible projects while preserving important, active and current ones",
 );
-assert.deepEqual(core.selectProjectIdsToPrune(projectsOldestFirst.slice(0, 10)), []);
+assert.deepEqual(localJson(core.selectProjectIdsToPrune(projectsOldestFirst.slice(0, 10))), []);
 
 const versionsNewestFirst = [
   { id: "v8", isProtected: true },

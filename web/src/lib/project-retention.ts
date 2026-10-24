@@ -3,7 +3,6 @@ import { prisma } from "@/lib/prisma";
 import {
   compactStoredJson,
   MAX_ACTIVE_PROJECTS,
-  MAX_UNPROTECTED_OUTPUT_VERSIONS,
   selectProjectIdsToPrune,
   selectUnprotectedVersionIdsToPrune,
 } from "@/lib/project-retention-core";
