@@ -115,6 +115,24 @@ def test_dimension_inventory_recognizes_angle_and_labeled_pcd():
     assert any(token.kind == "angle" and token.value == 30 for token in inventory)
 
 
+def test_grounding_clears_model_invented_profile_coordinates():
+    blueprint = Blueprint(
+        primary_body_type="revolved_profile",
+        base_sketch=BaseSketch(
+            profile="polygon",
+            points=[[10, 0], [20, 0], [20, 40], [10, 40]],
+        ),
+    )
+    inventory = [
+        DimensionToken(id="D1", raw="Ø100", value=100, kind="diameter", page=1),
+    ]
+
+    cleared = ground_blueprint(blueprint, inventory)
+
+    assert blueprint.base_sketch.points is None
+    assert any("profile coordinates were not grounded" in value for value in cleared)
+
+
 def test_dimension_inventory_does_not_convert_mm_values_twice():
     inventory = _dimension_inventory(
         "",
