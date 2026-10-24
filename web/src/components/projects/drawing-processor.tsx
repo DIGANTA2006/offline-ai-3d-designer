@@ -255,7 +255,11 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
       if (!response.ok || !payload.spec) throw new Error(payload.error ?? `Drawing OCR failed (HTTP ${response.status}).`);
       setResults((previous) => ({ ...previous, [selected.index]: payload.spec! }));
       setReviewedDescription(payload.spec.rawText ?? "");
-      setNotice("Text extracted. Review every dimension and edit the part description before generating CAD.");
+      setNotice(
+        payload.spec.blueprint
+          ? "Drawing analyzed. Review the structured dimensions and warnings; no free-text prompt is required when the blueprint is valid."
+          : "Text extracted. No structured blueprint is available, so review the OCR text and enter a supported part description.",
+      );
       router.refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Drawing OCR failed.");
@@ -266,8 +270,16 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
 
   async function generate() {
     if (!selected || !currentResult) return;
-    if (reviewedDescription.trim().length < 5) {
-      setError("Enter a reviewed dimensioned part description before generating CAD.");
+    if (!blueprint && reviewedDescription.trim().length < 5) {
+      setError("A structured blueprint or a reviewed dimensioned part description is required.");
+      return;
+    }
+    if (blueprint && !blueprint.primary_body_type) {
+      setError("Select a supported primary body type after inspecting the drawing.");
+      return;
+    }
+    if (blueprint?.unsupported_geometry.length) {
+      setError("This drawing contains unsupported geometry. The generator will not substitute a simpler part; resolve those features before export.");
       return;
     }
     setGenerating(true);
@@ -282,6 +294,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
           fileIndex: selected.index,
           reviewed: true,
           reviewedDescription: reviewedDescription.trim(),
+          ...(blueprint ? { reviewedBlueprint: blueprint } : {}),
         }),
       });
       const payload = await response.json().catch(() => ({})) as { error?: string; ok?: boolean; version?: number; message?: string };
@@ -323,7 +336,14 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
             <Button type="button" variant="outline" onClick={analyze} disabled={analyzing || generating}>
               {analyzing ? <><LoaderCircle className="size-4 animate-spin" /> Analyzing drawing…</> : <><FileSearch className="size-4" /> {currentResult ? "Analyze again" : "Extract drawing text"}</>}
             </Button>
-            <Button type="button" onClick={generate} disabled={!currentResult || analyzing || generating || reviewedDescription.trim().length < 5}>
+            <Button
+              type="button"
+              onClick={generate}
+              disabled={
+                !currentResult || analyzing || generating ||
+                (blueprint ? (!blueprint.primary_body_type || blueprint.unsupported_geometry.length > 0) : reviewedDescription.trim().length < 5)
+              }
+            >
               {generating ? <><LoaderCircle className="size-4 animate-spin" /> Generating CAD…</> : <><WandSparkles className="size-4" /> Generate reviewed STEP + STL</>}
             </Button>
           </div>
