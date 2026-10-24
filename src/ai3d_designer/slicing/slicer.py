@@ -311,7 +311,7 @@ class Slicer:
 
             os.replace(temporary_output, destination)
             output_text = (result.stdout or "") + "\n" + (result.stderr or "")
-            metadata_text = self._read_gcode_metrics(temporary_output)
+            metadata_text = self._read_gcode_metrics(destination)
             metric_text = output_text + "\n" + metadata_text
             print_time, filament_used, layers = self._parse_cura_output(metric_text)
             filament_length_m = self._parse_filament_length_m(metric_text)
