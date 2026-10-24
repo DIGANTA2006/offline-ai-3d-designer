@@ -60,3 +60,37 @@ def test_gcode_validator_accepts_minimal_layered_extrusion(tmp_path):
     assert result["stats"]["has_home"] is True
     assert result["stats"]["has_extrusion"] is True
     assert result["stats"]["layers"] == 1
+
+
+def test_cura_metrics_parse_time_length_mass_and_layers():
+    output = (
+        ";TIME:3725\n"
+        ";LAYER_COUNT:80\n"
+        ";Filament used: 1234.5mm\n"
+        ";Filament weight = 3.68g\n"
+    )
+    print_time, filament_grams, layers = Slicer._parse_cura_output(output)
+    assert print_time == 3725
+    assert filament_grams == 3.68
+    assert layers == 80
+    assert Slicer._parse_filament_length_m(output) == 1.2345
+
+
+def test_cura_length_is_not_misreported_as_grams():
+    output = ";Filament used: 2500mm\n;TIME:120\n;LAYER_COUNT:4\n"
+    print_time, filament_grams, layers = Slicer._parse_cura_output(output)
+    assert print_time == 120
+    assert filament_grams is None
+    assert layers == 4
+    assert Slicer._parse_filament_length_m(output) == 2.5
+
+
+def test_slicing_capability_reports_missing_cura_engine(monkeypatch):
+    monkeypatch.setattr(Slicer, "_find_cura_engine", staticmethod(lambda: None))
+    monkeypatch.delenv("CURA_PRINTER_DEFINITION", raising=False)
+    from ai3d_designer.slicing.slicer import get_slicing_capability
+
+    result = get_slicing_capability()
+    assert result["available"] is False
+    assert result["engine"] is None
+    assert "CuraEngine was not found" in result["reason"]
