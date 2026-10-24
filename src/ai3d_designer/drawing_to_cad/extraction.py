@@ -25,6 +25,10 @@ DIMENSION_TOKEN_RE = re.compile(
     r"(?P<unit>\s*(?:mm|cm|inches?|inch|in|deg|°|\"))?(?![A-Za-z0-9])",
     re.IGNORECASE,
 )
+ANGLE_TOKEN_RE = re.compile(
+    r"(?<![A-Za-z0-9.])(?P<number>\d{1,4}(?:[.,]\d{1,4})?)\s*(?:°|deg)(?![A-Za-z])",
+    re.IGNORECASE,
+)
 UNIT_MULTIPLIER = {"mm": 1.0, "millimeter": 1.0, "millimeters": 1.0, "millimetre": 1.0, "millimetres": 1.0, "cm": 10.0, "centimeter": 10.0, "centimeters": 10.0, "centimetre": 10.0, "centimetres": 10.0, "in": 25.4, "inch": 25.4, "inches": 25.4, "m": 1000.0, "meter": 1000.0, "meters": 1000.0, "metre": 1000.0, "metres": 1000.0}
 
 
@@ -392,6 +396,9 @@ def _dimension_inventory(
             number *= UNIT_MULTIPLIER.get(unit, 1.0)
         add(number, raw, kind)
 
+    for match in ANGLE_TOKEN_RE.finditer(raw_text[:50_000]):
+        add(float(match.group("number").replace(",", ".")), match.group(0).strip(), "angle")
+
     # Prefer exact page attribution from a vector PDF's text layer where available.
     page_texts = dimension_data.get("pageTexts", [])
     if isinstance(page_texts, list):
@@ -417,6 +424,8 @@ def _dimension_inventory(
                 if unit:
                     number *= UNIT_MULTIPLIER.get(unit, 1.0)
                 add(number, raw, kind, page=page_index)
+            for match in ANGLE_TOKEN_RE.finditer(page_text[:20_000]):
+                add(float(match.group("number").replace(",", ".")), match.group(0).strip(), "angle", page=page_index)
             for field_labels, kind in labels:
                 value = _labeled_value(page_text, list(field_labels))
                 if value is not None:
@@ -452,59 +461,77 @@ def _inventory_message(
     )
 
 
-def _is_grounded(value: float | None, inventory: list[DimensionToken], allow_half_diameter: bool = False) -> bool:
+def _is_grounded(
+    value: float | None,
+    inventory: list[DimensionToken],
+    allowed_kinds: set[str] | None = None,
+    allow_half_diameter: bool = False,
+) -> bool:
     if value is None:
         return True
     if abs(value) < 1e-6:
         return True
     for token in inventory:
+        if allowed_kinds is not None and token.kind not in allowed_kinds:
+            continue
         if abs(value - token.value) <= max(0.02, abs(token.value) * 0.001):
             return True
-        if allow_half_diameter and token.kind == "diameter" and abs(2 * value - token.value) <= max(0.02, abs(token.value) * 0.001):
+        if (
+            allow_half_diameter
+            and token.kind == "diameter"
+            and abs(2 * value - token.value) <= max(0.02, abs(token.value) * 0.001)
+        ):
             return True
     return False
 
 
 def ground_blueprint(bp: Blueprint, inventory: list[DimensionToken]) -> list[str]:
-    """Clear dimensions that cannot be grounded in printed/recognized measurements."""
+    """Clear numeric blueprint fields that cannot be tied to the correct dimension type."""
     cleared: list[str] = []
     sketch = bp.base_sketch
-    for name in (
-        "outer_diameter",
-        "inner_bore_diameter",
-        "width",
-        "length",
-        "thickness",
-        "wall_thickness",
-    ):
+    sketch_kinds = {
+        "outer_diameter": {"diameter"},
+        "inner_bore_diameter": {"diameter"},
+        "width": {"linear"},
+        "length": {"linear"},
+        "thickness": {"linear"},
+        "wall_thickness": {"linear"},
+    }
+    for name, allowed_kinds in sketch_kinds.items():
         value = getattr(sketch, name)
-        if not _is_grounded(value, inventory):
+        if not _is_grounded(value, inventory, allowed_kinds=allowed_kinds):
             setattr(sketch, name, None)
             cleared.append(f"base_sketch.{name}={value:g}")
 
+    feature_kinds = {
+        "diameter": {"diameter"},
+        "length": {"linear"},
+        "width": {"linear"},
+        "depth": {"linear"},
+        "radius": {"radius"},
+    }
     for index, feature in enumerate(bp.features):
-        for name in ("diameter", "length", "width", "depth", "radius"):
+        for name, allowed_kinds in feature_kinds.items():
             value = getattr(feature, name)
-            if not _is_grounded(value, inventory):
+            if not _is_grounded(value, inventory, allowed_kinds=allowed_kinds):
                 setattr(feature, name, None)
                 cleared.append(f"features[{index}].{name}={value:g}")
         value = feature.pitch_radius
-        if not _is_grounded(value, inventory, allow_half_diameter=True):
+        if not _is_grounded(value, inventory, allowed_kinds={"radius"}, allow_half_diameter=True):
             feature.pitch_radius = None
             cleared.append(f"features[{index}].pitch_radius={value:g}")
-        if feature.angular_pitch is not None and not _is_grounded(feature.angular_pitch, inventory):
+        if feature.angular_pitch is not None and not _is_grounded(feature.angular_pitch, inventory, allowed_kinds={"angle"}):
             feature.angular_pitch = None
             cleared.append(f"features[{index}].angular_pitch={value:g}")
-        if feature.start_angle and not _is_grounded(feature.start_angle, inventory):
+        if feature.start_angle and not _is_grounded(feature.start_angle, inventory, allowed_kinds={"angle"}):
             feature.start_angle = 0.0
             cleared.append(f"features[{index}].start_angle={value:g}")
-        # Absolute X/Y coordinates are not accepted as guessed millimetres.
         x_value = feature.x
-        if x_value and not _is_grounded(x_value, inventory):
+        if x_value and not _is_grounded(x_value, inventory, allowed_kinds={"linear"}):
             feature.x = 0.0
             cleared.append(f"features[{index}].x={x_value:g}")
         y_value = feature.y
-        if y_value and not _is_grounded(y_value, inventory):
+        if y_value and not _is_grounded(y_value, inventory, allowed_kinds={"linear"}):
             feature.y = 0.0
             cleared.append(f"features[{index}].y={y_value:g}")
 
