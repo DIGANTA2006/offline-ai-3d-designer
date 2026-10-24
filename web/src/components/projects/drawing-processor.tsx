@@ -363,11 +363,200 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
               <div className="rounded-lg bg-muted/40 p-3 text-sm"><span className="font-medium">Tolerances and fits</span><p className="mt-1 text-muted-foreground">{[...(currentResult.tolerances ?? []).map((item) => item.raw ?? ""), ...(currentResult.fits ?? [])].filter(Boolean).join("; ") || "None recognized"}</p></div>
               <div className="rounded-lg bg-muted/40 p-3 text-sm"><span className="font-medium">Threads / material / finish</span><p className="mt-1 text-muted-foreground">{[...(currentResult.threads ?? []), currentResult.material ?? "", currentResult.surfaceFinish ?? ""].filter(Boolean).join("; ") || "None recognized"}</p></div>
             </div>
+            {blueprint && (
+              <section className="space-y-4 rounded-xl border border-border p-4">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <h3 className="font-semibold">Structured drawing blueprint</h3>
+                    <p className="text-xs text-muted-foreground">
+                      {currentResult.blueprintVisionModel
+                        ? "Vision model: " + currentResult.blueprintVisionModel
+                        : "No vision model configured/reported; fields may be incomplete and need manual review."}
+                      {" · "}{currentResult.blueprintSource ?? "drawing"}{" · "}{currentResult.blueprintSourcePages ?? 1} page(s) inspected
+                    </p>
+                  </div>
+                  <span className="rounded-md border border-amber-400 bg-amber-50 px-2 py-1 text-xs text-amber-900">Review required</span>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="text-sm font-medium">Part name
+                    <input
+                      className={blueprintInputClass(false)}
+                      value={blueprint.part_name}
+                      maxLength={120}
+                      onChange={(event) => updateCurrentResult((result) => !result.blueprint ? result : ({
+                        ...result,
+                        blueprint: { ...result.blueprint, part_name: event.target.value.slice(0, 120), needs_review: true },
+                      }))}
+                    />
+                  </label>
+                  <label className="text-sm font-medium">Primary body type
+                    <select className={blueprintInputClass(!blueprint.primary_body_type)} value={blueprint.primary_body_type ?? ""} onChange={(event) => updateBlueprintBodyType(event.target.value)}>
+                      <option value="">Unresolved — choose after reviewing</option>
+                      <option value="rotational_flange">Rotational flange / plate</option>
+                      <option value="prismatic_box">Prismatic box / plate</option>
+                      <option value="sheet_enclosure">Open-top sheet enclosure</option>
+                      <option value="revolved_profile">Revolved profile</option>
+                    </select>
+                  </label>
+                  <label className="text-sm font-medium">Base profile
+                    <select className={blueprintInputClass(false)} value={blueprint.base_sketch.profile} onChange={(event) => updateBlueprintProfile(event.target.value)}>
+                      <option value="circle">Circle</option>
+                      <option value="rectangle">Rectangle</option>
+                      <option value="polygon">Polygon</option>
+                      <option value="complex_path">Complex path (limited)</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div>
+                  <h4 className="mb-2 text-sm font-semibold">Base sketch dimensions (mm)</h4>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {blueprintSketchFields.map(({ key, label, defaultFlag }) => {
+                      const isDefault = defaultFlag ? Boolean(blueprint.base_sketch[defaultFlag]) : false;
+                      const cleared = (currentResult.blueprintClearedFields ?? []).some((field) => field.startsWith("base_sketch." + key + "="));
+                      return (
+                        <label key={key} className="text-sm font-medium">
+                          {label}
+                          {isDefault && <span className="ml-1 text-amber-700">(default)</span>}
+                          {cleared && <span className="ml-1 text-amber-700">(not grounded)</span>}
+                          <input
+                            type="number"
+                            step="0.01"
+                            className={blueprintInputClass(isDefault || cleared || blueprint.base_sketch[key] === null)}
+                            value={blueprint.base_sketch[key] ?? ""}
+                            onChange={(event) => updateBlueprintSketch(key, event.target.value)}
+                          />
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {blueprint.base_sketch.points && (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      {blueprint.base_sketch.points.length} profile points extracted. Point-by-point editing is not available in this UI pass; inspect those coordinates before export.
+                    </p>
+                  )}
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <h4 className="text-sm font-semibold">Features ({blueprint.features.length})</h4>
+                    <Button type="button" size="sm" variant="outline" onClick={addBlueprintFeature} disabled={blueprint.features.length >= 100 || generating}>Add feature</Button>
+                  </div>
+                  {blueprint.features.length === 0 && <p className="text-sm text-muted-foreground">No machinable features were identified. Check the drawing views before exporting.</p>}
+                  {blueprint.features.map((feature, index) => (
+                    <fieldset key={index} className="space-y-3 rounded-md border p-3">
+                      <legend className="px-1 text-sm font-medium">Feature {index + 1}</legend>
+                      <div className="flex items-center justify-between gap-2">
+                        <label className="block flex-1 text-sm font-medium">Feature type
+                          <select
+                            className={blueprintInputClass(false)}
+                            value={feature.type}
+                            onChange={(event) => updateCurrentResult((result) => {
+                              if (!result.blueprint) return result;
+                              const allowed: BlueprintFeatureType[] = ["circular_pattern_cut", "through_hole", "pocket", "fillet"];
+                              const type = allowed.includes(event.target.value as BlueprintFeatureType) ? event.target.value as BlueprintFeatureType : "through_hole";
+                              return {
+                                ...result,
+                                blueprint: {
+                                  ...result.blueprint,
+                                  features: result.blueprint.features.map((item, i) => i === index ? { ...item, type } : item),
+                                  needs_review: true,
+                                },
+                              };
+                            })}
+                          >
+                            <option value="circular_pattern_cut">Circular hole pattern</option>
+                            <option value="through_hole">Through hole</option>
+                            <option value="pocket">Pocket</option>
+                            <option value="fillet">Fillet</option>
+                          </select>
+                        </label>
+                        <Button type="button" size="sm" variant="ghost" onClick={() => removeBlueprintFeature(index)} disabled={generating}>Remove</Button>
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                        {blueprintFeatureFields.filter(({ key }) => {
+                          if (feature.type === "circular_pattern_cut") return ["count", "diameter", "pitch_radius", "start_angle", "angular_pitch", "depth", "x", "y"].includes(key);
+                          if (feature.type === "through_hole") return ["diameter", "depth", "x", "y"].includes(key);
+                          if (feature.type === "pocket") return ["diameter", "length", "width", "depth", "x", "y"].includes(key);
+                          return key === "radius";
+                        }).map(({ key, label }) => {
+                          const cleared = (currentResult.blueprintClearedFields ?? []).some((field) => field.startsWith("features[" + index + "]." + key + "="));
+                          return (
+                            <label key={key} className="text-sm font-medium">
+                              {label}
+                              <input
+                                type="number"
+                                step={key === "count" ? "1" : "0.01"}
+                                className={blueprintInputClass(cleared || feature[key] === null)}
+                                value={feature[key] ?? ""}
+                                onChange={(event) => updateBlueprintFeature(index, key, event.target.value)}
+                              />
+                            </label>
+                          );
+                        })}
+                      </div>
+                      {feature.type === "fillet" && (
+                        <label className="block text-sm font-medium">Edge scope
+                          <select
+                            className={blueprintInputClass(false)}
+                            value={feature.edge_scope}
+                            onChange={(event) => updateCurrentResult((result) => !result.blueprint ? result : ({
+                              ...result,
+                              blueprint: {
+                                ...result.blueprint,
+                                features: result.blueprint.features.map((item, i) => i === index ? { ...item, edge_scope: event.target.value as BlueprintFeature["edge_scope"] } : item),
+                                needs_review: true,
+                              },
+                            }))}
+                          >
+                            <option value="all">All edges</option>
+                            <option value="top">Top edges</option>
+                            <option value="bottom">Bottom edges</option>
+                          </select>
+                        </label>
+                      )}
+                    </fieldset>
+                  ))}
+                </div>
+
+                {blueprint.warnings.length > 0 && (
+                  <div className="rounded-lg border border-amber-400 bg-amber-50 p-3 text-sm text-amber-950">
+                    <p className="mb-1 flex items-center gap-2 font-semibold"><AlertTriangle className="size-4" />Blueprint warnings — verify before export</p>
+                    <ul className="list-disc space-y-1 pl-5">{blueprint.warnings.map((warning, i) => <li key={String(i) + "-" + warning}>{warning}</li>)}</ul>
+                  </div>
+                )}
+                {blueprint.unsupported_geometry.length > 0 && (
+                  <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+                    <p className="font-semibold">Generation blocked: unsupported geometry</p>
+                    <ul className="mt-1 list-disc pl-5">{blueprint.unsupported_geometry.map((item, i) => <li key={String(i) + "-" + item}>{item}</li>)}</ul>
+                    <p className="mt-2">The engine will not replace teeth, bends or other unsupported shapes with a simpler part.</p>
+                  </div>
+                )}
+                <p className="text-xs leading-5 text-muted-foreground">
+                  Numeric values not grounded in drawing text are cleared and highlighted. Defaulted heights/walls are highlighted. Editing a value is an explicit override, not proof that it matches the drawing.
+                </p>
+              </section>
+            )}
+
+            {currentResult.dimensionInventory && currentResult.dimensionInventory.length > 0 && (
+              <details className="rounded-md border p-3">
+                <summary className="cursor-pointer text-sm font-medium">Grounded dimension inventory ({currentResult.dimensionInventory.length})</summary>
+                <div className="mt-2 max-h-48 overflow-auto text-xs">
+                  {currentResult.dimensionInventory.map((item) => (
+                    <p key={item.id} className="py-1 text-muted-foreground">{item.id}: {item.raw} → {item.value} mm ({item.kind}, page {item.page})</p>
+                  ))}
+                </div>
+              </details>
+            )}
+
+            {!blueprint && (
             <div className="space-y-2">
               <label htmlFor="reviewed-cad-description" className="text-sm font-medium">Review/edit the part description</label>
               <textarea id="reviewed-cad-description" value={reviewedDescription} onChange={(event) => setReviewedDescription(event.target.value)} maxLength={4000} rows={6} disabled={analyzing || generating} className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" placeholder="Rewrite the OCR result into a clear description with all required dimensions and an explicit shape." />
               <p className="text-xs leading-5 text-muted-foreground">Only supported, fully dimensioned primitive descriptions are currently converted to CAD. If the text is ambiguous or lacks dimensions, generation returns an error rather than inventing the missing geometry.</p>
             </div>
+            )}
           </div>
         )}
 
