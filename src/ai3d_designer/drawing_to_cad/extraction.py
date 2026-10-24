@@ -523,22 +523,31 @@ def ground_blueprint(bp: Blueprint, inventory: list[DimensionToken]) -> list[str
     # Do not accept arbitrary model-invented profile coordinates. Each coordinate
     # must correspond to an explicit drawing measurement or the profile is blocked.
     if sketch.points:
-        points_are_grounded = all(
-            len(point) == 2
-            and all(
-                _is_grounded(
+        points_are_grounded = True
+        for point in sketch.points:
+            if len(point) != 2:
+                points_are_grounded = False
+                break
+            for axis, coordinate in enumerate(point):
+                if bp.primary_body_type == "revolved_profile" and axis == 0:
+                    allowed_kinds = {"radius"}
+                    allow_half_diameter = True
+                else:
+                    allowed_kinds = {"linear"}
+                    allow_half_diameter = False
+                if not _is_grounded(
                     abs(coordinate),
                     inventory,
-                    allowed_kinds={"linear", "radius"},
-                    allow_half_diameter=True,
-                )
-                for coordinate in point
-            )
-            for point in sketch.points
-        )
+                    allowed_kinds=allowed_kinds,
+                    allow_half_diameter=allow_half_diameter,
+                ):
+                    points_are_grounded = False
+                    break
+            if not points_are_grounded:
+                break
         if not points_are_grounded:
             sketch.points = None
-            cleared.append("base_sketch.points=profile coordinates were not grounded to drawing dimensions")
+            cleared.append("base_sketch.points=profile coordinates were not grounded to the correct dimension types")
 
     feature_kinds = {
         "diameter": {"diameter"},
