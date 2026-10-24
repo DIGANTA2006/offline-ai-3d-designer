@@ -6,6 +6,7 @@ checks do not replace reviewing the slicer preview and printer-specific settings
 """
 from __future__ import annotations
 
+import json
 import math
 import os
 import re
@@ -532,4 +533,21 @@ def get_slicing_capability() -> dict[str, Any]:
             "engine": os.path.basename(engine),
             "reason": "CURA_PRINTER_DEFINITION points to missing file(s): " + ", ".join(missing[:3]),
         }
+    for value in definitions:
+        profile_path = os.path.expanduser(value)
+        try:
+            with open(profile_path, "r", encoding="utf-8") as stream:
+                profile = json.load(stream)
+        except (OSError, json.JSONDecodeError) as exc:
+            return {
+                "available": False,
+                "engine": os.path.basename(engine),
+                "reason": f"Cura profile is not readable valid JSON ({os.path.basename(profile_path)}: {type(exc).__name__}).",
+            }
+        if not isinstance(profile, dict):
+            return {
+                "available": False,
+                "engine": os.path.basename(engine),
+                "reason": f"Cura profile must contain a JSON object ({os.path.basename(profile_path)}).",
+            }
     return {"available": True, "engine": os.path.basename(engine), "reason": None}
