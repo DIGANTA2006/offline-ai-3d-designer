@@ -5,6 +5,7 @@ import { getCurrentUser } from "@/lib/auth/server";
 import { isSameOriginRequest } from "@/lib/security/same-origin";
 import { prisma } from "@/lib/prisma";
 import { getCadServiceConfig } from "@/lib/cad-service-config";
+import { compactStoredJson } from "@/lib/project-retention";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -293,12 +294,12 @@ export async function POST(request: Request, { params }: Context) {
       name: source.name,
       jobId: result.jobId,
       extractedAt: new Date().toISOString(),
-      spec: result.spec,
+      spec: compactStoredJson(result.spec),
     });
     await prisma.projectVersion.update({
       where: { id: version.id },
       data: {
-        spec: { ...storedSpec, ocrResults: nextResults } as Prisma.InputJsonValue,
+        spec: compactStoredJson({ ...storedSpec, ocrResults: nextResults }) as Prisma.InputJsonValue,
         confidence: result.spec.confidence,
         isApproximation: true,
       },
