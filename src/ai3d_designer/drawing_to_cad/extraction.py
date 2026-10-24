@@ -73,7 +73,7 @@ All dimensions are millimetres. Select a supported primary_body_type only when t
 Use only values from DIMENSION INVENTORY for numeric dimensions. If a value cannot be tied to the inventory, set that field to null; do not estimate it.
 Treat a named PCD/BCD value as a pitch-circle diameter, so pitch_radius is PCD / 2. A visual count of repeated holes may be used for count, but do not invent dimensions.
 Ignore title blocks, page numbers, logos and watermarks. Identify front, top, side and section views across the supplied pages.
-For teeth, involute gears, sprocket tooth forms, sheet-metal bends/flanges, threads, welds, or other unsupported geometry, add a concise unsupported_geometry entry. Never substitute a smooth flange for a toothed sprocket.
+For a labelled scalloped flange or circular-gullet sprocket, use radial_cutout_pattern only when the outer radius/diameter, gullet radius, root radius (or explicit cutter-centre radius) and repeat count are grounded in the drawing. Distinguish the tooth/gullet count from mounting-hole count. This creates circular scallops, not involute gear teeth; clearly say so in warnings. For true involute gears, unspecified/non-circular tooth profiles, sheet-metal bends/flanges, threads, welds, or other unsupported geometry, add a concise unsupported_geometry entry. Never substitute a smooth flange for a toothed sprocket.
 Defaults will be applied by deterministic code and marked for review. Put uncertainties in warnings and set needs_review=true."""
 
 
@@ -440,9 +440,15 @@ def _dimension_inventory(
         (["overall thickness", "plate thickness", "thickness", "thk", "height"], "linear"),
         (["wall thickness", "sheet thickness"], "linear"),
     ):
-        value = _labeled_radius_value(raw_text, labels) if kind == "radius" else _labeled_value(raw_text, labels)
+        if kind == "radius":
+            for single_label in labels:
+                value = _labeled_radius_value(raw_text, [single_label])
+                if value is not None:
+                    add(value, f"{single_label} R{value:g}", kind)
+            continue
+        value = _labeled_value(raw_text, labels)
         if value is not None:
-            add(value, f"{labels[0]} R{value:g}" if kind == "radius" else f"{labels[0]} {value:g} mm", kind)
+            add(value, f"{labels[0]} {value:g} mm", kind)
 
     # Add explicitly marked Ø/R/angle/unit-bearing values from native text and OCR.
     # Bare title-block numbers are deliberately not treated as dimensions.
@@ -497,10 +503,15 @@ def _dimension_inventory(
             for match in ANGLE_TOKEN_RE.finditer(page_text[:20_000]):
                 add(float(match.group("number").replace(",", ".")), match.group(0).strip(), "angle", page=page_index)
             for field_labels, kind in labels:
-                value = _labeled_radius_value(page_text, list(field_labels)) if kind == "radius" else _labeled_value(page_text, list(field_labels))
+                if kind == "radius":
+                    for single_label in field_labels:
+                        value = _labeled_radius_value(page_text, [single_label])
+                        if value is not None:
+                            add(value, f"{single_label} R{value:g}", kind, page=page_index)
+                    continue
+                value = _labeled_value(page_text, list(field_labels))
                 if value is not None:
-                    raw_dimension = f"{field_labels[0]} R{value:g}" if kind == "radius" else f"{field_labels[0]} {value:g} mm"
-                    add(value, raw_dimension, kind, page=page_index)
+                    add(value, f"{field_labels[0]} {value:g} mm", kind, page=page_index)
 
     return found[:200]
 

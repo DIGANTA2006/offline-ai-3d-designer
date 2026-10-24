@@ -135,9 +135,8 @@ def lint(bp: Blueprint) -> tuple[list[str], list[str]]:
         bore_r = sk.inner_bore_diameter / 2 if _positive(sk.inner_bore_diameter) else 0.0
         for i, feature in enumerate(bp.features, start=1):
             tag = f"Feature {i} ({feature.type})"
-            if feature.type != "ring_step" or feature.ring_mode == "cut":
-                if feature.depth is not None and feature.depth > h:
-                    errors.append(f"{tag}: blind-cut depth cannot exceed body thickness")
+            if feature.type != "ring_step" and feature.depth is not None and feature.depth > h:
+                errors.append(f"{tag}: blind-cut depth cannot exceed body thickness")
 
             if feature.type in {"circular_pattern_cut", "hole_pattern"}:
                 if feature.type == "hole_pattern" and body != "rotational_flange":
