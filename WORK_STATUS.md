@@ -55,3 +55,17 @@ The linked run evidence below is historical for the pre-wiring-fix source HEAD o
 - End-to-end Vercel Preview validation of private upload, OCR persistence, review/edit, supported CAD generation, private exports, and subscription/admin entitlements.
 
 Do not merge or deploy these changes until the final latest-head checks and manual Preview validation are reviewed. No production environment variables, live Razorpay configuration, database records, migration, or Production deployment were changed by this feature work.
+
+
+## Structured Drawing-to-CAD v1 (24 October 2026)
+
+- Code-tested source HEAD: `38ac1ed6470283494ec8bdb3d2f15c2e67d855e2`. The status/handoff updates being added after this are documentation-only; recheck the latest Actions run on the final branch tip.
+- Added `src/ai3d_designer/drawing_to_cad/blueprint.py`, `extraction.py`, and `generator.py`.
+- OCR now returns a typed Blueprint, grounded dimension inventory, page provenance, PDF vector circle/rectangle candidates and the selected vision model; FastAPI connects that extraction to the existing OCR API.
+- Optional vision providers: Ollama (reachable from the Python service) or an OpenAI-compatible chat-completions provider with strict JSON-schema output. Without a configured vision endpoint the fallback is label-based OCR, not visual reconstruction. See `docs/DRAWING_TO_CAD_V1.md` and `DEPLOYMENT.md`.
+- UI editor now displays an editable structured blueprint, defaulted values, ungrounded values, vector PDF candidates, warnings and unsupported geometry. The existing authenticated Vercel route accepts the reviewed blueprint directly without a free-text prompt and keeps STEP/STL outputs private.
+- Deterministic generator checks OpenCASCADE validity, one-solid output, positive volume, dimensions where applicable, STEP/STL output and STL watertightness. Unsupported teeth, bends, threads, partial/uneven hole patterns, ungrounded profile coordinates and unsupported revolved-body cuts are blocked rather than silently substituted.
+- Defaults are provisional: 10 mm solid height, 2.5 mm enclosure wall. They are highlighted and require user review. A watertight mesh is not proof of correct interpretation or manufacturing readiness.
+- Verification at code-tested source HEAD `38ac1ed`: **97 Python tests passed**; Railway Docker image smoke test passed (`CAD_RUNTIME_AVAILABLE=true OCR_AVAILABLE=true`); Next.js lint/typecheck/production build passed; CodeQL Python and JS/TS passed with 0 results per SARIF report. GitHub Code Scanning upload remains unavailable in the current repository configuration, so SARIF is retained as Actions artifacts.
+- Actions: [CAD Engine Tests](https://github.com/DIGANTA2006/offline-ai-3d-designer/actions/runs/40062651779), [Web Frontend Checks](https://github.com/DIGANTA2006/offline-ai-3d-designer/actions/runs/40062651924), [CodeQL Advanced](https://github.com/DIGANTA2006/offline-ai-3d-designer/actions/runs/40062651755).
+- Manual Preview still required: configure a dedicated Railway Preview service from this branch; set server-side `DRAWING_VISION_PROVIDER`, `DRAWING_VISION_URL`, `DRAWING_VISION_MODEL`, and optionally `DRAWING_VISION_API_KEY` if visual extraction is required; set Preview-only Vercel `CAD_SERVICE_URL_PREVIEW` and `CAD_SERVICE_TOKEN_PREVIEW`; verify upload → OCR → blueprint editor → supported-part generation → private STEP/STL downloads. Leave Production settings unchanged and keep PR #3 Draft.
