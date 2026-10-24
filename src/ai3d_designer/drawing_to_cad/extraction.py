@@ -25,7 +25,7 @@ DIMENSION_TOKEN_RE = re.compile(
     r"(?P<unit>\s*(?:mm|cm|inches?|inch|in|deg|°|\"))?(?![A-Za-z0-9])",
     re.IGNORECASE,
 )
-UNIT_MULTIPLIER = {"mm": 1.0, "cm": 10.0, "in": 25.4, "inch": 25.4, "inches": 25.4}
+UNIT_MULTIPLIER = {"mm": 1.0, "millimeter": 1.0, "millimeters": 1.0, "millimetre": 1.0, "millimetres": 1.0, "cm": 10.0, "centimeter": 10.0, "centimeters": 10.0, "centimetre": 10.0, "centimetres": 10.0, "in": 25.4, "inch": 25.4, "inches": 25.4, "m": 1000.0, "meter": 1000.0, "meters": 1000.0, "metre": 1000.0, "metres": 1000.0}
 
 
 class DimensionToken(BaseModel):
@@ -331,12 +331,14 @@ def ground_blueprint(bp: Blueprint, inventory: list[DimensionToken]) -> list[str
             feature.start_angle = 0.0
             cleared.append(f"features[{index}].start_angle={value:g}")
         # Absolute X/Y coordinates are not accepted as guessed millimetres.
-        if feature.x and not _is_grounded(feature.x, inventory):
+        x_value = feature.x
+        if x_value and not _is_grounded(x_value, inventory):
             feature.x = 0.0
-            cleared.append(f"features[{index}].x={value:g}")
-        if feature.y and not _is_grounded(feature.y, inventory):
+            cleared.append(f"features[{index}].x={x_value:g}")
+        y_value = feature.y
+        if y_value and not _is_grounded(y_value, inventory):
             feature.y = 0.0
-            cleared.append(f"features[{index}].y={value:g}")
+            cleared.append(f"features[{index}].y={y_value:g}")
 
     return cleared
 
@@ -401,10 +403,10 @@ def _heuristic_blueprint(raw_text: str, inventory: list[DimensionToken]) -> Blue
             needs_review=True,
         )
 
-    outer_diameter = _labeled_value(raw_text, ["outer diameter", "outside diameter", "outer dia", "od"])
-    inner_bore = _labeled_value(raw_text, ["inner bore diameter", "bore diameter", "bore dia", "inner diameter", "id"])
+    outer_diameter = _labeled_value(raw_text, ["outer diameter", "outside diameter", "outer dia", "od"]) if body == "rotational_flange" else None
+    inner_bore = _labeled_value(raw_text, ["inner bore diameter", "bore diameter", "bore dia", "inner diameter", "id"]) if body == "rotational_flange" else None
     thickness = _labeled_value(raw_text, ["overall thickness", "plate thickness", "thickness", "thk", "height"])
-    wall = _labeled_value(raw_text, ["wall thickness", "wall", "sheet thickness"])
+    wall = _labeled_value(raw_text, ["wall thickness", "sheet thickness"]) if body == "sheet_enclosure" else None
     features = []
     pcd = _labeled_value(raw_text, ["pitch circle diameter", "pitch circle dia", "pcd", "bcd", "bolt circle diameter"])
     hole_diameter = _labeled_value(raw_text, ["hole diameter", "hole dia", "hole Ø", "dia of holes"])
