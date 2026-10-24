@@ -472,7 +472,11 @@ def _is_grounded(
     if abs(value) < 1e-6:
         return True
     for token in inventory:
-        if allowed_kinds is not None and token.kind not in allowed_kinds:
+        if (
+            allowed_kinds is not None
+            and token.kind not in allowed_kinds
+            and not (allow_half_diameter and token.kind == "diameter")
+        ):
             continue
         if abs(value - token.value) <= max(0.02, abs(token.value) * 0.001):
             return True
