@@ -94,3 +94,13 @@ def test_slicing_capability_reports_missing_cura_engine(monkeypatch):
     assert result["available"] is False
     assert result["engine"] is None
     assert "CuraEngine was not found" in result["reason"]
+
+
+def test_cura_engine_filament_summary_reports_length_and_mass_separately():
+    output = "Print time: 2m 5s\nFilament: 3.50m 10.50g\n"
+
+    print_time, filament_grams, _layers = Slicer._parse_cura_output(output)
+
+    assert print_time == 125
+    assert filament_grams == 10.5
+    assert Slicer._parse_filament_length_m(output) == 3.5
