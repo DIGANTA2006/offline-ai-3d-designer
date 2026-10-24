@@ -32,6 +32,8 @@ type CadResponse = {
   stepBase64?: string;
   stlBase64?: string;
   fitReport?: string;
+  metrics?: Record<string, unknown>;
+  warnings?: string[];
   isApproximation?: boolean;
   validationErrors?: string[];
   error?: string;
