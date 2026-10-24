@@ -1,5 +1,6 @@
 """FastAPI CAD Service for Offline AI 3D Designer."""
 
+import asyncio
 from contextlib import asynccontextmanager
 from typing import Optional
 import uuid
@@ -40,6 +41,9 @@ from ai3d_designer.ocr.pipeline import (
     extract_drawing_text,
     is_ocr_available,
 )
+from ai3d_designer.drawing_to_cad.blueprint import Blueprint
+from ai3d_designer.drawing_to_cad.extraction import extract_blueprint
+from ai3d_designer.drawing_to_cad.generator import GeometryError, export_blueprint
 
 
 # =============================================================================
@@ -98,6 +102,13 @@ class ExtractedSpec(BaseModel):
     pageCount: int = Field(default=1, ge=1, le=8)
     needsReview: bool = True
     limitations: list[str] = Field(default_factory=list)
+    # Structured geometry is returned in parallel with OCR and is persisted with the OCR result.
+    blueprint: Optional[Blueprint] = None
+    dimensionInventory: list[dict] = Field(default_factory=list, max_length=200)
+    blueprintSource: Optional[str] = None
+    blueprintSourcePages: int = Field(default=1, ge=1, le=4)
+    blueprintClearedFields: list[str] = Field(default_factory=list)
+    blueprintVisionModel: Optional[str] = None
 
 
 class OcrResponse(BaseModel):
@@ -113,6 +124,8 @@ class GenerationRequest(BaseModel):
     userId: str = Field(min_length=1, max_length=128)
     reviewed: bool = False
     reviewedDescription: Optional[str] = Field(default=None, max_length=4000)
+    # A reviewed editor blueprint takes precedence over free-text parsing.
+    blueprint: Optional[Blueprint] = None
 
 
 class GenerationResponse(BaseModel):
@@ -125,6 +138,8 @@ class GenerationResponse(BaseModel):
     stlBase64: Optional[str] = None
     partSpec: Optional[dict] = None
     fitReport: Optional[str] = None
+    metrics: Optional[dict] = None
+    warnings: list[str] = Field(default_factory=list)
     isApproximation: bool = False
     error: Optional[str] = None
     validationErrors: list[str] = Field(default_factory=list)
@@ -267,8 +282,8 @@ async def health():
 
 
 @app.post("/api/v1/ocr/extract", response_model=OcrResponse, dependencies=[Depends(require_cad_service_token)])
-def ocr_extract(request: OcrRequest):
-    """Extract drawing text and explicit annotations using Tesseract/PyMuPDF."""
+async def ocr_extract(request: OcrRequest):
+    """Extract visible text and a grounded, structured blueprint from an engineering drawing."""
     job_id = str(uuid.uuid4())[:8]
     if not is_ocr_available():
         raise HTTPException(
@@ -286,7 +301,39 @@ def ocr_extract(request: OcrRequest):
         if len(file_bytes) > MAX_DOCUMENT_BYTES:
             raise OCRInputError("Drawing exceeds the 5 MiB OCR input limit.")
 
-        extracted = extract_drawing_text(file_bytes, request.fileName, request.mimeType)
+        extracted = await asyncio.to_thread(
+            extract_drawing_text, file_bytes, request.fileName, request.mimeType
+        )
+        structured = await extract_blueprint(
+            file_bytes=file_bytes,
+            file_name=request.fileName,
+            mime_type=request.mimeType,
+            raw_text=str(extracted.get("rawText", "")),
+            dimension_data=extracted,
+        )
+        extracted.update(
+            {
+                "blueprint": structured.blueprint.model_dump(mode="json"),
+                "dimensionInventory": [
+                    token.model_dump(mode="json") for token in structured.dimension_inventory
+                ],
+                "blueprintSource": structured.source,
+                "blueprintSourcePages": structured.source_pages,
+                "blueprintClearedFields": structured.cleared_fields,
+                "blueprintVisionModel": structured.vision_model,
+            }
+        )
+        extracted["needsReview"] = True
+        extracted["limitations"] = list(
+            dict.fromkeys(
+                list(extracted.get("limitations", []))
+                + [
+                    "Structured drawing interpretation is provisional; compare each field against the drawing.",
+                    "The v1 deterministic generator supports circular flanges, prismatic parts, simple open-top rectangular enclosures, and revolved profiles. Gear/sprocket teeth and sheet-metal bends are not generated automatically.",
+                    "An optional vision-capable model must be configured using DRAWING_VISION_URL and DRAWING_VISION_MODEL for visual semantic extraction. Without it, only explicitly labelled text is used.",
+                ]
+            )
+        )
         spec = ExtractedSpec(**extracted)
         return OcrResponse(success=True, spec=spec, jobId=job_id)
     except OCRInputError as exc:
@@ -295,9 +342,11 @@ def ocr_extract(request: OcrRequest):
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except OCRProcessingError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         print(f"OCR extraction failed for job {job_id}: {type(exc).__name__}: {exc}")
-        raise HTTPException(status_code=500, detail="Drawing OCR failed unexpectedly. Check service logs.") from exc
+        raise HTTPException(status_code=500, detail="Drawing extraction failed unexpectedly. Check service logs.") from exc
 
 
 @app.post("/api/v1/generate", response_model=GenerationResponse, dependencies=[Depends(require_cad_service_token)])
@@ -309,6 +358,40 @@ def generate_cad(request: GenerationRequest):
             status_code=409,
             detail="Review the extracted text, dimensions, tolerances and shape assumptions before CAD generation; set reviewed=true only after checking the drawing.",
         )
+
+    if request.blueprint is not None:
+        try:
+            exports = export_blueprint(request.blueprint)
+            return GenerationResponse(
+                success=True,
+                jobId=job_id,
+                stepBase64=exports["stepBase64"],
+                stlBase64=exports["stlBase64"],
+                partSpec=exports["partSpec"],
+                fitReport=exports["fitReport"],
+                metrics=exports["metrics"],
+                warnings=exports["warnings"],
+                isApproximation=True,
+            )
+        except GeometryError as exc:
+            detail = str(exc)
+            return GenerationResponse(
+                success=False,
+                jobId=job_id,
+                error=detail[:500],
+                validationErrors=[detail[:1000]],
+                warnings=request.blueprint.warnings,
+                isApproximation=True,
+            )
+        except Exception as exc:
+            print(f"Structured blueprint CAD generation failed for job {job_id}: {type(exc).__name__}: {exc}")
+            return GenerationResponse(
+                success=False,
+                jobId=job_id,
+                error="Structured blueprint CAD generation failed. Check the reviewed fields and CAD service logs.",
+                validationErrors=["No CAD files were returned because export validation failed."],
+                isApproximation=True,
+            )
 
     prompt = (request.reviewedDescription or request.spec.rawText or "").strip()
     if len(prompt) < 5:
