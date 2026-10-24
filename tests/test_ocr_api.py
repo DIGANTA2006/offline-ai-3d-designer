@@ -245,3 +245,20 @@ def test_ocr_generation_does_not_infer_a_shape_from_dimensions_alone():
     assert result.success is False
     assert "shape explicitly" in (result.error or "").lower()
     assert "will not infer a shape" in " ".join(result.validationErrors).lower()
+
+
+def test_slice_endpoint_reports_unavailable_without_fabricating_gcode(monkeypatch):
+    monkeypatch.setattr(
+        cad_service,
+        "get_slicing_capability",
+        lambda: {
+            "available": False,
+            "engine": None,
+            "reason": "CuraEngine was not found in this test backend.",
+        },
+    )
+    request = cad_service.SliceRequest(stlBase64=base64.b64encode(b"fake-stl").decode("ascii"))
+    with pytest.raises(HTTPException) as error:
+        cad_service.slice_stl(request)
+    assert error.value.status_code == 503
+    assert "CuraEngine was not found" in error.value.detail
