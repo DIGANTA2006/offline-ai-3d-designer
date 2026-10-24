@@ -72,6 +72,27 @@ def test_grounding_clears_unlisted_dimensions_but_accepts_half_of_pcd():
     assert blueprint.features[0].pitch_radius == 40
 
 
+def test_pitch_radius_cannot_match_a_hole_diameter_directly():
+    blueprint = Blueprint(
+        primary_body_type="rotational_flange",
+        base_sketch=BaseSketch(profile="circle", outer_diameter=100, thickness=10),
+        features=[
+            Feature(type="circular_pattern_cut", count=6, pitch_radius=8, diameter=8),
+        ],
+    )
+    inventory = [
+        DimensionToken(id="D1", raw="OD 100", value=100, kind="diameter", page=1),
+        DimensionToken(id="D2", raw="hole Ø8", value=8, kind="diameter", page=1),
+        DimensionToken(id="D3", raw="THK 10", value=10, kind="linear", page=1),
+    ]
+
+    cleared = ground_blueprint(blueprint, inventory)
+
+    assert blueprint.features[0].diameter == 8
+    assert blueprint.features[0].pitch_radius is None
+    assert any("features[0].pitch_radius=8" in value for value in cleared)
+
+
 def test_grounding_clears_an_unrecognized_feature_size():
     blueprint = Blueprint(
         primary_body_type="rotational_flange",
