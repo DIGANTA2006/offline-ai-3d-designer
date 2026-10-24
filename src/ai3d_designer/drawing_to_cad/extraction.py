@@ -517,6 +517,26 @@ def ground_blueprint(bp: Blueprint, inventory: list[DimensionToken]) -> list[str
             setattr(sketch, name, None)
             cleared.append(f"base_sketch.{name}={value:g}")
 
+    # Do not accept arbitrary model-invented profile coordinates. Each coordinate
+    # must correspond to an explicit drawing measurement or the profile is blocked.
+    if sketch.points:
+        points_are_grounded = all(
+            len(point) == 2
+            and all(
+                _is_grounded(
+                    abs(coordinate),
+                    inventory,
+                    allowed_kinds={"linear", "radius"},
+                    allow_half_diameter=True,
+                )
+                for coordinate in point
+            )
+            for point in sketch.points
+        )
+        if not points_are_grounded:
+            sketch.points = None
+            cleared.append("base_sketch.points=profile coordinates were not grounded to drawing dimensions")
+
     feature_kinds = {
         "diameter": {"diameter"},
         "length": {"linear"},
