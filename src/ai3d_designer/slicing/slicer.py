@@ -43,6 +43,8 @@ class SliceSettings:
     initial_layer_bed_temp: float = 60.0
     nozzle_diameter: float = 0.4
     filament_diameter: float = 1.75
+    # Used only when Cura reports length but omits mass; the resulting mass is approximate.
+    filament_density_g_cm3: float = 1.24
     flow_rate: float = 100.0
     adhesion_type: str = "brim"
     brim_width: float = 8.0
@@ -79,6 +81,7 @@ class SliceSettings:
             "initial_layer_speed": self.initial_layer_speed,
             "nozzle_diameter": self.nozzle_diameter,
             "filament_diameter": self.filament_diameter,
+            "filament_density_g_cm3": self.filament_density_g_cm3,
         }
         for name, value in positive.items():
             if not math.isfinite(float(value)) or value <= 0:
@@ -169,6 +172,8 @@ class SliceResult:
     layers: Optional[int] = None
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    filament_length_m: Optional[float] = None
+    filament_weight_estimated: bool = False
 
 
 class Slicer:
@@ -213,6 +218,7 @@ class Slicer:
         output_path: str,
         settings: Optional[SliceSettings] = None,
         printer_definition: Optional[str] = None,
+        timeout_seconds: float = 300.0,
     ) -> SliceResult:
         """Slice an STL using CuraEngine and an actual Cura printer definition."""
         settings = settings or self.settings
@@ -286,9 +292,9 @@ class Slicer:
                 command.extend(["-s", f"{key}={self._cura_value(value)}"])
 
             try:
-                result = subprocess.run(command, capture_output=True, text=True, timeout=300, check=False)
+                result = subprocess.run(command, capture_output=True, text=True, timeout=max(1.0, float(timeout_seconds)), check=False)
             except subprocess.TimeoutExpired:
-                return SliceResult(success=False, errors=["CuraEngine slicing timed out after 300 seconds."])
+                return SliceResult(success=False, errors=[f"CuraEngine slicing timed out after {max(1.0, float(timeout_seconds)):g} seconds."])
             if result.returncode != 0:
                 detail = (result.stderr or result.stdout or "no diagnostic output").strip()
                 return SliceResult(success=False, errors=[f"CuraEngine failed (exit {result.returncode}): {detail[-2500:]}"])
@@ -304,8 +310,21 @@ class Slicer:
 
             os.replace(temporary_output, destination)
             output_text = (result.stdout or "") + "\n" + (result.stderr or "")
-            print_time, filament_used, layers = self._parse_cura_output(output_text)
+            metadata_text = self._read_gcode_metrics(temporary_output)
+            metric_text = output_text + "\n" + metadata_text
+            print_time, filament_used, layers = self._parse_cura_output(metric_text)
+            filament_length_m = self._parse_filament_length_m(metric_text)
+            weight_estimated = False
             warnings: list[str] = []
+            if filament_used is None and filament_length_m is not None:
+                # Length and diameter yield filament volume; material density converts volume to mass.
+                filament_used = round(
+                    filament_length_m * math.pi * (settings.filament_diameter / 2) ** 2
+                    * settings.filament_density_g_cm3,
+                    3,
+                )
+                weight_estimated = True
+                warnings.append("Filament mass is estimated from reported length, configured filament diameter, and a PLA-like density of 1.24 g/cm³; verify against your actual material.")
             if not mesh.is_winding_consistent:
                 warnings.append("Input mesh orientation was not consistent; inspect the sliced preview carefully.")
             return SliceResult(
@@ -313,6 +332,8 @@ class Slicer:
                 gcode_path=str(destination),
                 print_time=print_time,
                 filament_used=filament_used,
+                filament_length_m=filament_length_m,
+                filament_weight_estimated=weight_estimated,
                 layers=layers or validation["stats"]["layers"],
                 warnings=warnings,
             )
@@ -335,21 +356,47 @@ class Slicer:
 
     @staticmethod
     def _parse_cura_output(output: str) -> tuple[Optional[float], Optional[float], Optional[int]]:
-        """Best-effort parse of CuraEngine statistics."""
+        """Read print time, filament mass (grams only), and layer count from real Cura output."""
         print_time: Optional[float] = None
         filament_used: Optional[float] = None
         layers: Optional[int] = None
         for line in output.splitlines():
             time_match = re.search(r"Print time:\s*(.*)", line, re.IGNORECASE)
             if time_match:
-                print_time = Slicer._parse_time_string(time_match.group(1))
-            filament_match = re.search(r"Filament used:\s*([0-9]+(?:\.[0-9]+)?)\s*g?", line, re.IGNORECASE)
-            if filament_match:
-                filament_used = float(filament_match.group(1))
-            layer_match = re.search(r"(?:Total\s+)?Layers:\s*(\d+)", line, re.IGNORECASE)
+                parsed_time = Slicer._parse_time_string(time_match.group(1))
+                if parsed_time is not None:
+                    print_time = parsed_time
+            machine_time_match = re.search(r"(?:;TIME:\s*|PRINT\.TIME:\s*)([0-9]+(?:\.[0-9]+)?)", line, re.IGNORECASE)
+            if machine_time_match:
+                print_time = float(machine_time_match.group(1))
+            weight_match = re.search(r"(?:Filament weight|Filament used)\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)\s*(?:g|grams)\b", line, re.IGNORECASE)
+            if weight_match:
+                filament_used = float(weight_match.group(1))
+            layer_match = re.search(r"(?:;LAYER_COUNT:\s*|(?:Total\s+)?Layers:\s*)(\d+)", line, re.IGNORECASE)
             if layer_match:
                 layers = int(layer_match.group(1))
         return print_time, filament_used, layers
+
+    @staticmethod
+    def _parse_filament_length_m(output: str) -> Optional[float]:
+        """Parse filament length without mistaking millimetres or centimetres for grams."""
+        length_m: Optional[float] = None
+        for match in re.finditer(r"Filament used\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)\s*(mm|cm|m)\b", output, re.IGNORECASE):
+            value = float(match.group(1))
+            unit = match.group(2).lower()
+            length_m = value / 1000 if unit == "mm" else value / 100 if unit == "cm" else value
+        return length_m
+
+    @staticmethod
+    def _read_gcode_metrics(path: Path) -> str:
+        """Read only slicer metadata lines, avoiding a second whole-file memory copy."""
+        needles = ("filament used", "filament weight", "print time", ";time:", "print.time", "layer_count", "total layers")
+        collected: list[str] = []
+        with path.open("r", encoding="utf-8", errors="replace") as stream:
+            for line in stream:
+                if any(needle in line.lower() for needle in needles):
+                    collected.append(line)
+        return "".join(collected)
 
     @staticmethod
     def _parse_time_string(time_string: str) -> Optional[float]:
@@ -451,3 +498,31 @@ def create_default_printer_definition() -> dict[str, Any]:
         "machine_nozzle_size": {"default_value": 0.4},
         "material_diameter": {"default_value": 1.75},
     }
+
+
+def get_slicing_capability() -> dict[str, Any]:
+    """Report readiness only when CuraEngine and compatible printer profiles exist."""
+    engine = Slicer._find_cura_engine()
+    if not engine:
+        return {
+            "available": False,
+            "engine": None,
+            "reason": "CuraEngine was not found on the backend PATH or in known installation locations.",
+        }
+
+    configured = os.environ.get("CURA_PRINTER_DEFINITION", "").strip()
+    definitions = [value.strip() for value in configured.split(";") if value.strip()]
+    if not definitions:
+        return {
+            "available": False,
+            "engine": os.path.basename(engine),
+            "reason": "CURA_PRINTER_DEFINITION is not configured. Add compatible Cura printer/extruder definition JSON path(s), separated with semicolons.",
+        }
+    missing = [value for value in definitions if not os.path.isfile(os.path.expanduser(value))]
+    if missing:
+        return {
+            "available": False,
+            "engine": os.path.basename(engine),
+            "reason": "CURA_PRINTER_DEFINITION points to missing file(s): " + ", ".join(missing[:3]),
+        }
+    return {"available": True, "engine": os.path.basename(engine), "reason": None}
