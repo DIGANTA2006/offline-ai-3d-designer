@@ -155,14 +155,22 @@ export async function GET(_request: Request, { params }: Context) {
     await assertSliceAccess(user);
     const health = await fetchBackendHealth();
     const hasCapabilityContract = typeof health.slicingAvailable === "boolean";
+    const serviceReady = health.cadAvailable === true
+      && health.status === "healthy"
+      && health.cadRuntimeAvailable === true
+      && health.serviceTokenConfigured === true;
+    const slicingReady = hasCapabilityContract && health.slicingAvailable === true;
+    const reason = !hasCapabilityContract
+      ? "The connected CAD backend is an older build. Redeploy the feature-branch backend to report slicing readiness."
+      : !serviceReady
+        ? "The CAD backend is not healthy. Verify build123d runtime availability and the backend service-token configuration."
+        : typeof health.slicingStatusReason === "string"
+          ? health.slicingStatusReason
+          : "The CAD backend has not reported a slicing reason.";
     return NextResponse.json({
-      available: health.slicingAvailable === true,
+      available: serviceReady && slicingReady,
       engine: typeof health.slicingEngine === "string" ? health.slicingEngine : null,
-      reason: typeof health.slicingStatusReason === "string"
-        ? health.slicingStatusReason
-        : hasCapabilityContract
-          ? "The CAD backend has not reported a slicing reason."
-          : "The connected CAD backend is an older build. Redeploy the feature-branch backend to report slicing readiness.",
+      reason,
     }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     if (error instanceof RouteError) {
