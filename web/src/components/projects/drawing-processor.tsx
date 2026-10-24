@@ -7,7 +7,53 @@ import { FileSearch, LoaderCircle, ShieldCheck, WandSparkles } from "lucide-reac
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
+type BlueprintBodyType = "rotational_flange" | "prismatic_box" | "sheet_enclosure" | "revolved_profile";
+type BlueprintProfile = "circle" | "rectangle" | "polygon" | "complex_path";
+type BlueprintFeatureType = "circular_pattern_cut" | "through_hole" | "pocket" | "fillet";
+type BlueprintFeature = {
+  type: BlueprintFeatureType;
+  count: number;
+  pitch_radius: number | null;
+  start_angle: number;
+  angular_pitch: number | null;
+  diameter: number | null;
+  length: number | null;
+  width: number | null;
+  depth: number | null;
+  radius: number | null;
+  edge_scope: "all" | "top" | "bottom";
+  x: number;
+  y: number;
+};
+type Blueprint = {
+  part_name: string;
+  primary_body_type: BlueprintBodyType | null;
+  base_sketch: {
+    profile: BlueprintProfile;
+    outer_diameter: number | null;
+    inner_bore_diameter: number | null;
+    width: number | null;
+    length: number | null;
+    thickness: number | null;
+    wall_thickness: number | null;
+    thickness_is_default: boolean;
+    wall_thickness_is_default: boolean;
+    points: number[][] | null;
+  };
+  features: BlueprintFeature[];
+  warnings: string[];
+  unsupported_geometry: string[];
+  source_pages: number[];
+  needs_review: boolean;
+};
+
 type OCRSpec = {
+  blueprint?: Blueprint | null;
+  dimensionInventory?: Array<{ id: string; raw: string; value: number; kind: string; page: number }>;
+  blueprintSource?: string;
+  blueprintSourcePages?: number;
+  blueprintClearedFields?: string[];
+  blueprintVisionModel?: string | null;
   dimensions?: {
     triplets?: Array<{ valuesMm?: number[]; raw?: string }>;
     linear?: Array<{ valueMm?: number; raw?: string }>;
