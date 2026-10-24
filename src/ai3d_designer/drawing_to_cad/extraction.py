@@ -878,14 +878,20 @@ async def extract_blueprint(
     vision_model: str | None = None
     if vision is not None:
         try:
-            blueprint = await _extract_with_vision(vision, rendered.images, inventory, len(rendered.images), rendered.vector_geometry)
+            # Bound the entire vision attempt, including schema-validation retries, so
+            # the conservative fallback returns before the outer web request expires.
+            vision_timeout = max(0.01, float(getattr(vision, "timeout", VISION_DEFAULT_TIMEOUT_SECONDS)))
+            blueprint = await asyncio.wait_for(
+                _extract_with_vision(vision, rendered.images, inventory, len(rendered.images), rendered.vector_geometry),
+                timeout=vision_timeout,
+            )
             vision_model = getattr(vision, "model", type(vision).__name__)
         except (httpx.HTTPError, TimeoutError, ValueError, ValidationError) as exc:
             if isinstance(exc, httpx.HTTPStatusError):
                 body = str(getattr(exc.response, "text", "")).strip()[:1500]
                 status = getattr(exc.response, "status_code", "unknown")
                 detail = f"HTTP {status}: {body or str(exc)}"
-            elif isinstance(exc, httpx.TimeoutException):
+            elif isinstance(exc, (httpx.TimeoutException, TimeoutError))
                 request = getattr(exc, "request", None)
                 endpoint = str(getattr(request, "url", "(URL unavailable)"))
                 detail = f"{type(exc).__name__} after {getattr(vision, 'timeout', VISION_DEFAULT_TIMEOUT_SECONDS):g}s at {endpoint}"
