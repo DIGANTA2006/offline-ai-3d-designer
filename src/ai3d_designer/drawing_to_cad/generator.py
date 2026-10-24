@@ -156,7 +156,7 @@ def build_part(blueprint: Blueprint) -> tuple[Part, list[str]]:
         raise GeometryError(f"OpenCASCADE could not construct the reviewed blueprint: {type(exc).__name__}") from exc
 
     solid = part.part
-    if not solid.is_valid():
+    if not solid.is_valid:
         raise GeometryError("OpenCASCADE reports an invalid solid")
     solids = list(solid.solids())
     if len(solids) != 1:
@@ -168,7 +168,7 @@ def build_part(blueprint: Blueprint) -> tuple[Part, list[str]]:
 
 
 def validate_solid(solid: Part, blueprint: Blueprint) -> dict[str, Any]:
-    if not solid.is_valid():
+    if not solid.is_valid:
         raise GeometryError("OpenCASCADE reports an invalid solid")
     if len(solid.solids()) != 1:
         raise GeometryError(f"Expected one solid, generated {len(solid.solids())}")
