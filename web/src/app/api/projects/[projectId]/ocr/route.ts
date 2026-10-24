@@ -13,7 +13,7 @@ export const maxDuration = 60;
 
 const MAX_SOURCE_BYTES = 5 * 1024 * 1024;
 const MAX_OCR_RESPONSE_BYTES = 1024 * 1024;
-const OCR_TIMEOUT_MS = 50_000;
+const OCR_TIMEOUT_MS = 40_000;
 
 type Context = { params: Promise<{ projectId: string }> };
 type StoredSource = {
