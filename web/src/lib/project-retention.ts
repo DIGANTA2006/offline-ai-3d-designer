@@ -79,6 +79,9 @@ async function deleteBlobs(pathnames: string[], token: string): Promise<void> {
 export async function assertProjectCapacity(userId: string): Promise<void> {
   const count = await prisma.project.count({ where: { userId } });
   if (count < MAX_ACTIVE_PROJECTS) return;
+  // Make sure enough old projects can be removed to get back under the cap after
+  // the new project is created, including when a legacy account is already over limit.
+  const requiredDeletable = count - MAX_ACTIVE_PROJECTS + 1;
   const deletableCount = await prisma.project.count({
     where: {
       userId,
@@ -86,7 +89,7 @@ export async function assertProjectCapacity(userId: string): Promise<void> {
       status: { notIn: ["PROCESSING", "QUEUED"] },
     },
   });
-  if (deletableCount === 0) throw new ProjectCapacityError();
+  if (deletableCount < requiredDeletable) throw new ProjectCapacityError();
 }
 
 export async function deleteProjectAndBlobs(projectId: string, userId: string, token: string): Promise<boolean> {
