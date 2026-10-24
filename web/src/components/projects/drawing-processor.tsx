@@ -122,7 +122,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
     ocrSourceFiles.flatMap((file) => file.ocrResult ? [[file.index, file.ocrResult]] : []),
   ));
   const [reviewedDescription, setReviewedDescription] = useState(
-    ocrSourceFiles[0]?.ocrResult?.rawText ?? "",
+    (ocrSourceFiles[0]?.ocrResult?.rawText ?? "").slice(0, 4000),
   );
   const [analyzing, setAnalyzing] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -228,7 +228,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
   function changeSource(value: string) {
     const index = Number(value);
     setSelectedIndex(index);
-    setReviewedDescription(results[index]?.rawText ?? "");
+    setReviewedDescription((results[index]?.rawText ?? "").slice(0, 4000));
     setError("");
     setNotice("");
   }
@@ -255,7 +255,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
       }
       if (!response.ok || !payload.spec) throw new Error(payload.error ?? `Drawing OCR failed (HTTP ${response.status}).`);
       setResults((previous) => ({ ...previous, [selected.index]: payload.spec! }));
-      setReviewedDescription(payload.spec.rawText ?? "");
+      setReviewedDescription((payload.spec.rawText ?? "").slice(0, 4000));
       setNotice(
         payload.spec.blueprint
           ? "Drawing analyzed. Review the structured dimensions and warnings; no free-text prompt is required when the blueprint is valid."
