@@ -95,6 +95,14 @@ def _vision_timeout_seconds() -> float:
         raise ValueError("DRAWING_VISION_TIMEOUT_SECONDS must be a number between 1 and 600") from exc
     if not 1 <= value <= 600:
         raise ValueError("DRAWING_VISION_TIMEOUT_SECONDS must be between 1 and 600")
+    # Never let a deployment override exceed the Vercel OCR request budget.
+    # Historical Railway values may still be set to 110 seconds.
+    if value > 30:
+        logger.warning(
+            "DRAWING_VISION_TIMEOUT_SECONDS=%.1f exceeds the web OCR budget; capping vision deadline at 30 seconds",
+            value,
+        )
+        return 30.0
     return value
 
 
