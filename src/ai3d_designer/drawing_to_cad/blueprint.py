@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 BodyType = Literal["rotational_flange", "prismatic_box", "sheet_enclosure", "revolved_profile"]
 Profile = Literal["circle", "rectangle", "polygon", "complex_path"]
-FeatureType = Literal["circular_pattern_cut", "through_hole", "pocket", "fillet"]
+FeatureType = Literal["circular_pattern_cut", "hole_pattern", "radial_cutout_pattern", "ring_step", "through_hole", "pocket", "fillet"]
 
 DEFAULT_HEIGHT_MM = 10.0
 DEFAULT_SHEET_WALL_MM = 2.5
@@ -39,7 +39,10 @@ class Feature(StrictModel):
     pitch_radius: float | None = Field(default=None, gt=0, le=MAX_DIMENSION_MM)
     start_angle: float = Field(default=0.0, ge=-360, le=360)
     angular_pitch: float | None = Field(default=None, gt=0, le=360)
-    diameter: float | None = Field(default=None, gt=0, le=MAX_DIMENSION_MM)
+    diameter: float | None = Field(default=None, gt=0, le=MAX_DIMENSION_MM, description="Hole diameter or outer diameter of a ring step, mm")
+    inner_diameter: float | None = Field(default=None, gt=0, le=MAX_DIMENSION_MM, description="Inner diameter of an annular ring step, mm")
+    root_radius: float | None = Field(default=None, gt=0, le=MAX_DIMENSION_MM, description="Radial distance from the part centre to the bottom of a perimeter gullet, mm; used to derive cutter-centre radius")
+    ring_mode: Literal["cut", "boss"] = "cut"
     length: float | None = Field(default=None, gt=0, le=MAX_DIMENSION_MM)
     width: float | None = Field(default=None, gt=0, le=MAX_DIMENSION_MM)
     # None denotes a through cut. Positive values denote a blind depth from the top.
@@ -132,9 +135,13 @@ def lint(bp: Blueprint) -> tuple[list[str], list[str]]:
         bore_r = sk.inner_bore_diameter / 2 if _positive(sk.inner_bore_diameter) else 0.0
         for i, feature in enumerate(bp.features, start=1):
             tag = f"Feature {i} ({feature.type})"
-            if feature.depth is not None and feature.depth > h:
-                errors.append(f"{tag}: blind-cut depth cannot exceed body thickness")
-            if feature.type == "circular_pattern_cut":
+            if feature.type != "ring_step" or feature.ring_mode == "cut":
+                if feature.depth is not None and feature.depth > h:
+                    errors.append(f"{tag}: blind-cut depth cannot exceed body thickness")
+
+            if feature.type in {"circular_pattern_cut", "hole_pattern"}:
+                if feature.type == "hole_pattern" and body != "rotational_flange":
+                    errors.append(f"{tag}: hole_pattern is supported only on rotational_flange bodies in v1")
                 if feature.count < 2 or not (_positive(feature.pitch_radius) and _positive(feature.diameter)):
                     errors.append(f"{tag}: needs count >= 2, pitch_radius and diameter")
                     continue
@@ -144,6 +151,56 @@ def lint(bp: Blueprint) -> tuple[list[str], list[str]]:
                     errors.append(f"{tag}: holes cut into the bore")
                 if feature.angular_pitch is not None and abs(feature.angular_pitch - 360 / feature.count) > 0.5:
                     errors.append(f"{tag}: partial/uneven angular patterns are not supported in v1; no model will be generated using a full-circle substitute")
+
+            elif feature.type == "radial_cutout_pattern":
+                if body != "rotational_flange":
+                    errors.append(f"{tag}: radial perimeter cutouts require a rotational_flange body")
+                if feature.count < 3 or not _positive(feature.radius):
+                    errors.append(f"{tag}: needs count >= 3 and a positive cutout radius")
+                    continue
+                if not (_positive(feature.pitch_radius) or _positive(feature.root_radius)):
+                    errors.append(f"{tag}: needs a cutter-centre pitch_radius or a drawing-grounded root_radius")
+                    continue
+                if outer_r is None:
+                    errors.append(f"{tag}: a positive flange outer_diameter is required")
+                    continue
+                if feature.root_radius is not None:
+                    if feature.root_radius >= outer_r:
+                        errors.append(f"{tag}: root_radius must be smaller than the flange outer radius")
+                    if feature.root_radius <= bore_r:
+                        errors.append(f"{tag}: root_radius reaches or crosses the central bore")
+                    derived_pitch = outer_r + feature.radius - feature.root_radius
+                    if feature.pitch_radius is not None and abs(feature.pitch_radius - derived_pitch) > max(0.02, derived_pitch * 0.001):
+                        errors.append(f"{tag}: pitch_radius conflicts with the specified outer radius, cutout radius and root_radius")
+                    centre_radius = derived_pitch
+                else:
+                    centre_radius = float(feature.pitch_radius or 0)
+                if centre_radius <= 0:
+                    errors.append(f"{tag}: derived cutter-centre radius is not positive")
+                    continue
+                if centre_radius - feature.radius >= outer_r or centre_radius + feature.radius <= outer_r:
+                    errors.append(f"{tag}: circular cutouts must intersect the outer perimeter to form scallops")
+                if centre_radius - feature.radius <= bore_r:
+                    errors.append(f"{tag}: cutout reaches or crosses the central bore")
+                centre_spacing = 2 * centre_radius * math.sin(math.pi / feature.count)
+                if centre_spacing < 2 * feature.radius - 1e-6:
+                    errors.append(f"{tag}: adjacent circular cutouts overlap; define a supported explicit profile instead")
+                if feature.angular_pitch is not None and abs(feature.angular_pitch - 360 / feature.count) > 0.5:
+                    errors.append(f"{tag}: partial/uneven angular cutout patterns are not supported in v1")
+
+            elif feature.type == "ring_step":
+                if body != "rotational_flange":
+                    errors.append(f"{tag}: concentric ring steps require a rotational_flange body")
+                if not (_positive(feature.diameter) and _positive(feature.inner_diameter) and _positive(feature.depth)):
+                    errors.append(f"{tag}: needs outer diameter, inner_diameter and positive depth")
+                    continue
+                if feature.inner_diameter >= feature.diameter:
+                    errors.append(f"{tag}: inner_diameter must be smaller than the ring outer diameter")
+                if outer_r is not None and feature.diameter > 2 * outer_r + 1e-3:
+                    errors.append(f"{tag}: ring outer diameter cannot exceed the base flange diameter")
+                if feature.ring_mode == "cut" and feature.depth > h:
+                    errors.append(f"{tag}: annular recess depth cannot exceed body thickness")
+
             elif feature.type in {"through_hole", "pocket"}:
                 if feature.type == "through_hole" and not _positive(feature.diameter):
                     errors.append(f"{tag}: needs a positive diameter")
@@ -151,6 +208,7 @@ def lint(bp: Blueprint) -> tuple[list[str], list[str]]:
                     _positive(feature.diameter) or (_positive(feature.length) and _positive(feature.width))
                 ):
                     errors.append(f"{tag}: needs a diameter, or a length and width")
+
             elif feature.type == "fillet" and not _positive(feature.radius):
                 errors.append(f"{tag}: needs a positive radius")
 

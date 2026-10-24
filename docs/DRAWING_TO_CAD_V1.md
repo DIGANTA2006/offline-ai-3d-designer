@@ -31,8 +31,9 @@ Do not set the URL to http://localhost:11434 on Railway unless Ollama actually r
 - DRAWING_VISION_URL=https://<provider-base>/v1 (the adapter appends /chat/completions)
 - DRAWING_VISION_MODEL=<vision-capable-model-name>
 - DRAWING_VISION_API_KEY=<secret> (only if the provider requires one)
+- DRAWING_VISION_TIMEOUT_SECONDS=110 (optional; allowed range 1–600 seconds; defaults to 110)
 
-The provider must support image input and strict response_format: json_schema output. Keep the key server-side; do not create a NEXT_PUBLIC_... variable for it. If the provider is unreachable or rejects the schema, extraction falls back to labelled-text mode and marks the blueprint for review. A configured endpoint only means configured, not that the model is reachable or that its interpretation is accurate. In OpenAI-compatible mode, drawing page images and the extracted dimension inventory are sent to that provider. Use only an endpoint approved for the drawing's confidentiality requirements; if the drawings must remain within your own environment, use a private/reachable Ollama server instead.
+The provider must support image input and preferably strict response_format: json_schema output. The adapter first requests strict schema output, then retries once using response_format: json_object only when an HTTP 400/422 response explicitly indicates that the provider/model rejects json_schema or strict response formatting. Returned JSON is still parsed and validated with Pydantic; JSON mode does not guarantee schema adherence. Upstream status/body and timeout details are logged (response bodies are truncated to 1,500 characters). Configure DRAWING_VISION_TIMEOUT_SECONDS (default 110 seconds, range 1–600) for slow reasoning models. Page images are resized to a 2,048 px maximum side and encoded as high-quality JPEG with 4:4:4 sampling to reduce request size while retaining line/callout detail. Keep the key server-side; do not create a NEXT_PUBLIC_... variable for it. If the provider remains unreachable or returns invalid JSON, extraction falls back to labelled-text mode and marks the blueprint for review. A configured endpoint only means configured, not that the model is reachable or that its interpretation is accurate. In OpenAI-compatible mode, drawing page images and the extracted dimension inventory are sent to that provider. Use only an endpoint approved for the drawing's confidentiality requirements; if the drawings must remain within your own environment, use a private/reachable Ollama server instead.
 
 When no vision provider is configured, the feature remains useful for explicit dimensions labelled in recognized text, but it is not a visual scene-understanding engine. An unlabelled or scanned blueprint may produce an unresolved blueprint and require review.
 
@@ -49,7 +50,9 @@ Supported base bodies:
 
 Supported features:
 
-- circular pattern of cylindrical cuts with evenly spaced holes;
+- circular pattern of cylindrical cuts with evenly spaced holes (legacy `circular_pattern_cut` and `hole_pattern`);
+- radial circular cutout patterns (`radial_cutout_pattern`), including labelled root-radius-based gullet placement for scalloped flanges;
+- concentric annular ring steps (`ring_step`) as a top-face recess or raised boss;
 - single cylindrical through/blind hole;
 - cylindrical or rectangular through/blind pocket;
 - fillet by explicit edge scope and radius.
@@ -58,7 +61,7 @@ Default solid height is 10 mm when absent; the field is flagged. The open-top en
 
 ## Explicitly out of scope for this version
 
-The v1 generator does not create exact involute/sprocket teeth, gear profiles, sheet-metal bends/flanges, threads, GD&T-driven geometry, arbitrary freeform surfaces, multi-body assemblies, or hidden geometry that cannot be inferred from the views. Such geometry must be marked in unsupported_geometry, which blocks export rather than silently substituting a smooth cylinder or box.
+The v1 generator can create a scalloped sprocket-like perimeter when the drawing supplies the outer radius/diameter, gullet radius and root radius (or an explicit cutter-centre radius), plus the pattern count. For a root-radius-defined cutout it derives the cutter-centre radius as outer_radius + gullet_radius - root_radius; the measured root radius remains explicit and reviewable. It also supports PCD hole patterns and annular recesses/raised ring steps. These circular cuts are not involute tooth geometry and do not establish a valid chain-engagement profile. Exact involute/geared profiles, sheet-metal bends/flanges, threads, GD&T-driven geometry, arbitrary freeform surfaces, multi-body assemblies, and hidden geometry that cannot be inferred from the views remain unsupported. Such geometry must be marked in unsupported_geometry, which blocks export rather than silently substituting a smooth cylinder or box.
 
 Simple vector PDF path candidates are evidence only. Their bounding rectangles are not automatically treated as real millimetre dimensions because PDF scale may depend on the view and drawing metadata. Calibration of PDF vector scale against a labelled dimension is a follow-up milestone.
 
@@ -96,4 +99,4 @@ Requires the current service-token authentication and reviewed=true. The server 
 
 ## Regression tests
 
-tests/test_drawing_to_cad_blueprint.py checks defaults, dimension grounding, unsupported sprocket handling, vector-PDF rendering, and STEP/STL generation. tests/test_ocr_api.py verifies the existing API accepts a reviewed structured blueprint without requiring a shape phrase in the description.
+tests/test_drawing_to_cad_blueprint.py checks defaults, dimension grounding, root-radius-derived scallops, PCD holes, annular ring steps, vision timeout configuration, JPEG payload sizing, JSON-mode compatibility fallback, vector-PDF rendering, and STEP/STL generation. tests/test_ocr_api.py verifies the existing API accepts a reviewed structured blueprint without requiring a shape phrase in the description.

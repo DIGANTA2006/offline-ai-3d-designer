@@ -2,8 +2,10 @@
 
 import asyncio
 import base64
+import io
 from typing import Any
 
+from PIL import Image
 import pymupdf
 import pytest
 
@@ -19,6 +21,7 @@ from ai3d_designer.drawing_to_cad.extraction import (
     OpenAICompatibleVision,
     _dimension_inventory,
     _heuristic_blueprint,
+    _prepare_vision_image,
     extract_blueprint,
     get_vision_backend,
     ground_blueprint,
@@ -202,12 +205,33 @@ def test_revolved_profile_rejects_unsupported_separate_features():
     assert any("Features on revolved_profile bodies are not supported" in error for error in errors)
 
 
-def test_sprocket_is_not_silently_replaced_by_a_smooth_flange():
-    blueprint = _heuristic_blueprint("Sprocket, 8 teeth, OD 100 mm", [])
+def test_labeled_sprocket_dimensions_build_supported_radial_cutout_blueprint():
+    text = (
+        "Sprocket outer radius R67 root radius R63.4 gullet radius R15.5 "
+        "10 teeth bore diameter Ø80 thickness 10 mm"
+    )
+    inventory = _dimension_inventory(text, {"dimensions": {}}, 1)
+    blueprint = _heuristic_blueprint(text, inventory)
 
     errors, _warnings = lint(blueprint)
 
-    assert blueprint.primary_body_type is None
+    assert blueprint.primary_body_type == "rotational_flange"
+    assert blueprint.base_sketch.outer_diameter == 134
+    radial = next(feature for feature in blueprint.features if feature.type == "radial_cutout_pattern")
+    assert radial.count == 10
+    assert radial.radius == 15.5
+    assert radial.root_radius == 63.4
+    assert radial.pitch_radius is None
+    assert not blueprint.unsupported_geometry
+    assert not errors
+
+
+def test_sprocket_without_explicit_gullet_geometry_stays_blocked():
+    blueprint = _heuristic_blueprint("Sprocket, 10 teeth, OD 134 mm", [])
+
+    errors, _warnings = lint(blueprint)
+
+    assert blueprint.primary_body_type == "rotational_flange"
     assert blueprint.unsupported_geometry
     assert any("Unsupported geometry" in message for message in errors)
 
@@ -242,6 +266,82 @@ def test_selected_vision_provider_does_not_reuse_another_providers_url(monkeypat
     assert isinstance(provider, OpenAICompatibleVision)
     assert provider.base_url == "https://vision.example/v1"
     assert provider.api_key == "unit-test-secret"
+
+
+def test_vision_timeout_is_configurable_and_bounded(monkeypatch):
+    monkeypatch.setenv("DRAWING_VISION_PROVIDER", "openai_compatible")
+    monkeypatch.setenv("DRAWING_VISION_URL", "https://vision.example/v1")
+    monkeypatch.setenv("DRAWING_VISION_MODEL", "vision-model")
+    monkeypatch.setenv("DRAWING_VISION_TIMEOUT_SECONDS", "120")
+
+    provider = get_vision_backend()
+    assert isinstance(provider, OpenAICompatibleVision)
+    assert provider.timeout == 120.0
+
+    monkeypatch.setenv("DRAWING_VISION_TIMEOUT_SECONDS", "9999")
+    with pytest.raises(ValueError, match="between 1 and 600"):
+        get_vision_backend()
+
+
+def test_vision_image_preparation_is_compressed_jpeg_and_keeps_bounded_resolution():
+    original = Image.new("RGB", (3200, 2400), "white")
+    source = io.BytesIO()
+    original.save(source, format="PNG")
+    prepared = _prepare_vision_image(source.getvalue())
+
+    with Image.open(io.BytesIO(prepared)) as result:
+        assert result.format == "JPEG"
+        assert max(result.size) == 2048
+
+
+def test_openai_compatible_falls_back_to_json_mode_when_schema_format_is_rejected(monkeypatch, caplog):
+    captured: list[dict[str, Any]] = []
+
+    class FakeResponse:
+        def __init__(self, status_code, body):
+            self.status_code = status_code
+            self.text = body
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": Blueprint(
+                part_name="json-mode-response",
+                primary_body_type="rotational_flange",
+                base_sketch=BaseSketch(profile="circle", outer_diameter=50, thickness=10),
+            ).model_dump_json()}}]}
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            captured.append({"timeout": timeout, "requests": []})
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, url, headers, json):
+            import copy
+            captured[-1]["requests"].append({"url": url, "payload": copy.deepcopy(json)})
+            if len(captured[-1]["requests"]) == 1:
+                return FakeResponse(400, '{"error":"response_format json_schema is not supported by this model"}')
+            return FakeResponse(200, "")
+
+    import ai3d_designer.drawing_to_cad.extraction as extraction
+    monkeypatch.setattr(extraction.httpx, "AsyncClient", FakeAsyncClient)
+    adapter = OpenAICompatibleVision("https://vision.example/v1", "vision-model", None, timeout=120)
+    result = asyncio.run(adapter.chat_json([b"jpeg"], "return JSON", "inspect", Blueprint.model_json_schema()))
+
+    requests = captured[0]["requests"]
+    assert result["part_name"] == "json-mode-response"
+    assert len(requests) == 2
+    assert requests[0]["payload"]["response_format"]["type"] == "json_schema"
+    assert requests[1]["payload"]["response_format"] == {"type": "json_object"}
+    assert "Compatibility fallback" in requests[1]["payload"]["messages"][0]["content"]
+    assert captured[0]["timeout"] == 120
+    assert "not supported by this model" in caplog.text
 
 
 def test_openai_compatible_vision_sends_image_and_strict_schema(monkeypatch):
@@ -297,8 +397,10 @@ def test_openai_compatible_vision_sends_image_and_strict_schema(monkeypatch):
     assert captured["headers"]["Authorization"] == "Bearer test-secret"
     body = captured["body"]
     assert body["temperature"] == 0
+    assert body["max_tokens"] == 8192
+    assert captured["timeout"] == 110
     assert body["response_format"]["json_schema"]["strict"] is True
-    assert body["messages"][1]["content"][1]["image_url"]["url"].startswith("data:image/png;base64,")
+    assert body["messages"][1]["content"][1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
     schema = body["response_format"]["json_schema"]["schema"]
     assert schema["required"] == list(schema["properties"].keys())
     assert schema["additionalProperties"] is False
@@ -315,6 +417,46 @@ def test_openai_compatible_vision_sends_image_and_strict_schema(monkeypatch):
                 assert_no_unsupported_defaults(value)
 
     assert_no_unsupported_defaults(schema)
+
+
+def test_deterministic_generator_exports_scalloped_flange_with_pcd_holes():
+    blueprint = Blueprint(
+        part_name="10-gullet flange",
+        primary_body_type="rotational_flange",
+        base_sketch=BaseSketch(
+            profile="circle",
+            outer_diameter=134,
+            inner_bore_diameter=80,
+            thickness=10,
+        ),
+        features=[
+            Feature(type="radial_cutout_pattern", count=10, radius=15.5, root_radius=63.4),
+            Feature(type="hole_pattern", count=6, pitch_radius=50, diameter=8),
+        ],
+    )
+
+    errors, _warnings = lint(blueprint)
+    assert not errors
+    result = export_blueprint(blueprint)
+
+    assert len(base64.b64decode(result["stepBase64"])) > 100
+    assert len(base64.b64decode(result["stlBase64"])) > 100
+    assert result["metrics"]["solid_count"] == 1
+    assert result["metrics"]["stl_watertight"] is True
+    assert result["metrics"]["bbox_mm"][0] <= 134
+    assert result["metrics"]["bbox_mm"][1] <= 134
+
+
+def test_deterministic_generator_exports_a_concentric_ring_recess():
+    blueprint = Blueprint(
+        part_name="ring step flange",
+        primary_body_type="rotational_flange",
+        base_sketch=BaseSketch(profile="circle", outer_diameter=120, inner_bore_diameter=30, thickness=10),
+        features=[Feature(type="ring_step", diameter=90, inner_diameter=70, depth=2, ring_mode="cut")],
+    )
+    result = export_blueprint(blueprint)
+    assert result["metrics"]["solid_count"] == 1
+    assert result["metrics"]["stl_watertight"] is True
 
 
 def test_deterministic_generator_exports_a_watertight_flange():

@@ -5,6 +5,7 @@ import asyncio
 import base64
 import io
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass
@@ -18,7 +19,10 @@ from pydantic import BaseModel, Field, ValidationError
 from ai3d_designer.drawing_to_cad.blueprint import Blueprint, apply_defaults, lint
 
 MAX_BLUEPRINT_PAGES = 4
-VISION_MAX_SIDE = 1600
+VISION_MAX_SIDE = 2048
+VISION_DEFAULT_TIMEOUT_SECONDS = 110.0
+VISION_MAX_RESPONSE_TOKENS = 8192
+logger = logging.getLogger(__name__)
 DIAMETER_MARKS = {"ø", "Ø", "Φ", "φ", "⌀", "∅"}
 DIMENSION_TOKEN_RE = re.compile(
     r"(?<![A-Za-z0-9])(?P<prefix>[ØøΦφ⌀∅Rr])\s*(?P<number>\d{1,7}(?:[.,]\d{1,4})?)"
@@ -53,12 +57,12 @@ class ExtractionResult(BaseModel):
 
 
 class VisionBackend(Protocol):
-    async def chat_json(self, images_png: list[bytes], system: str, user: str, schema: dict[str, Any]) -> dict[str, Any]: ...
+    async def chat_json(self, images: list[bytes], system: str, user: str, schema: dict[str, Any]) -> dict[str, Any]: ...
 
 
 @dataclass
 class RenderedDrawing:
-    images_png: list[bytes]
+    images: list[bytes]
     source: str
     page_texts: list[str]
     vector_geometry: list[dict[str, Any]]
@@ -73,17 +77,38 @@ For teeth, involute gears, sprocket tooth forms, sheet-metal bends/flanges, thre
 Defaults will be applied by deterministic code and marked for review. Put uncertainties in warnings and set needs_review=true."""
 
 
-class OpenAICompatibleVision:
-    """OpenAI Chat Completions adapter with strict JSON-schema output and image input."""
+def _json_schema_unsupported(status_code: int, body: str) -> bool:
+    """Recognize provider errors that specifically reject strict JSON-schema response format."""
+    if status_code not in {400, 422}:
+        return False
+    message = body.lower()
+    format_reference = any(token in message for token in ("response_format", "json_schema", "json schema", "strict"))
+    rejection = any(token in message for token in ("unsupported", "not supported", "unknown parameter", "unrecognized", "invalid", "not allowed", "does not support"))
+    return format_reference and rejection
 
-    def __init__(self, base_url: str, model: str, api_key: str | None, timeout: float = 38.0):
+
+def _vision_timeout_seconds() -> float:
+    raw = (os.getenv("DRAWING_VISION_TIMEOUT_SECONDS") or str(VISION_DEFAULT_TIMEOUT_SECONDS)).strip()
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ValueError("DRAWING_VISION_TIMEOUT_SECONDS must be a number between 1 and 600") from exc
+    if not 1 <= value <= 600:
+        raise ValueError("DRAWING_VISION_TIMEOUT_SECONDS must be between 1 and 600")
+    return value
+
+
+class OpenAICompatibleVision:
+    """OpenAI Chat Completions adapter; prefers strict schema, retries JSON mode only on schema-format rejection."""
+
+    def __init__(self, base_url: str, model: str, api_key: str | None, timeout: float = VISION_DEFAULT_TIMEOUT_SECONDS):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.api_key = api_key
         self.timeout = timeout
 
     async def chat_json(
-        self, images_png: list[bytes], system: str, user: str, schema: dict[str, Any]
+        self, images: list[bytes], system: str, user: str, schema: dict[str, Any]
     ) -> dict[str, Any]:
         import copy
 
@@ -93,12 +118,8 @@ class OpenAICompatibleVision:
             if isinstance(node, dict):
                 properties = node.get("properties")
                 if isinstance(properties, dict):
-                    # The strict Structured Outputs subset requires every object key
-                    # to be required. Nullable fields remain nullable via their schema.
                     node["required"] = list(properties.keys())
                     node["additionalProperties"] = False
-                # Keep the schema within common Structured Outputs subsets; semantic
-                # range checks are repeated by Pydantic after the response is parsed.
                 node.pop("default", None)
                 node.pop("examples", None)
                 node.pop("exclusiveMinimum", None)
@@ -111,20 +132,21 @@ class OpenAICompatibleVision:
 
         make_strict(strict_schema)
         user_content: list[dict[str, Any]] = [{"type": "text", "text": user}]
-        for image_png in images_png:
-            encoded = base64.b64encode(image_png).decode("ascii")
+        for image_bytes in images:
+            encoded = base64.b64encode(image_bytes).decode("ascii")
             user_content.append(
                 {
                     "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{encoded}", "detail": "high"},
+                    "image_url": {"url": f"data:image/jpeg;base64,{encoded}", "detail": "high"},
                 }
             )
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        payload = {
+        payload: dict[str, Any] = {
             "model": self.model,
             "temperature": 0,
+            "max_tokens": VISION_MAX_RESPONSE_TOKENS,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_content},
@@ -140,7 +162,33 @@ class OpenAICompatibleVision:
         }
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.post(f"{self.base_url}/chat/completions", headers=headers, json=payload)
-            response.raise_for_status()
+            status_code = int(getattr(response, "status_code", 200))
+            if _json_schema_unsupported(status_code, str(getattr(response, "text", ""))):
+                upstream_error = str(getattr(response, "text", ""))[:1200]
+                logger.warning(
+                    "Vision provider rejected strict response_format=json_schema (HTTP %s, model=%s): %s; retrying once with response_format=json_object",
+                    status_code,
+                    self.model,
+                    upstream_error,
+                )
+                payload["response_format"] = {"type": "json_object"}
+                payload["messages"][0]["content"] = (
+                    system
+                    + "\n\nCompatibility fallback: output exactly one valid JSON object. "
+                    + "Do not use Markdown fences or explanatory text."
+                )
+                response = await client.post(f"{self.base_url}/chat/completions", headers=headers, json=payload)
+                status_code = int(getattr(response, "status_code", 200))
+            if status_code >= 400:
+                upstream_error = str(getattr(response, "text", "")).strip()[:1500]
+                logger.error(
+                    "Vision provider request failed (HTTP %s, model=%s, endpoint=%s): %s",
+                    status_code,
+                    self.model,
+                    f"{self.base_url}/chat/completions",
+                    upstream_error or "(empty upstream error body)",
+                )
+                response.raise_for_status()
         choices = response.json().get("choices")
         if not isinstance(choices, list) or not choices:
             raise ValueError("Vision API returned no completion choices")
@@ -155,17 +203,16 @@ class OpenAICompatibleVision:
             raise ValueError("Vision API result must be a JSON object")
         return parsed
 
-
 class OllamaVision:
     """JSON-schema-constrained Ollama chat adapter for a vision-capable model."""
 
-    def __init__(self, base_url: str, model: str, timeout: float = 38.0):
+    def __init__(self, base_url: str, model: str, timeout: float = VISION_DEFAULT_TIMEOUT_SECONDS):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout = timeout
 
     async def chat_json(
-        self, images_png: list[bytes], system: str, user: str, schema: dict[str, Any]
+        self, images: list[bytes], system: str, user: str, schema: dict[str, Any]
     ) -> dict[str, Any]:
         payload = {
             "model": self.model,
@@ -177,7 +224,7 @@ class OllamaVision:
                 {
                     "role": "user",
                     "content": user,
-                    "images": [base64.b64encode(image).decode("ascii") for image in images_png],
+                    "images": [base64.b64encode(image).decode("ascii") for image in images],
                 },
             ],
         }
@@ -208,18 +255,24 @@ def get_vision_backend() -> VisionBackend | None:
     model = (os.getenv("DRAWING_VISION_MODEL") or os.getenv("VISION_MODEL") or "qwen2.5vl:7b").strip()
     if not model:
         return None
+    timeout = _vision_timeout_seconds()
     if provider == "ollama":
-        return OllamaVision(base_url, model)
+        return OllamaVision(base_url, model, timeout=timeout)
     api_key = os.getenv("DRAWING_VISION_API_KEY", "").strip() or None
-    return OpenAICompatibleVision(base_url, model, api_key)
+    return OpenAICompatibleVision(base_url, model, api_key, timeout=timeout)
 
 
-def _fit_png(image_bytes: bytes) -> bytes:
+def _prepare_vision_image(image_bytes: bytes) -> bytes:
+    """Resize and compress drawings to high-quality JPEG for vision transport.
+
+    The 2048 px maximum side preserves callout detail; 4:4:4 chroma sampling and
+    quality 92 avoid the softness associated with aggressively compressed text.
+    """
     with Image.open(io.BytesIO(image_bytes)) as opened:
         image = ImageOps.exif_transpose(opened).convert("RGB")
-        image.thumbnail((VISION_MAX_SIDE, VISION_MAX_SIDE))
+        image.thumbnail((VISION_MAX_SIDE, VISION_MAX_SIDE), Image.Resampling.LANCZOS)
         buffer = io.BytesIO()
-        image.save(buffer, format="PNG", optimize=True)
+        image.save(buffer, format="JPEG", quality=92, optimize=True, progressive=True, subsampling=0)
         return buffer.getvalue()
 
 
@@ -237,7 +290,7 @@ def _render_drawing(data: bytes, file_name: str, mime_type: str) -> RenderedDraw
                 texts: list[str] = []
                 vector_geometry: list[dict[str, Any]] = []
                 vector_pages = 0
-                scale = 144 / 72
+                scale = 180 / 72
                 for page_number, page in enumerate(document, start=1):
                     words = page.get_text("words")
                     if len(words) >= 5:
@@ -273,7 +326,7 @@ def _render_drawing(data: bytes, file_name: str, mime_type: str) -> RenderedDraw
                                 }
                             )
                     pixmap = page.get_pixmap(matrix=pymupdf.Matrix(scale, scale), alpha=False)
-                    pages.append(_fit_png(pixmap.tobytes("png")))
+                    pages.append(_prepare_vision_image(pixmap.tobytes("png")))
                 source = "vector_pdf" if vector_pages else "scanned_pdf"
                 return RenderedDrawing(pages, source, texts, vector_geometry)
         except Exception as exc:
@@ -290,7 +343,7 @@ def _render_drawing(data: bytes, file_name: str, mime_type: str) -> RenderedDraw
                 raise ValueError("Drawing image exceeds the 24-megapixel processing limit")
             buffer = io.BytesIO()
             image.save(buffer, format="PNG")
-            png = _fit_png(buffer.getvalue())
+            png = _prepare_vision_image(buffer.getvalue())
     except Exception as exc:
         if isinstance(exc, ValueError):
             raise
@@ -323,6 +376,8 @@ def _dimension_inventory(
         key = (normalized_kind, round(numeric, 4))
         if key in keys:
             existing = keys[key]
+            if len(raw) > len(existing.raw):
+                existing.raw = raw
             if existing.page is None and page is not None:
                 existing.page = max(1, min(page, MAX_BLUEPRINT_PAGES))
                 existing.x = x
@@ -376,6 +431,7 @@ def _dimension_inventory(
     # Labels are strong semantic evidence and also let the half-PCD grounding rule work.
     for labels, kind in (
         (["outer diameter", "outside diameter", "outer dia", "od"], "diameter"),
+        (["outer radius", "outside radius", "root radius", "root circle radius", "dedendum radius", "gullet radius", "radial cutout radius", "cutout radius", "notch radius"], "radius"),
         (["inner bore diameter", "bore diameter", "bore dia", "inner diameter", "id"], "diameter"),
         (["pitch circle diameter", "pitch circle dia", "pcd", "bcd", "bolt circle diameter"], "diameter"),
         (["hole diameter", "hole dia", "dia of holes"], "diameter"),
@@ -384,9 +440,9 @@ def _dimension_inventory(
         (["overall thickness", "plate thickness", "thickness", "thk", "height"], "linear"),
         (["wall thickness", "sheet thickness"], "linear"),
     ):
-        value = _labeled_value(raw_text, labels)
+        value = _labeled_radius_value(raw_text, labels) if kind == "radius" else _labeled_value(raw_text, labels)
         if value is not None:
-            add(value, f"{labels[0]} {value:g} mm", kind)
+            add(value, f"{labels[0]} R{value:g}" if kind == "radius" else f"{labels[0]} {value:g} mm", kind)
 
     # Add explicitly marked Ø/R/angle/unit-bearing values from native text and OCR.
     # Bare title-block numbers are deliberately not treated as dimensions.
@@ -417,6 +473,7 @@ def _dimension_inventory(
     if isinstance(page_texts, list):
         labels = (
             (["outer diameter", "outside diameter", "outer dia", "od"], "diameter"),
+            (["outer radius", "outside radius", "root radius", "root circle radius", "dedendum radius", "gullet radius", "radial cutout radius", "cutout radius", "notch radius"], "radius"),
             (["inner bore diameter", "bore diameter", "bore dia", "inner diameter", "id"], "diameter"),
             (["pitch circle diameter", "pitch circle dia", "pcd", "bcd", "bolt circle diameter"], "diameter"),
             (["hole diameter", "hole dia", "dia of holes"], "diameter"),
@@ -440,9 +497,10 @@ def _dimension_inventory(
             for match in ANGLE_TOKEN_RE.finditer(page_text[:20_000]):
                 add(float(match.group("number").replace(",", ".")), match.group(0).strip(), "angle", page=page_index)
             for field_labels, kind in labels:
-                value = _labeled_value(page_text, list(field_labels))
+                value = _labeled_radius_value(page_text, list(field_labels)) if kind == "radius" else _labeled_value(page_text, list(field_labels))
                 if value is not None:
-                    add(value, f"{field_labels[0]} {value:g} mm", kind, page=page_index)
+                    raw_dimension = f"{field_labels[0]} R{value:g}" if kind == "radius" else f"{field_labels[0]} {value:g} mm"
+                    add(value, raw_dimension, kind, page=page_index)
 
     return found[:200]
 
@@ -521,7 +579,15 @@ def ground_blueprint(bp: Blueprint, inventory: list[DimensionToken]) -> list[str
     }
     for name, allowed_kinds in sketch_kinds.items():
         value = getattr(sketch, name)
-        if not _is_grounded(value, inventory, allowed_kinds=allowed_kinds):
+        grounded = _is_grounded(value, inventory, allowed_kinds=allowed_kinds)
+        if name == "outer_diameter" and value is not None and not grounded:
+            grounded = any(
+                token.kind == "radius"
+                and re.search(r"\b(?:outer|outside)\s+radius\b", token.raw, re.IGNORECASE)
+                and abs(value - 2 * token.value) <= max(0.02, abs(token.value * 2) * 0.001)
+                for token in inventory
+            )
+        if not grounded:
             setattr(sketch, name, None)
             cleared.append(f"base_sketch.{name}={value:g}")
 
@@ -556,6 +622,8 @@ def ground_blueprint(bp: Blueprint, inventory: list[DimensionToken]) -> list[str
 
     feature_kinds = {
         "diameter": {"diameter"},
+        "inner_diameter": {"diameter"},
+        "root_radius": {"radius"},
         "length": {"linear"},
         "width": {"linear"},
         "depth": {"linear"},
@@ -589,6 +657,24 @@ def ground_blueprint(bp: Blueprint, inventory: list[DimensionToken]) -> list[str
     return cleared
 
 
+def _labeled_radius_value(text: str, labels: list[str]) -> float | None:
+    """Read an explicitly labelled radius such as 'root radius R63.4'."""
+    label_group = "(?:" + "|".join(re.escape(label) for label in labels) + ")"
+    number = r"(\d{1,7}(?:[.,]\d{1,4})?)"
+    match = re.search(
+        rf"(?<![A-Za-z]){label_group}(?![A-Za-z])\s*(?:[:=]|is|of)?\s*R\s*{number}\b",
+        text[:50_000],
+        re.IGNORECASE,
+    )
+    if not match:
+        match = re.search(
+            rf"(?<![A-Za-z])R\s*{number}\s*(?:mm\s*)?{label_group}(?![A-Za-z])",
+            text[:50_000],
+            re.IGNORECASE,
+        )
+    return float(match.group(1).replace(",", ".")) if match else None
+
+
 def _labeled_value(text: str, labels: list[str]) -> float | None:
     """Return a number only when adjacent to a recognized dimension label."""
     label_group = "(?:" + "|".join(re.escape(label) for label in labels) + ")"
@@ -614,12 +700,64 @@ def _labeled_value(text: str, labels: list[str]) -> float | None:
 def _heuristic_blueprint(raw_text: str, inventory: list[DimensionToken]) -> Blueprint:
     """No vision configured: only use explicit labels; never infer a shape from random OCR numbers."""
     text = raw_text.lower()
-    if re.search(r"\b(sprocket|gear|involute|teeth|toothed|serration|serrated)\b", text):
+    if re.search(r"\b(sprocket|scalloped flange)\b", text):
+        # Explicitly dimensioned circular gulleys are supported; this is not involute gear geometry.
+        outer_diameter = _labeled_value(raw_text, ["outer diameter", "outside diameter", "outer dia", "od"])
+        outer_radius = _labeled_radius_value(raw_text, ["outer radius", "outside radius"])
+        if outer_diameter is None and outer_radius is not None:
+            outer_diameter = 2 * outer_radius
+        bore = _labeled_value(raw_text, ["inner bore diameter", "bore diameter", "bore dia", "inner diameter", "id"])
+        thickness = _labeled_value(raw_text, ["overall thickness", "plate thickness", "thickness", "thk", "height"])
+        root_radius = _labeled_radius_value(raw_text, ["root radius", "root circle radius", "dedendum radius"])
+        gullet_radius = _labeled_radius_value(raw_text, ["gullet radius", "radial cutout radius", "cutout radius", "notch radius"])
+        teeth_match = re.search(r"\b(\d{1,3})\s*(?:equally spaced\s*)?(?:teeth|tooth|gullets|notches)\b", text)
+        features: list[dict[str, Any]] = []
+        unsupported: list[str] = []
+        if outer_diameter and root_radius and gullet_radius and teeth_match:
+            features.append({
+                "type": "radial_cutout_pattern",
+                "count": int(teeth_match.group(1)),
+                "radius": gullet_radius,
+                "root_radius": root_radius,
+            })
+        else:
+            unsupported.append(
+                "Scalloped perimeter needs a labelled outer diameter/outer radius, root radius, gullet radius and tooth/gullet count; inspect the drawing and complete these fields before export."
+            )
+        pcd = _labeled_value(raw_text, ["pitch circle diameter", "pitch circle dia", "pcd", "bcd", "bolt circle diameter"])
+        hole_diameter = _labeled_value(raw_text, ["hole diameter", "hole dia", "hole Ø", "dia of holes"])
+        holes_match = re.search(r"\b(\d{1,3})\s*(?:x\s*)?(?:equally spaced\s*)?(?:holes|hole|positions)\b", text)
+        if pcd and hole_diameter and holes_match:
+            features.append({
+                "type": "hole_pattern",
+                "count": int(holes_match.group(1)),
+                "pitch_radius": pcd / 2,
+                "diameter": hole_diameter,
+                "start_angle": 0.0,
+            })
+        return Blueprint(
+            part_name="scalloped flange",
+            primary_body_type="rotational_flange",
+            base_sketch={
+                "profile": "circle",
+                "outer_diameter": outer_diameter,
+                "inner_bore_diameter": bore,
+                "thickness": thickness,
+            },
+            features=features,
+            unsupported_geometry=unsupported,
+            warnings=[
+                "Vision model is not configured. Only explicitly labelled dimensions were used; this scalloped profile does not represent an involute gear tooth."
+            ],
+            needs_review=True,
+        )
+
+    if re.search(r"\b(gear|involute|toothed|serration|serrated)\b", text):
         return Blueprint(
             part_name="unresolved toothed part",
             primary_body_type=None,
             unsupported_geometry=[
-                "Sprocket/gear teeth or serrations are outside the v1 deterministic generator; a dedicated tooth/profile definition is required."
+                "Involute gear teeth or non-circular tooth profiles are not represented by radial circular cutouts; a specified tooth/profile definition is required."
             ],
             warnings=["No vision model was configured. The image cannot be semantically interpreted from OCR text alone."],
             needs_review=True,
@@ -722,25 +860,36 @@ async def extract_blueprint(
     """Render all supported pages, optionally call a VLM, and ground numeric fields."""
     rendered = await asyncio.to_thread(_render_drawing, file_bytes, file_name, mime_type)
     inventory_data = {**dimension_data, "pageTexts": rendered.page_texts}
-    inventory = _dimension_inventory(raw_text, inventory_data, len(rendered.images_png))
+    inventory = _dimension_inventory(raw_text, inventory_data, len(rendered.images))
     if vision is None:
         vision = get_vision_backend()
 
     vision_model: str | None = None
     if vision is not None:
         try:
-            blueprint = await _extract_with_vision(vision, rendered.images_png, inventory, len(rendered.images_png), rendered.vector_geometry)
+            blueprint = await _extract_with_vision(vision, rendered.images, inventory, len(rendered.images), rendered.vector_geometry)
             vision_model = getattr(vision, "model", type(vision).__name__)
         except (httpx.HTTPError, TimeoutError, ValueError, ValidationError) as exc:
+            if isinstance(exc, httpx.HTTPStatusError):
+                body = str(getattr(exc.response, "text", "")).strip()[:1500]
+                status = getattr(exc.response, "status_code", "unknown")
+                detail = f"HTTP {status}: {body or str(exc)}"
+            elif isinstance(exc, httpx.TimeoutException):
+                request = getattr(exc, "request", None)
+                endpoint = str(getattr(request, "url", "(URL unavailable)"))
+                detail = f"{type(exc).__name__} after {getattr(vision, 'timeout', VISION_DEFAULT_TIMEOUT_SECONDS):g}s at {endpoint}"
+            else:
+                detail = f"{type(exc).__name__}: {str(exc)[:1200]}"
+            logger.warning("Drawing vision extraction failed for model %s: %s", getattr(vision, "model", type(vision).__name__), detail)
             blueprint = _heuristic_blueprint(raw_text, inventory)
             blueprint.warnings.append(
-                f"Vision extraction failed ({type(exc).__name__}); a conservative text-only fallback was used."
+                f"Vision extraction failed ({detail[:420]}); a conservative text-only fallback was used."
             )
             blueprint.needs_review = True
     else:
         blueprint = _heuristic_blueprint(raw_text, inventory)
 
-    blueprint.source_pages = list(range(1, len(rendered.images_png) + 1))
+    blueprint.source_pages = list(range(1, len(rendered.images) + 1))
     cleared = ground_blueprint(blueprint, inventory)
     defaults = apply_defaults(blueprint)
     errors, warnings = lint(blueprint)
@@ -758,7 +907,7 @@ async def extract_blueprint(
     return ExtractionResult(
         blueprint=blueprint,
         source=rendered.source,
-        source_pages=len(rendered.images_png),
+        source_pages=len(rendered.images),
         dimension_inventory=inventory,
         cleared_fields=cleared,
         vector_geometry=rendered.vector_geometry,

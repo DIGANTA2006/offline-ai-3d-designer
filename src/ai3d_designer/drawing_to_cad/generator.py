@@ -24,6 +24,7 @@ from build123d import (
     extrude,
     fillet,
     revolve,
+    add,
 )
 
 from ai3d_designer.drawing_to_cad.blueprint import Blueprint, apply_defaults, lint
@@ -99,17 +100,47 @@ def _select_edges(part: Any, scope: str, height: float) -> list[Any]:
     return [edge for edge in edges if abs(edge.center().Z - z) < EPS]
 
 
+def _ring_step(feature: Any, height: float) -> None:
+    """Build an annular tool so a ring recess does not fill the central bore."""
+    depth = float(feature.depth or 0.0)
+    z0 = height - depth if feature.ring_mode == "cut" else height
+    with BuildPart() as annulus:
+        with Locations((0.0, 0.0, z0)):
+            Cylinder(radius=feature.diameter / 2, height=depth, align=BOTTOM)
+            Cylinder(radius=feature.inner_diameter / 2, height=depth, align=BOTTOM, mode=Mode.SUBTRACT)
+    add(annulus.part, mode=Mode.SUBTRACT if feature.ring_mode == "cut" else Mode.ADD)
+
+
 def _apply_features(part: Any, blueprint: Blueprint, height: float) -> None:
+    outer_radius = blueprint.base_sketch.outer_diameter / 2 if blueprint.base_sketch.outer_diameter else None
     for index, feature in enumerate(blueprint.features, start=1):
         if feature.type == "through_hole":
             _cut_cylinder(feature.x, feature.y, feature.diameter, height, feature.depth)
-        elif feature.type == "circular_pattern_cut":
+        elif feature.type in {"circular_pattern_cut", "hole_pattern"}:
             step = 360.0 / feature.count
             for number in range(feature.count):
                 angle = math.radians(feature.start_angle + number * step)
                 x = feature.x + feature.pitch_radius * math.cos(angle)
                 y = feature.y + feature.pitch_radius * math.sin(angle)
                 _cut_cylinder(x, y, feature.diameter, height, feature.depth)
+        elif feature.type == "radial_cutout_pattern":
+            if outer_radius is None or feature.radius is None:
+                raise GeometryError(f"Feature {index}: radial cutouts need a flange radius and cutout radius")
+            centre_radius = (
+                outer_radius + feature.radius - feature.root_radius
+                if feature.root_radius is not None
+                else feature.pitch_radius
+            )
+            if centre_radius is None or centre_radius <= 0:
+                raise GeometryError(f"Feature {index}: radial cutout centre radius cannot be resolved")
+            step = 360.0 / feature.count
+            for number in range(feature.count):
+                angle = math.radians(feature.start_angle + number * step)
+                x = feature.x + centre_radius * math.cos(angle)
+                y = feature.y + centre_radius * math.sin(angle)
+                _cut_cylinder(x, y, 2 * feature.radius, height, None)
+        elif feature.type == "ring_step":
+            _ring_step(feature, height)
         elif feature.type == "pocket":
             if feature.diameter:
                 _cut_cylinder(feature.x, feature.y, feature.diameter, height, feature.depth)
@@ -178,7 +209,16 @@ def validate_solid(solid: Part, blueprint: Blueprint) -> dict[str, Any]:
     sketch = blueprint.base_sketch
     expected: tuple[float, float] | None = None
     if blueprint.primary_body_type == "rotational_flange" and sketch.outer_diameter:
-        expected = (sketch.outer_diameter, sketch.outer_diameter)
+        has_perimeter_cutouts = any(feature.type == "radial_cutout_pattern" for feature in blueprint.features)
+        if has_perimeter_cutouts:
+            expected = None
+            target = float(sketch.outer_diameter)
+            tolerance = max(0.02, 0.005 * target)
+            for actual in (size.X, size.Y):
+                if actual > target + tolerance:
+                    raise GeometryError(f"Scalloped flange extent {actual:.3f} mm exceeds outer diameter {target:.3f} mm")
+        else:
+            expected = (sketch.outer_diameter, sketch.outer_diameter)
     elif blueprint.primary_body_type in {"prismatic_box", "sheet_enclosure"} and sketch.profile == "rectangle":
         expected = (sketch.length, sketch.width)
     if expected:
