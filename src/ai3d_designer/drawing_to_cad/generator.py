@@ -24,7 +24,7 @@ from build123d import (
     extrude,
     fillet,
     revolve,
-    add,
+    insert,
 )
 
 from ai3d_designer.drawing_to_cad.blueprint import Blueprint, apply_defaults, lint
@@ -108,7 +108,7 @@ def _ring_step(feature: Any, height: float) -> None:
         with Locations((0.0, 0.0, z0)):
             Cylinder(radius=feature.diameter / 2, height=depth, align=BOTTOM)
             Cylinder(radius=feature.inner_diameter / 2, height=depth, align=BOTTOM, mode=Mode.SUBTRACT)
-    add(annulus.part, mode=Mode.SUBTRACT if feature.ring_mode == "cut" else Mode.ADD)
+    insert(annulus.part, mode=Mode.SUBTRACT if feature.ring_mode == "cut" else Mode.ADD)
 
 
 def _apply_features(part: Any, blueprint: Blueprint, height: float) -> None:

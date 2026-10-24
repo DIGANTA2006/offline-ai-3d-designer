@@ -1,6 +1,7 @@
 """Typed, unit-normalized drawing blueprint with explicit defaults and linting."""
 from __future__ import annotations
 
+import math
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
