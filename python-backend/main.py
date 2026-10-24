@@ -17,7 +17,7 @@ load_dotenv()
 
 from fastapi import Depends, FastAPI, File, UploadFile, Form, Header, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 import uvicorn
 
@@ -45,6 +45,7 @@ from ai3d_designer.ocr.pipeline import (
 from ai3d_designer.drawing_to_cad.blueprint import Blueprint
 from ai3d_designer.drawing_to_cad.extraction import extract_blueprint
 from ai3d_designer.drawing_to_cad.generator import GeometryError, export_blueprint
+from ai3d_designer.slicing.slicer import SliceSettings, Slicer, get_slicing_capability
 
 
 # =============================================================================
@@ -63,6 +64,9 @@ class HealthResponse(BaseModel):
     ocrAvailable: bool = False
     drawingVisionAvailable: bool = False
     imageTo3dAvailable: bool = False
+    slicingAvailable: bool = False
+    slicingEngine: Optional[str] = None
+    slicingStatusReason: Optional[str] = None
     limitations: list[str] = Field(default_factory=list)
 
 
@@ -87,6 +91,18 @@ class OcrRequest(BaseModel):
     fileBase64: str = Field(min_length=4, max_length=7_100_000)
     fileName: str = Field(min_length=1, max_length=200)
     mimeType: str = Field(min_length=3, max_length=100)
+
+
+class SliceSettingsRequest(BaseModel):
+    layer_height: float = Field(default=0.2, gt=0, le=1.0)
+    wall_thickness: float = Field(default=1.2, gt=0, le=40.0)
+    infill_density: float = Field(default=20.0, ge=0, le=100)
+    support_enabled: bool = False
+
+
+class SliceRequest(BaseModel):
+    stlBase64: str = Field(min_length=8, max_length=28 * 1024 * 1024)
+    settings: SliceSettingsRequest = Field(default_factory=SliceSettingsRequest)
 
 
 class ExtractedSpec(BaseModel):
@@ -275,6 +291,7 @@ async def health():
     vision_available = bool(vision_url) and vision_provider in {
         "ollama", "openai", "openai_compatible", "openai-compatible"
     }
+    slicing_capability = get_slicing_capability()
     limitations = [
         "Drawing OCR recognizes text and common annotations; it does not guarantee reconstruction of arbitrary 3D geometry from drawing views.",
         "The v1 deterministic generator supports a limited set of primitive/mechanical features; teeth, bends, threads and other unsupported shapes are blocked rather than approximated.",
@@ -284,6 +301,8 @@ async def health():
         limitations.append(
             "No vision model endpoint is configured. Structured extraction uses conservative explicit-label fallback; configure DRAWING_VISION_URL and DRAWING_VISION_MODEL for visual semantic extraction."
         )
+    if not slicing_capability["available"]:
+        limitations.append("STL slicing is unavailable: " + str(slicing_capability["reason"]))
     return HealthResponse(
         status=status,
         cadAvailable=ready,
@@ -293,6 +312,9 @@ async def health():
         ocrAvailable=ocr_available,
         drawingVisionAvailable=vision_available,
         imageTo3dAvailable=False,
+        slicingAvailable=bool(slicing_capability["available"]),
+        slicingEngine=slicing_capability["engine"],
+        slicingStatusReason=slicing_capability["reason"],
         limitations=limitations,
     )
 
@@ -382,6 +404,62 @@ async def ocr_extract(request: OcrRequest):
     except Exception as exc:
         print(f"OCR extraction failed for job {job_id}: {type(exc).__name__}: {exc}")
         raise HTTPException(status_code=500, detail="Drawing extraction failed unexpectedly. Check service logs.") from exc
+
+
+
+@app.post("/api/v1/slice", dependencies=[Depends(require_cad_service_token)])
+def slice_stl(request: SliceRequest):
+    """Slice a validated STL using CuraEngine; return G-code only on real success."""
+    capability = get_slicing_capability()
+    if not capability["available"]:
+        raise HTTPException(
+            status_code=503,
+            detail=str(capability["reason"] or "A compatible CuraEngine installation is not available."),
+        )
+
+    try:
+        stl_bytes = base64.b64decode(request.stlBase64, validate=True)
+    except (ValueError, base64.binascii.Error) as exc:
+        raise HTTPException(status_code=400, detail="stlBase64 must be valid standard Base64.") from exc
+    if not stl_bytes or len(stl_bytes) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="STL must be non-empty and no larger than 20 MiB.")
+
+    with tempfile.TemporaryDirectory(prefix="offline-ai-slice-") as work_dir:
+        stl_path = os.path.join(work_dir, "input.stl")
+        gcode_path = os.path.join(work_dir, "output.gcode")
+        with open(stl_path, "wb") as handle:
+            handle.write(stl_bytes)
+
+        settings = SliceSettings(**request.settings.model_dump())
+        result = Slicer().slice(stl_path, gcode_path, settings=settings, timeout_seconds=45.0)
+        if not result.success or not result.gcode_path:
+            detail = "; ".join(result.errors)[:1500] or "CuraEngine did not produce a valid G-code file."
+            lowered = detail.lower()
+            invalid_model_markers = ("watertight", "empty", "invalid", "exceed configured build volume", "could not validate stl")
+            status_code = 422 if any(marker in lowered for marker in invalid_model_markers) else 502
+            raise HTTPException(status_code=status_code, detail=detail)
+
+        with open(result.gcode_path, "rb") as handle:
+            gcode_bytes = handle.read()
+        if not gcode_bytes:
+            raise HTTPException(status_code=502, detail="CuraEngine returned an empty G-code file.")
+
+        headers = {
+            "Content-Disposition": 'attachment; filename="model.gcode"',
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+            "X-Slice-Engine": str(capability["engine"] or "CuraEngine"),
+            "X-Slice-Filament-Grams-Estimated": "true" if result.filament_weight_estimated else "false",
+        }
+        if result.print_time is not None:
+            headers["X-Slice-Print-Time-Seconds"] = str(round(result.print_time, 2))
+        if result.filament_used is not None:
+            headers["X-Slice-Filament-Grams"] = str(round(result.filament_used, 3))
+        if result.filament_length_m is not None:
+            headers["X-Slice-Filament-Meters"] = str(round(result.filament_length_m, 4))
+        if result.layers is not None:
+            headers["X-Slice-Layers"] = str(result.layers)
+        return Response(content=gcode_bytes, media_type="text/x-gcode", headers=headers)
 
 
 @app.post("/api/v1/generate", response_model=GenerationResponse, dependencies=[Depends(require_cad_service_token)])
