@@ -187,6 +187,7 @@ export async function POST(request: Request, { params }: Context) {
   if (!user) return NextResponse.json({ error: "Sign in before slicing an STL file." }, { status: 401 });
 
   let timeout: ReturnType<typeof setTimeout> | undefined;
+  let streamOwnsTimeout = false;
   try {
     const { projectId } = await params;
     await assertSliceAccess(user);
@@ -254,8 +255,50 @@ export async function POST(request: Request, { params }: Context) {
     if (!contentType.includes("gcode")) {
       throw new RouteError("The CAD backend did not return a validated G-code file.", 502);
     }
-    const gcodeBytes = await readLimitedStream(upstream.body, MAX_GCODE_BYTES);
-    if (!gcodeBytes.length) throw new RouteError("The CAD backend returned an empty G-code file.", 502);
+    const statedLength = Number(upstream.headers.get("content-length") ?? 0);
+    if (statedLength > MAX_GCODE_BYTES) {
+      throw new RouteError("The generated G-code exceeds the 40 MiB download limit.", 502);
+    }
+    if (!upstream.body) throw new RouteError("The CAD backend returned an empty G-code response.", 502);
+
+    // Stream G-code instead of buffering the whole file in a Vercel function. Keep
+    // the upstream timeout active until the browser consumes or cancels the stream.
+    const upstreamReader = upstream.body.getReader();
+    let streamedBytes = 0;
+    const gcodeStream = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        try {
+          const { done, value } = await upstreamReader.read();
+          if (done) {
+            if (timeout) clearTimeout(timeout);
+            timeout = undefined;
+            controller.close();
+            return;
+          }
+          streamedBytes += value.byteLength;
+          if (streamedBytes > MAX_GCODE_BYTES) {
+            await upstreamReader.cancel("Generated G-code exceeded the download limit.").catch(() => undefined);
+            if (timeout) clearTimeout(timeout);
+            timeout = undefined;
+            controller.error(new Error("The generated G-code exceeds the 40 MiB download limit."));
+            return;
+          }
+          controller.enqueue(value);
+        } catch (error) {
+          if (timeout) clearTimeout(timeout);
+          timeout = undefined;
+          controller.error(error);
+        }
+      },
+      async cancel(reason) {
+        try {
+          await upstreamReader.cancel(reason);
+        } finally {
+          if (timeout) clearTimeout(timeout);
+          timeout = undefined;
+        }
+      },
+    });
 
     const headers = new Headers({
       "Content-Type": "text/x-gcode; charset=utf-8",
@@ -275,7 +318,8 @@ export async function POST(request: Request, { params }: Context) {
       if (value !== null && /^[A-Za-z0-9 ._-]{1,120}$/.test(value)) headers.set(name, value);
     }
 
-    return new Response(gcodeBytes, { status: 200, headers });
+    streamOwnsTimeout = true;
+    return new Response(gcodeStream, { status: 200, headers });
   } catch (error) {
     if (error instanceof RouteError) return NextResponse.json({ error: error.message }, { status: error.status });
     if (error instanceof Error && error.name === "AbortError") {
@@ -284,6 +328,6 @@ export async function POST(request: Request, { params }: Context) {
     console.error("Project STL slicing failed.", error);
     return NextResponse.json({ error: "Could not slice this STL. Check CAD backend health and slicer logs." }, { status: 500 });
   } finally {
-    if (timeout) clearTimeout(timeout);
+    if (timeout && !streamOwnsTimeout) clearTimeout(timeout);
   }
 }
