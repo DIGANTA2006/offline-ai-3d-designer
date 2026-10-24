@@ -182,6 +182,19 @@ export async function POST(request: Request, { params }: Context) {
     if (reviewedBlueprint && (!storedBlueprint || typeof storedBlueprint !== "object" || Array.isArray(storedBlueprint))) {
       throw new RouteError("This drawing has no saved structured blueprint. Click Analyze again before editing blueprint fields.", 409);
     }
+    // Do not let a client silently erase an extraction-time unsupported-geometry flag.
+    if (
+      storedBlueprint &&
+      typeof storedBlueprint === "object" &&
+      !Array.isArray(storedBlueprint) &&
+      Array.isArray((storedBlueprint as Record<string, unknown>).unsupported_geometry) &&
+      ((storedBlueprint as Record<string, unknown>).unsupported_geometry as unknown[]).length > 0
+    ) {
+      throw new RouteError(
+        "The source drawing was flagged with unsupported geometry. A simplified STEP/STL export is blocked; use a generator that explicitly models those features.",
+        422,
+      );
+    }
     const rawSources = storedSpec.uploadedFiles;
     const source = Array.isArray(rawSources) ? rawSources[fileIndex] as Partial<StoredSource> | undefined : undefined;
     if (!source || typeof source.name !== "string") throw new RouteError("Source file metadata is invalid.", 422);
