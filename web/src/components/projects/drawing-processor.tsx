@@ -50,6 +50,7 @@ type Blueprint = {
 type OCRSpec = {
   blueprint?: Blueprint | null;
   dimensionInventory?: Array<{ id: string; raw: string; value: number; kind: string; page: number }>;
+  vectorGeometry?: Array<{ page: number; kind: string; center_x_pt: number; center_y_pt: number; width_pt: number; height_pt: number; curve_segments?: number }>;
   blueprintSource?: string;
   blueprintSourcePages?: number;
   blueprintClearedFields?: string[];
@@ -537,6 +538,20 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
                   Numeric values not grounded in drawing text are cleared and highlighted. Defaulted heights/walls are highlighted. Editing a value is an explicit override, not proof that it matches the drawing.
                 </p>
               </section>
+            )}
+
+            {currentResult.vectorGeometry && currentResult.vectorGeometry.length > 0 && (
+              <details className="rounded-md border p-3">
+                <summary className="cursor-pointer text-sm font-medium">Vector PDF geometry candidates ({currentResult.vectorGeometry.length})</summary>
+                <p className="mt-1 text-xs text-muted-foreground">These are path-shape candidates measured in PDF points, not confirmed CAD features or millimetre dimensions.</p>
+                <div className="mt-2 max-h-40 overflow-auto text-xs">
+                  {currentResult.vectorGeometry.map((item, i) => (
+                    <p key={String(i) + "-" + item.page + "-" + item.kind} className="py-1 text-muted-foreground">
+                      Page {item.page}: {item.kind}, {item.width_pt} × {item.height_pt} pt, center ({item.center_x_pt}, {item.center_y_pt})
+                    </p>
+                  ))}
+                </div>
+              </details>
             )}
 
             {currentResult.dimensionInventory && currentResult.dimensionInventory.length > 0 && (
