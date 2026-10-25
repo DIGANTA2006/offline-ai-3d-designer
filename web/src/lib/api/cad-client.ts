@@ -12,17 +12,43 @@ export interface OcrRequest {
   mimeType: string;
 }
 
+export interface DimensionCandidate {
+  value: number;
+  unit: string;
+  kind: string;
+  raw: string;
+  tolerance?: string | null;
+}
+
+export interface DimensionTripleCandidate {
+  values: number[];
+  unit: string;
+  raw: string;
+  interpretation: string;
+}
+
 export interface ExtractedSpec {
-  dimensions: Record<string, number>;
-  tolerances: Record<string, { nominal: number; upper: number; lower: number }>;
-  fits: Array<{ feature: string; type: "clearance" | "interference" | "transition"; shaft: number; hole: number }>;
-  material?: string;
-  surfaceFinish?: string;
-  threads?: Array<{ designation: string; pitch: number; class: string }>;
-  views: Array<{ name: string; bounds: [number, number, number, number] }>;
+  dimensions: {
+    candidates?: DimensionCandidate[];
+    dimensionTriples?: DimensionTripleCandidate[];
+    pageCount?: number;
+    sourceFileName?: string;
+    [key: string]: unknown;
+  };
+  tolerances: {
+    numericCandidates?: string[];
+    fitCandidates?: string[];
+    [key: string]: unknown;
+  };
+  fits: string[];
+  material?: string | null;
+  surfaceFinish?: string | null;
+  threads: string[];
+  views: Array<{ page?: number; text?: string; confidence?: number; label?: string }>;
   annotations: string[];
   confidence: number;
   rawText: string;
+
 }
 
 export interface OcrResponse {

@@ -190,69 +190,50 @@ def _validate_step(file_path: str) -> tuple[List[str], List[str]]:
 
 
 def _validate_stl(file_path: str) -> tuple[List[str], List[str]]:
-    """Validate STL file using trimesh and manifold3d."""
-    errors = []
-    warnings = []
-    
+    """Validate exported STL as a non-empty, watertight, positive-volume solid."""
+    errors: List[str] = []
+    warnings: List[str] = []
+
     try:
-        if not os.path.exists(file_path):
-            errors.append("STL file not created")
-            return errors, warnings
-        
+        if not os.path.isfile(file_path):
+            return ["STL file not created"], warnings
         if os.path.getsize(file_path) == 0:
-            errors.append("STL file is empty")
-            return errors, warnings
-        
-        # Load with trimesh
-        mesh = trimesh.load(file_path, force='mesh')
-        
+            return ["STL file is empty"], warnings
+
+        mesh = trimesh.load(file_path, force="mesh")
         if mesh.is_empty:
-            errors.append("STL mesh is empty")
-            return errors, warnings
-        
-        # Check for degenerate faces
-        if len(mesh.faces) == 0:
-            errors.append("STL has no faces")
-        
-        # Check for non-manifold edges
+            return ["STL mesh is empty"], warnings
+        if len(mesh.faces) == 0 or len(mesh.vertices) == 0:
+            return ["STL has no usable triangles or vertices"], warnings
+        if not np.isfinite(np.asarray(mesh.vertices)).all():
+            errors.append("STL contains non-finite vertex coordinates.")
         if not mesh.is_watertight:
-            warnings.append("STL mesh is not watertight (may have open edges)")
-        
-        # Check for degenerate triangles
-        face_areas = mesh.area_faces
-        if len(face_areas) > 0:
-            degenerate_count = sum(1 for a in face_areas if a < 1e-10)
-            if degenerate_count > 0:
-                warnings.append(f"STL has {degenerate_count} degenerate faces")
-        
-        # Validate with manifold3d - convert arrays to proper format
-        try:
-            vertices = np.asarray(mesh.vertices, dtype=np.float32, order='C')
-            faces = np.asarray(mesh.faces, dtype=np.uint32, order='C')
-            
-            m3d_mesh = manifold3d.Mesh(vert_properties=vertices, tri_verts=faces)
-            manifold = manifold3d.Manifold.from_mesh(m3d_mesh)
-            
-            if manifold.status() != manifold3d.Error.NoError:
-                warnings.append(f"Manifold status: {manifold.status()}")
-            
-            # Check if manifold is valid (not empty)
-            if manifold.is_empty():
-                warnings.append("Manifold is empty (may indicate invalid geometry)")
-            else:
-                # Check volume
-                vol = manifold.get_volume()
-                if vol <= 0:
-                    warnings.append("Manifold has zero or negative volume")
-            
-        except Exception as e:
-            warnings.append(f"Manifold3d validation warning: {str(e)}")
-        
-        # Volume check from trimesh
-        if mesh.volume <= 0:
-            warnings.append("Mesh has zero or negative volume (trimesh)")
-        
-    except Exception as e:
-        errors.append(f"STL validation error: {str(e)}")
-    
+            errors.append("STL mesh is not watertight; open edges make it unsafe to treat as a printable solid.")
+        if not mesh.is_winding_consistent:
+            errors.append("STL face winding is inconsistent.")
+        if not np.isfinite(float(mesh.volume)) or float(mesh.volume) <= 0:
+            errors.append("STL has zero, negative, or non-finite volume.")
+        face_areas = np.asarray(mesh.area_faces)
+        degenerate_count = int(np.count_nonzero(face_areas < 1e-10))
+        if degenerate_count:
+            errors.append(f"STL has {degenerate_count} degenerate or near-zero-area faces.")
+
+        # Manifold3d is a required project dependency. Treat failure to establish
+        # manifold validity as a validation error rather than silently approving it.
+        vertices = np.asarray(mesh.vertices, dtype=np.float32, order="C")
+        faces = np.asarray(mesh.faces, dtype=np.uint32, order="C")
+        manifold_mesh = manifold3d.Mesh(vert_properties=vertices, tri_verts=faces)
+        manifold = manifold3d.Manifold(manifold_mesh)
+        status = manifold.status()
+        if status != manifold3d.Error.NoError:
+            errors.append(f"Manifold3d rejected the STL mesh: {status}")
+        if manifold.is_empty():
+            errors.append("Manifold3d reports an empty solid.")
+        else:
+            manifold_volume = float(manifold.volume())
+            if not np.isfinite(manifold_volume) or manifold_volume <= 0:
+                errors.append("Manifold3d reports non-positive or non-finite volume.")
+    except Exception as exc:
+        errors.append(f"STL validation error: {exc}")
+
     return errors, warnings

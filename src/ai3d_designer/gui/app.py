@@ -54,7 +54,9 @@ def create_box_spec(name: str, width: float, depth: float, height: float,
     )
     spec.add_feature(box_feature)
     
-    if hole_diameter and hole_diameter > 0:
+    if hole_diameter is not None:
+        if hole_diameter <= 0 or hole_diameter >= min(width, depth):
+            raise ValueError("A centered through-hole diameter must be positive and smaller than both box width and depth.")
         hole_feature = FeatureSpec(
             id="hole_center",
             type=PrimitiveType.CYLINDER,
@@ -63,8 +65,10 @@ def create_box_spec(name: str, width: float, depth: float, height: float,
                 "radius": ParameterSpec(name="radius", value=hole_diameter / 2),
                 "height": ParameterSpec(name="height", value=height + 2),
             },
-            position=[width/2, depth/2, -1],
+            # build123d box/cylinder primitives are centered on the local origin.
+            position=[0.0, 0.0, 0.0],
             operation=OperationType.DIFFERENCE,
+            parent_id=box_feature.id,
         )
         spec.add_feature(hole_feature)
     
@@ -202,7 +206,7 @@ class AI3DDesignerGUI:
         if self.slicer and self.slicer.cura_available:
             self._log(f"CuraEngine: Found at {self.slicer.cura_engine_path}")
         else:
-            self._log("CuraEngine: Not found - using basic slicer (preview only)")
+            self._log("CuraEngine: Not found - real slicing is disabled until CuraEngine is installed.")
         self._log("========================")
         
     def _create_widgets(self):
@@ -436,6 +440,11 @@ class AI3DDesignerGUI:
         ttk.Entry(model_frame, textvariable=self.gcode_output_var, width=50).grid(row=1, column=1, sticky=tk.EW, padx=5)
         ttk.Button(model_frame, text="Browse...", command=self._browse_gcode_output).grid(row=1, column=2, padx=5)
         
+        ttk.Label(model_frame, text="Cura Definition JSON(s):").grid(row=2, column=0, sticky=tk.W, pady=2)
+        self.printer_definition_var = tk.StringVar(value=os.environ.get("CURA_PRINTER_DEFINITION", ""))
+        ttk.Entry(model_frame, textvariable=self.printer_definition_var, width=50).grid(row=2, column=1, sticky=tk.EW, padx=5)
+        ttk.Button(model_frame, text="Browse...", command=self._browse_printer_definition).grid(row=2, column=2, padx=5)
+
         model_frame.columnconfigure(1, weight=1)
         
         # Slice settings
@@ -515,7 +524,7 @@ class AI3DDesignerGUI:
         self.validate_gcode_btn = ttk.Button(slice_action_frame, text="Validate G-code", command=self._on_validate_gcode, state=tk.DISABLED)
         self.validate_gcode_btn.pack(side=tk.LEFT, padx=5)
         
-        self.approve_print_btn = ttk.Button(slice_action_frame, text="Approve & Print", command=self._on_approve_print, state=tk.DISABLED)
+        self.approve_print_btn = ttk.Button(slice_action_frame, text="Approve Print (simulation only)", command=self._on_approve_print, state=tk.DISABLED)
         self.approve_print_btn.pack(side=tk.LEFT, padx=5)
         
         if not SLICING_AVAILABLE:
@@ -635,6 +644,16 @@ class AI3DDesignerGUI:
         if file_path:
             self.gcode_output_var.set(file_path)
             
+    def _browse_printer_definition(self):
+        """Browse for Cura printer and optional extruder definition JSON files."""
+        file_paths = filedialog.askopenfilenames(
+            title="Select Cura printer definition and any required extruder definition",
+            filetypes=[("Cura definition JSON", "*.json"), ("JSON files", "*.json"), ("All files", "*.*")],
+        )
+        if file_paths:
+            # Multiple Cura definition files are passed in the order selected.
+            self.printer_definition_var.set(";".join(file_paths))
+
     def _on_generate_text(self):
         """Generate 3D model from text prompt."""
         prompt = self.prompt_text.get(1.0, tk.END).strip()
@@ -698,6 +717,16 @@ class AI3DDesignerGUI:
         if self.converter_loading:
             messagebox.showwarning("Warning", "Model is still loading...")
             return
+
+        mode = self.image_mode_var.get()
+        if mode != "lithophane" and self.converter is None:
+            approved = messagebox.askyesno(
+                "Trust the MiDaS model source?",
+                "Single-image depth conversion may download and execute Python code from the official intel-isl/MiDaS repository on first use. "
+                "Only continue if you have reviewed and trust that source. The result is an approximate relief, not exact hidden geometry. Continue?",
+            )
+            if not approved:
+                return
             
         self.convert_image_btn.config(state=tk.DISABLED)
         self.progress.start()
@@ -706,15 +735,13 @@ class AI3DDesignerGUI:
         
         def convert_thread():
             try:
-                # Load converter if needed
-                if self.converter is None:
+                # Lithophane creation uses only the local image; depth conversion needs the model.
+                if mode != "lithophane" and self.converter is None:
                     self.root.after(0, lambda: self._set_status("Downloading/loading MiDaS model..."))
-                    self.root.after(0, lambda: self._log("Loading MiDaS model (first run downloads ~100MB)..."))
-                    self.converter = ImageTo3DConverter("MiDaS_small")  # Fast model
-                    self.root.after(0, lambda: self._log("Model loaded!"))
+                    self.root.after(0, lambda: self._log("Loading the reviewed MiDaS source and model weights (first run may need internet)..."))
+                    self.converter = ImageTo3DConverter("MiDaS_small", trust_repo=True)
+                    self.root.after(0, lambda: self._log("Model loaded."))
                 
-                # Convert
-                mode = self.image_mode_var.get()
                 output_stl = self.output_dir / f"{Path(image_path).stem}_3d.stl"
                 
                 if mode == "lithophane":
@@ -740,6 +767,13 @@ class AI3DDesignerGUI:
                 
                 self.current_mesh = mesh
                 self.current_stl_path = str(output_stl)
+                if mode != "lithophane":
+                    self.root.after(
+                        0,
+                        lambda: self._log(
+                            "IMPORTANT: single-view depth is an approximate relief. It does not recover hidden surfaces, exact dimensions, threads, or tolerances."
+                        ),
+                    )
                 
                 self.root.after(0, lambda: self._log(f"Mesh: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces"))
                 self.root.after(0, lambda: self._log(f"Saved to: {output_stl}"))
@@ -908,6 +942,11 @@ class AI3DDesignerGUI:
         
     def _on_slice(self):
         """Slice the STL to G-code."""
+        # Never leave an old successful G-code file approvable after a new
+        # slice attempt starts or fails.
+        self.current_gcode_path = None
+        self.validate_gcode_btn.config(state=tk.DISABLED)
+        self.approve_print_btn.config(state=tk.DISABLED)
         if not SLICING_AVAILABLE or self.slicer is None:
             messagebox.showerror("Error", "Slicing not available")
             return
@@ -942,11 +981,12 @@ class AI3DDesignerGUI:
             bed_size_x=self.slice_settings_vars["bed_x_var"].get(),
             bed_size_y=self.slice_settings_vars["bed_y_var"].get(),
             bed_size_z=self.slice_settings_vars["bed_z_var"].get(),
+            nozzle_diameter=self.slice_settings_vars["nozzle_size_var"].get(),
         )
         
         def slice_thread():
             try:
-                result = self.slicer.slice(stl_path, gcode_path, settings)
+                result = self.slicer.slice(stl_path, gcode_path, settings, printer_definition=self.printer_definition_var.get().strip())
                 
                 if result.success:
                     self.current_gcode_path = gcode_path
@@ -965,7 +1005,7 @@ class AI3DDesignerGUI:
                     
                     self.root.after(0, lambda: self._set_status("Ready - Sliced successfully"))
                     self.root.after(0, lambda: self.validate_gcode_btn.config(state=tk.NORMAL))
-                    self.root.after(0, lambda: self.approve_print_btn.config(state=tk.NORMAL))
+                    self.root.after(0, lambda: self.approve_print_btn.config(state=tk.DISABLED))
                 else:
                     for err in result.errors:
                         self.root.after(0, lambda e=err: self._slice_log(f"ERROR: {e}"))
@@ -981,86 +1021,99 @@ class AI3DDesignerGUI:
         threading.Thread(target=slice_thread, daemon=True).start()
         
     def _on_validate_gcode(self):
-        """Validate the generated G-code."""
+        """Validate G-code and check every motion coordinate against the configured bed."""
         if not self.current_gcode_path or not Path(self.current_gcode_path).exists():
             messagebox.showwarning("Warning", "No G-code file to validate")
             return
-            
+
+        # Revalidation is required before every simulation approval.
+        self.approve_print_btn.config(state=tk.DISABLED)
         self.validate_gcode_btn.config(state=tk.DISABLED)
         self.progress.start()
         self._set_status("Validating G-code...")
-        
+
         def validate_thread():
             try:
                 result = self.slicer.validate_gcode(self.current_gcode_path)
-                
-                if result["valid"]:
-                    stats = result["stats"]
-                    self.root.after(0, lambda: self._slice_log("G-code validation PASSED"))
-                    self.root.after(0, lambda: self._slice_log(f"  Lines: {stats['total_lines']}"))
-                    self.root.after(0, lambda: self._slice_log(f"  G-commands: {stats['g_commands']}"))
-                    self.root.after(0, lambda: self._slice_log(f"  M-commands: {stats['m_commands']}"))
-                    self.root.after(0, lambda: self._slice_log(f"  Has homing: {stats['has_home']}"))
-                    self.root.after(0, lambda: self._slice_log(f"  Has temperature: {stats['has_temp']}"))
-                    self.root.after(0, lambda: self._slice_log(f"  Has extrusion: {stats['has_extrusion']}"))
-                    self.root.after(0, lambda: self._slice_log(f"  Bounds: X{stats['min_x']:.1f}-{stats['max_x']:.1f} Y{stats['min_y']:.1f}-{stats['max_y']:.1f} Z{stats['min_z']:.1f}-{stats['max_z']:.1f}"))
-                    
-                    # Check bed bounds
-                    bed_x = self.slice_settings_vars["bed_x_var"].get()
-                    bed_y = self.slice_settings_vars["bed_y_var"].get()
-                    if stats['max_x'] > bed_x or stats['max_y'] > bed_y:
-                        self.root.after(0, lambda: self._slice_log(f"  WARNING: Model exceeds bed size ({bed_x}x{bed_y})!"))
+                if not result.get("valid"):
+                    error = result.get("error", "Unknown G-code validation error.")
+                    self.root.after(0, lambda error=error: self._slice_log(f"G-code validation FAILED: {error}"))
+                    self.root.after(0, lambda: self._set_status("Validation failed"))
+                    return
+
+                stats = result["stats"]
+                bed_x = float(self.slice_settings_vars["bed_x_var"].get())
+                bed_y = float(self.slice_settings_vars["bed_y_var"].get())
+                bed_z = float(self.slice_settings_vars["bed_z_var"].get())
+                self.root.after(0, lambda: self._slice_log("G-code structure validation PASSED (heuristic; not a firmware safety certification)"))
+                self.root.after(0, lambda: self._slice_log(f"  Lines: {stats['total_lines']}"))
+                self.root.after(0, lambda: self._slice_log(f"  G-commands: {stats['g_commands']}"))
+                self.root.after(0, lambda: self._slice_log(f"  M-commands: {stats['m_commands']}"))
+                self.root.after(0, lambda: self._slice_log(f"  Has homing: {stats['has_home']}"))
+                self.root.after(0, lambda: self._slice_log(f"  Has temperature commands: {stats['has_temp']}"))
+                self.root.after(0, lambda: self._slice_log(f"  Has positive extrusion: {stats['has_extrusion']}"))
+                self.root.after(0, lambda: self._slice_log(f"  Bounds: X{stats['min_x']:.1f}-{stats['max_x']:.1f} Y{stats['min_y']:.1f}-{stats['max_y']:.1f} Z{stats['min_z']:.1f}-{stats['max_z']:.1f}"))
+
+                bounds_ok = (
+                    stats["min_x"] >= 0
+                    and stats["min_y"] >= 0
+                    and stats["min_z"] >= 0
+                    and stats["max_x"] <= bed_x
+                    and stats["max_y"] <= bed_y
+                    and stats["max_z"] <= bed_z
+                )
+                if bounds_ok:
+                    self.root.after(0, lambda: self._slice_log("Configured build-volume bounds check PASSED."))
+                    self.root.after(0, lambda: self.approve_print_btn.config(state=tk.NORMAL))
+                    self.root.after(0, lambda: self._set_status("Validated — simulation approval available"))
                 else:
-                    self.root.after(0, lambda: self._slice_log(f"G-code validation FAILED: {result.get('error')}"))
-                    
-                self.root.after(0, lambda: self._set_status("Ready - Validation complete"))
-                
-            except Exception as e:
-                self.root.after(0, lambda: self._slice_log(f"Validation error: {str(e)}"))
+                    self.root.after(0, lambda: self._slice_log(
+                        f"ERROR: G-code coordinates are outside the configured bed or include negative positions. "
+                        f"Expected X 0–{bed_x:g}, Y 0–{bed_y:g}, Z 0–{bed_z:g} mm."
+                    ))
+                    self.root.after(0, lambda: self.approve_print_btn.config(state=tk.DISABLED))
+                    self.root.after(0, lambda: self._set_status("Build-volume check failed"))
+            except Exception as exc:
+                self.root.after(0, lambda exc=exc: self._slice_log(f"Validation error: {exc}"))
+                self.root.after(0, lambda: self.approve_print_btn.config(state=tk.DISABLED))
+                self.root.after(0, lambda: self._set_status("Validation error"))
             finally:
                 self.root.after(0, lambda: self.validate_gcode_btn.config(state=tk.NORMAL))
                 self.root.after(0, lambda: self.progress.stop())
-                
+
         threading.Thread(target=validate_thread, daemon=True).start()
-        
+
     def _on_approve_print(self):
-        """Show print approval dialog and simulate print start."""
+        """Record a simulation-only approval; no printer transport is implemented."""
         if not self.current_gcode_path or not Path(self.current_gcode_path).exists():
-            messagebox.showwarning("Warning", "No valid G-code to print")
+            messagebox.showwarning("Warning", "No validated G-code file is available.")
             return
-            
-        # Show approval dialog
+
         result = messagebox.askyesno(
-            "Print Approval",
-            f"Ready to print:\n\n"
-            f"File: {Path(self.current_gcode_path).name}\n"
-            f"Printer: Generic FDM\n\n"
-            f"Please ensure:\n"
-            f"  \u2713 Printer is connected and calibrated\n"
-            f"  \u2713 Bed is clean and leveled\n"
-            f"  \u2713 Filament is loaded\n"
-            f"  \u2713 Nozzle is clean\n\n"
-            f"Start print now?"
+            "Simulation Only — No Printer Connection",
+            f"Record a simulation-only approval for:\n\n"
+            f"File: {Path(self.current_gcode_path).name}\n\n"
+            "This application does not currently send G-code to a physical printer. "
+            "No printer commands will be sent and no print will start.\n\n"
+            "Have you independently reviewed this G-code in a slicer and confirmed "
+            "that the printer profile, firmware, temperatures, and start/end code are correct?\n\n"
+            "Record simulation approval?",
         )
-        
+
         if result:
-            self._log("Print approved by user!")
-            self._slice_log("=== PRINT APPROVED ===")
-            self._slice_log("Sending to printer... (simulated)")
-            
-            # In a real implementation, this would send to OctoPrint, Duet, etc.
-            # For now, we'll just show success
+            self._log("Simulation approval recorded. No printer connection or command is active.")
+            self._slice_log("=== SIMULATION APPROVAL RECORDED ===")
             messagebox.showinfo(
-                "Print Started",
-                "Print job sent to printer!\n\n"
+                "Simulation Approval Recorded",
+                "Approval was recorded in this session only.\n\n"
                 f"File: {Path(self.current_gcode_path).name}\n\n"
-                "Monitor your printer for the first layer."
+                "No print job was dispatched. Review the G-code in your slicer and "
+                "send it to your printer using the manufacturer's or printer-host's verified workflow.",
             )
-            self._log("Print job dispatched")
         else:
-            self._log("Print cancelled by user")
-            self._slice_log("=== PRINT CANCELLED ===")
-        
+            self._log("Simulation approval cancelled.")
+            self._slice_log("=== SIMULATION APPROVAL CANCELLED ===")
+
     def _open_output_folder(self):
         """Open output folder in file explorer."""
         output_dir = Path(self.output_dir_var.get())

@@ -48,7 +48,7 @@ export function UploadPanel() {
         throw new Error(data.error ?? `Upload failed (HTTP ${response.status}).`);
       }
       setProgress(100);
-      setSuccess(`Stored ${data.uploadedFiles?.length ?? 0} file(s) privately. Automated drawing OCR and CAD generation are not implemented yet.`);
+      setSuccess(`Stored ${data.uploadedFiles?.length ?? 0} file(s) privately. Open this project to analyze supported drawings with OCR and review the extracted text before CAD generation.`);
       router.push(`/dashboard/projects/${data.projectId}`);
       router.refresh();
     } catch (cause) {
@@ -63,7 +63,7 @@ export function UploadPanel() {
     <Card className="w-full">
       <CardHeader>
         <CardTitle className="flex items-center gap-2"><FileText className="size-5" />Upload Engineering Drawings</CardTitle>
-        <CardDescription>Files are stored privately for your account. This flow does not run OCR or generate CAD from drawings yet; use New Project for text-to-CAD.</CardDescription>
+        <CardDescription>Files are stored privately. Open the project after upload to analyze a supported PDF or image, review OCR text, and request CAD generation for supported dimensioned parts.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <FileDropZone onFilesSelected={handleFilesSelected} disabled={uploading} />

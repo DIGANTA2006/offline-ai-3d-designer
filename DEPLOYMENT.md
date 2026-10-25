@@ -29,22 +29,40 @@
 
 ---
 
+## PR Preview: isolate the OCR-enabled CAD backend
+
+The message `OCR not yet implemented. Use /api/v1/text-to-cad for natural language input.` comes from the legacy backend implementation on `main`. The feature branch contains the OCR pipeline, but a Vercel Preview must not call the existing Production Railway service.
+
+1. In Railway, create a **separate Preview service/environment** connected to branch `feat/cad-engine-reliability-upgrade-20261023`. Keep the existing Production service connected to `main`.
+2. Set the service root directory to the **repository root** (not `python-backend`), so the Docker build can copy the shared `src/` package. In **Railway → Service → Settings → Build**, choose the Dockerfile builder and set Dockerfile path to `python-backend/Dockerfile`. Do not rely on the tracked `python-backend/railway.toml` alone for a new service: Railway's Config as Code is deprecated for new services. See [Railway's current Config as Code notice](https://docs.railway.com/config-as-code). Do not use Railpack/Nixpacks for this service: the Dockerfile installs Tesseract, Python OCR dependencies, and CAD runtime dependencies.
+3. Configure the Preview Railway service with `APP_ENV=production` and a new random `CAD_SERVICE_TOKEN`. Keep the token server-side only. Let Railway inject `PORT`.
+4. Open the Preview backend's `/health` URL. Confirm `"status": "healthy"`, `"cadAvailable": true`, `"cadRuntimeAvailable": true`, `"serviceTokenConfigured": true`, and `"ocrAvailable": true`. The Docker build now fails before deployment if either `build123d` or the OCR runtime cannot import. If `cadRuntimeAvailable` is false, inspect Railway build logs for `CAD runtime import check failed`; if `serviceTokenConfigured` is false, configure a server-only `CAD_SERVICE_TOKEN` on the backend. Do not proceed while the service reports `degraded`.
+
+For visual blueprint extraction (needed for automatic model interpretation from the pixels, rather than only labelled OCR text), configure one provider on the same Railway Preview service:
+
+- **Reachable Ollama server:** `DRAWING_VISION_PROVIDER=ollama`, `DRAWING_VISION_URL=<Ollama base URL>`, and `DRAWING_VISION_MODEL=<vision-capable model>` (for example `qwen2.5vl:7b`). The service appends `/api/chat`.
+- **OpenAI-compatible vision API:** `DRAWING_VISION_PROVIDER=openai_compatible`, `DRAWING_VISION_URL=<provider base URL ending in /v1>`, `DRAWING_VISION_MODEL=<vision model>`, and the server-only `DRAWING_VISION_API_KEY` if required. The provider must support image inputs and strict JSON-schema responses.
+
+Do not use `localhost` for a model server running on your laptop; from Railway, localhost is the Railway container. After configuration, `/health` should show `"drawingVisionAvailable": true`. If it is false or the endpoint rejects the schema, extraction falls back to explicitly labelled text and may leave the body/dimensions unresolved; that is not full visual reconstruction. Full variable examples and the v1 support matrix are in `docs/DRAWING_TO_CAD_V1.md`.
+5. In **Vercel → Project → Settings → Environment Variables**, add `CAD_SERVICE_URL_PREVIEW` and `CAD_SERVICE_TOKEN_PREVIEW` scoped to **Preview**. Use the new Railway Preview URL and the matching token from step 3. Do not replace Production's `CAD_SERVICE_URL` or `CAD_SERVICE_TOKEN`.
+6. Redeploy the Vercel Preview from the feature branch. The Preview routes now require the Preview-specific variables and check backend OCR readiness before accepting an OCR request.
+
+Use an isolated test account and verify that Preview's database and private Blob storage are not unintentionally sharing live user data. Keep PR #3 in Draft until OCR extraction, reviewed CAD generation, and private STEP/STL downloads pass.
+
+---
+
 ## Quick Deploy Checklist
 
 ### 1. Deploy Python Backend (Railway - Recommended)
 
+For a **Production release**, deploy from `main` only after the pull request has been reviewed and approved. For PR testing, follow the isolated Preview deployment section above; do not push unreviewed feature code into `main`.
+
 ```bash
-# 1. Push to GitHub
-git add python-backend/
-git commit -m "Add Python CAD backend for Railway"
-git push origin main
+# Backend build context is the repository root so the image can copy both src/ and python-backend/.
+# Configure the Railway service's Dockerfile builder with path: python-backend/Dockerfile.
+# Do not force Nixpacks; OCR needs the system tesseract-ocr package installed by this Dockerfile.
 
-# 2. Go to Railway.app → New Project → Deploy from GitHub
-#    - Select your repo
-#    - Root Directory: repository root (leave blank/default)
-#    - Dockerfile Path: python-backend/Dockerfile (build context must include src/)
-
-# 3. Set Environment Variables in Railway:
+# Set Environment Variables in Railway:
 #    APP_ENV=production
 #    CAD_SERVICE_TOKEN=<same strong random token as Vercel>
 #    CORS_ORIGINS=https://your-app.vercel.app
@@ -107,7 +125,10 @@ After both deploy:
 | `FIREBASE_CLIENT_EMAIL` | ✅ | Firebase Console (Service Account) |
 | `FIREBASE_PRIVATE_KEY` | ✅ | Firebase Console (Service Account) |
 | `DATABASE_URL` | ✅ | Supabase/Neon/Railway PostgreSQL |
-| `CAD_SERVICE_URL` | ✅ | Your Railway/Render URL |
+| `CAD_SERVICE_URL` | ✅ Production/local | Production backend URL; not used as a Preview fallback |
+| `CAD_SERVICE_TOKEN` | ✅ Production/local | Server-only token matching the Production/local backend |
+| `CAD_SERVICE_URL_PREVIEW` | ✅ Preview | Dedicated feature-branch backend URL; must report `ocrAvailable: true` |
+| `CAD_SERVICE_TOKEN_PREVIEW` | ✅ Preview | Server-only token matching the Preview backend |
 | `INITIAL_ADMIN_EMAIL` | ✅ | Your admin email |
 | `CRON_SECRET` | ✅ | `openssl rand -hex 32` |
 | `BLOB_READ_WRITE_TOKEN` | Optional | Existing public assets only |
@@ -171,8 +192,8 @@ curl -X POST http://localhost:8000/api/v1/text-to-cad \
 |--------|----------|-------------|
 | GET | `/health` | Health check |
 | POST | `/api/v1/text-to-cad` | Natural language → 3D model |
-| POST | `/api/v1/ocr/extract` | Drawing → Spec (Phase 3+) |
-| POST | `/api/v1/generate` | Spec → CAD files (Phase 3+) |
+| POST | `/api/v1/ocr/extract` | Extract visible drawing text/annotations using Tesseract + PyMuPDF |
+| POST | `/api/v1/generate` | Generate STEP/STL from reviewed descriptions for supported part types |
 
 ### Vercel Frontend (Proxied)
 
@@ -185,10 +206,23 @@ curl -X POST http://localhost:8000/api/v1/text-to-cad \
 
 ## Troubleshooting
 
+### OCR still returns "OCR not yet implemented"
+- This response is from the legacy backend on `main`; do not work around it by pointing Preview at Production.
+- Confirm the Vercel Preview deployment commit includes the latest OCR routing fix, not just the earlier `fix: isolate Vercel Preview CAD backend configuration` commit. Redeploy the latest feature-branch tip after checks pass.
+- Check the dedicated Preview Railway service's `/health` endpoint; it must report `status: "healthy"`, `cadAvailable: true`, `cadRuntimeAvailable: true`, `serviceTokenConfigured: true`, and `ocrAvailable: true`.
+- In Railway Build settings, use repository-root build context and Dockerfile path `python-backend/Dockerfile`; check the build log for the Docker smoke-test line `CAD_RUNTIME_AVAILABLE=true OCR_AVAILABLE=true`.
+- In Vercel Preview variables, set `CAD_SERVICE_URL_PREVIEW` and `CAD_SERVICE_TOKEN_PREVIEW`, then redeploy the latest Preview.
+- The Next.js OCR route now checks the backend health contract first. If an older backend is reached, it should return a clear readiness error rather than sending the drawing to the mock endpoint.
+
+### `cadAvailable: false` or status is degraded
+- Read the diagnostic fields: `cadRuntimeAvailable` distinguishes a build123d import failure from `serviceTokenConfigured: false`.
+- If CAD runtime is false, inspect Railway logs for `CAD runtime import check failed`. The Dockerfile installs the project package without the desktop-only dependencies and executes a build-time import smoke test.
+- If the token is not configured, add a new strong `CAD_SERVICE_TOKEN` on Railway and the matching server-only `CAD_SERVICE_TOKEN_PREVIEW` in Vercel Preview.
+
 ### "CAD Service Unavailable"
 - Check Railway logs: `railway logs`
-- Verify `CAD_SERVICE_URL` in Vercel matches Railway URL exactly
-- Check CORS: Railway `CORS_ORIGINS` must include Vercel URL
+- Confirm the appropriate Vercel environment URL is set: Preview uses `CAD_SERVICE_URL_PREVIEW`; Production uses `CAD_SERVICE_URL`.
+- Confirm the matching server-only service token is set in both environments.
 
 ### "Prisma Client Not Generated"
 - Vercel build runs `prisma generate && next build` automatically
@@ -218,9 +252,9 @@ curl -X POST http://localhost:8000/api/v1/text-to-cad \
 
 ---
 
-## Next Steps (Phase 3+)
+## Further work
 
-1. **OCR Pipeline**: Add Tesseract/OpenCV to Python backend
+1. Validate extraction quality across representative multi-page engineering PDFs and raster drawings; OCR is text/annotation extraction, not complete drawing-view reconstruction.
 2. **File Storage**: S3/R2 for generated STEP/STL files
 3. **Job Queue**: Redis + Celery for async processing
 4. **WebSocket**: Real-time progress updates

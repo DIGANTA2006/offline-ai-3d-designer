@@ -3,7 +3,7 @@
 Image to 3D conversion module using depth estimation (MiDaS) and mesh generation.
 """
 import os
-import torch
+import tempfile
 import cv2
 import numpy as np
 from pathlib import Path
@@ -11,47 +11,33 @@ from typing import Optional, Tuple
 import trimesh
 from PIL import Image
 
-# Try to import MiDaS
+# Torch is optional for local lithophane/mesh utilities. Depth inference requires it.
 try:
+    import torch
     import torch.hub
     MIDAS_AVAILABLE = True
 except ImportError:
+    torch = None
     MIDAS_AVAILABLE = False
 
-# Monkey-patch torch.hub to auto-trust known repos BEFORE any imports
-import torch.hub as hub
-_original_check = hub._check_repo_is_trusted
-
-def _auto_trust_repo(repo, *args, **kwargs):
-    """Auto-trust known repositories used by MiDaS and its dependencies."""
-    trusted_patterns = [
-        "intel-isl",
-        "rwightman",
-        "MiDaS",
-        "gen-efficientnet",
-        "pytorch-image-models",
-    ]
-    repo_str = str(repo).lower()
-    for pattern in trusted_patterns:
-        if pattern.lower() in repo_str:
-            return True
-    return _original_check(repo, *args, **kwargs)
-
-hub._check_repo_is_trusted = _auto_trust_repo
+from .mesh import build_closed_heightfield
 
 
 class ImageTo3DConverter:
     """Convert 2D images to 3D models using depth estimation."""
     
-    def __init__(self, model_type: str = "MiDaS_small", trust_repo: bool = True):
+    def __init__(self, model_type: str = "MiDaS_small", trust_repo: bool = False):
         """
         Initialize the converter.
         
         Args:
             model_type: MiDaS model type - "DPT_Large", "DPT_Hybrid", or "MiDaS_small"
-            trust_repo: Whether to trust the intel-isl/MiDaS repository (handled globally)
+            trust_repo: Explicit opt-in to execute code from the MiDaS source repository on first download.
         """
+        if not MIDAS_AVAILABLE or torch is None:
+            raise RuntimeError("Depth-based image conversion requires torch and torchvision; local lithophane generation does not.")
         self.model_type = model_type
+        self.trust_repo = trust_repo
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = None
         self.transform = None
@@ -62,13 +48,17 @@ class ImageTo3DConverter:
         if not MIDAS_AVAILABLE:
             raise RuntimeError("MiDaS not available. Install torch and torchvision.")
         
-        # Load MiDaS model (trust_repo handled by global monkey-patch)
-        self.model = torch.hub.load("intel-isl/MiDaS", self.model_type, trust_repo=True)
+        if not self.trust_repo:
+            raise RuntimeError(
+                "Loading MiDaS may download and execute code from the intel-isl/MiDaS repository. "
+                "Review that source and explicitly opt in with trust_repo=True before using image-to-3D."
+            )
+        self.model = torch.hub.load("intel-isl/MiDaS", self.model_type, trust_repo=self.trust_repo)
         self.model.to(self.device)
         self.model.eval()
         
         # Load transforms
-        midas_transforms = torch.hub.load("intel-isl/MiDaS", "transforms", trust_repo=True)
+        midas_transforms = torch.hub.load("intel-isl/MiDaS", "transforms", trust_repo=self.trust_repo)
         if self.model_type == "DPT_Large" or self.model_type == "DPT_Hybrid":
             self.transform = midas_transforms.dpt_transform
         else:
@@ -114,130 +104,56 @@ class ImageTo3DConverter:
         return depth_map
     
     def depth_to_mesh(
-        self, 
-        depth_map: np.ndarray, 
+        self,
+        depth_map: np.ndarray,
         image: Optional[np.ndarray] = None,
         scale: float = 50.0,
         height_scale: float = 10.0,
         simplify: float = 0.0,
-        base_thickness: float = 2.0
+        base_thickness: float = 2.0,
     ) -> trimesh.Trimesh:
+        """Convert a depth map into a closed approximate relief mesh.
+
+        This is a heightfield extrusion, not reconstruction of hidden geometry.
         """
-        Convert depth map to 3D mesh.
-        
-        Args:
-            depth_map: Normalized depth map (0-1)
-            image: Optional color image for vertex colors
-            scale: XY scale in mm
-            height_scale: Z scale in mm
-            simplify: Simplification factor (0 = no simplification)
-            base_thickness: Base thickness in mm
-            
-        Returns:
-            trimesh.Trimesh object
-        """
-        h, w = depth_map.shape
-        
-        # Create vertex grid
-        x = np.linspace(0, scale, w)
-        y = np.linspace(0, scale, h)
-        xx, yy = np.meshgrid(x, y)
-        
-        # Z from depth map (inverted so bright = high)
-        zz = depth_map * height_scale + base_thickness
-        
-        # Create vertices
-        vertices = np.stack([xx, yy, zz], axis=-1).reshape(-1, 3)
-        
-        # Create faces (quad grid -> triangles)
-        faces = []
-        for i in range(h - 1):
-            for j in range(w - 1):
-                v0 = i * w + j
-                v1 = i * w + j + 1
-                v2 = (i + 1) * w + j
-                v3 = (i + 1) * w + j + 1
-                
-                faces.append([v0, v2, v1])
-                faces.append([v1, v2, v3])
-        
-        faces = np.array(faces)
-        
-        # Create mesh
-        mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
-        
-        # Add base (extrude bottom)
-        mesh = self._add_base(mesh, base_thickness)
-        
-        # Add vertex colors from image if provided
+        depth = np.asarray(depth_map, dtype=np.float64)
+        if depth.ndim != 2 or min(depth.shape, default=0) < 2:
+            raise ValueError("Depth map must be a 2-D array with at least 2 rows and columns.")
+        if not np.isfinite(depth).all():
+            raise ValueError("Depth map contains non-finite values.")
+        if not np.isfinite(scale) or scale <= 0:
+            raise ValueError("XY scale must be a finite positive number of millimeters.")
+        if not np.isfinite(height_scale) or height_scale < 0:
+            raise ValueError("Height scale must be a finite non-negative number of millimeters.")
+        if not np.isfinite(base_thickness) or base_thickness <= 0:
+            raise ValueError("Base thickness must be a finite positive number of millimeters.")
+        if not np.isfinite(simplify) or not 0 <= simplify < 1:
+            raise ValueError("Simplification must be in the range [0, 1).")
+
+        height, width = depth.shape
+        xx, yy = np.meshgrid(np.linspace(0, scale, width), np.linspace(0, scale, height))
+        zz = np.clip(depth, 0.0, 1.0) * height_scale + base_thickness
+        color_grid = None
         if image is not None:
-            img_resized = cv2.resize(image, (w, h))
-            colors = img_resized.reshape(-1, 3)
-            mesh.visual.vertex_colors = np.hstack([colors, np.full((len(colors), 1), 255)])
-        
-        # Simplify if requested
+            rgb = np.asarray(cv2.resize(image, (width, height)), dtype=np.uint8)
+            color_grid = rgb[:, :, :3]
+
+        mesh = build_closed_heightfield(xx, yy, zz, bottom_z=0.0, vertex_colors=color_grid)
         if simplify > 0:
-            mesh = mesh.simplify_quadratic_decimation(int(len(mesh.faces) * (1 - simplify)))
-        
-        # Ensure watertight
-        mesh.fill_holes()
+            target_faces = max(12, int(len(mesh.faces) * (1.0 - simplify)))
+            simplifier = getattr(mesh, "simplify_quadric_decimation", None)
+            if simplifier is not None:
+                mesh = simplifier(face_count=target_faces)
+            else:
+                legacy_simplifier = getattr(mesh, "simplify_quadratic_decimation", None)
+                if legacy_simplifier is None:
+                    raise RuntimeError("Mesh simplification is unavailable in the installed trimesh version.")
+                mesh = legacy_simplifier(target_faces)
+            if not mesh.is_watertight or not mesh.is_volume or mesh.volume <= 0:
+                raise ValueError("Mesh simplification produced an invalid solid; retry with simplification set to 0.")
         mesh.fix_normals()
-        
         return mesh
-    
-    def _add_base(self, mesh: trimesh.Trimesh, thickness: float) -> trimesh.Trimesh:
-        """Add a flat base to the mesh to make it printable."""
-        bounds = mesh.bounds
-        min_z = bounds[0, 2]
-        
-        boundary_mask = np.abs(mesh.vertices[:, 2] - min_z) < 0.01
-        boundary_verts = mesh.vertices[boundary_mask]
-        
-        if len(boundary_verts) < 3:
-            return mesh
-        
-        from scipy.spatial import ConvexHull
-        try:
-            hull = ConvexHull(boundary_verts[:, :2])
-            
-            base_z = 0
-            base_vertices = []
-            for v_idx in hull.vertices:
-                v = boundary_verts[v_idx]
-                base_vertices.append([v[0], v[1], base_z])
-            
-            base_vertices = np.array(base_vertices)
-            base_vertex_offset = len(mesh.vertices)
-            
-            base_faces = []
-            for simplex in hull.simplices:
-                base_faces.append([
-                    base_vertex_offset + simplex[0],
-                    base_vertex_offset + simplex[1],
-                    base_vertex_offset + simplex[2]
-                ])
-            
-            side_faces = []
-            for i in range(len(hull.vertices)):
-                next_i = (i + 1) % len(hull.vertices)
-                v_top_1 = hull.vertices[i]
-                v_top_2 = hull.vertices[next_i]
-                v_bot_1 = base_vertex_offset + i
-                v_bot_2 = base_vertex_offset + next_i
-                
-                side_faces.append([v_top_1, v_bot_1, v_bot_2])
-                side_faces.append([v_top_1, v_bot_2, v_top_2])
-            
-            all_vertices = np.vstack([mesh.vertices, base_vertices])
-            all_faces = np.vstack([mesh.faces, base_faces, side_faces])
-            
-            mesh = trimesh.Trimesh(vertices=all_vertices, faces=all_faces, process=True)
-            
-        except Exception:
-            pass
-        
-        return mesh
-    
+
     def convert_image_to_3d(
         self,
         image_path: str,
@@ -264,8 +180,10 @@ class ImageTo3DConverter:
             Generated mesh
         """
         img = cv2.imread(image_path)
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) if img is not None else None
-        
+        if img is None:
+            raise ValueError(f"Could not load image: {image_path}")
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
         self._log(f"Estimating depth from {image_path}...")
         depth_map = self.estimate_depth(image_path)
         
@@ -279,10 +197,34 @@ class ImageTo3DConverter:
             simplify=simplify
         )
         
-        self._log(f"Exporting to {output_path}...")
-        mesh.export(output_path)
-        
-        self._log(f"Done! Mesh: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces")
+        supported_formats = {"stl", "obj", "ply"}
+        destination = Path(output_path).expanduser()
+        output_format = destination.suffix.lower().lstrip(".") if destination.suffix else format.lower().lstrip(".")
+        if output_format not in supported_formats:
+            raise ValueError(f"Unsupported image-mesh export format: {output_format}. Use STL, OBJ, or PLY.")
+        if not destination.suffix:
+            destination = destination.with_suffix("." + output_format)
+        if not mesh.is_watertight or not mesh.is_volume or not np.isfinite(float(mesh.volume)) or mesh.volume <= 0:
+            raise ValueError("Refusing to export image-derived geometry that is not a positive-volume watertight solid.")
+
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                prefix=f".{destination.stem}-", suffix=destination.suffix,
+                dir=str(destination.parent), delete=False,
+            ) as temp_file:
+                temporary_path = Path(temp_file.name)
+            self._log(f"Exporting to {destination}...")
+            mesh.export(str(temporary_path), file_type=output_format)
+            if not temporary_path.is_file() or temporary_path.stat().st_size == 0:
+                raise RuntimeError("Image-derived mesh export produced an empty file.")
+            os.replace(temporary_path, destination)
+        finally:
+            if temporary_path is not None and temporary_path.exists():
+                temporary_path.unlink()
+
+        self._log(f"Done! Closed solid mesh: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces")
         return mesh
     
     def _log(self, msg: str):
@@ -295,94 +237,53 @@ def create_lithophane(
     max_size: float = 100.0,
     thickness: float = 3.0,
     thinnest: float = 0.8,
-    border: float = 2.0
+    border: float = 2.0,
 ) -> trimesh.Trimesh:
-    """
-    Create a lithophane from an image (better for photos).
-    
-    Args:
-        image_path: Path to input image
-        output_path: Path to output STL
-        max_size: Maximum dimension in mm
-        thickness: Maximum thickness in mm
-        thinnest: Minimum thickness in mm
-        border: Border width in mm
-        
-    Returns:
-        Generated mesh
-    """
+    """Create a closed solid lithophane with a thin perimeter border."""
+    if not all(np.isfinite(value) for value in (max_size, thickness, thinnest, border)):
+        raise ValueError("Lithophane dimensions must be finite numbers.")
+    if max_size <= 0 or border < 0 or max_size <= 2 * border:
+        raise ValueError("max_size must be positive and greater than twice the non-negative border.")
+    if thinnest <= 0 or thickness <= thinnest:
+        raise ValueError("Thickness must be greater than a positive minimum thickness.")
+
     img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
     if img is None:
         raise ValueError(f"Could not load image: {image_path}")
-    
-    h, w = img.shape
-    aspect = w / h
-    
+    original_h, original_w = img.shape
+    if min(original_h, original_w) < 2:
+        raise ValueError("Lithophane image must be at least 2 x 2 pixels.")
+
+    aspect = original_w / original_h
     if aspect > 1:
         new_w = max_size - 2 * border
         new_h = new_w / aspect
     else:
         new_h = max_size - 2 * border
         new_w = new_h * aspect
-    
-    img = cv2.resize(img, (int(new_w), int(new_h)))
-    h, w = img.shape
-    
-    img_norm = img.astype(np.float32) / 255.0
-    thickness_map = thinnest + (1.0 - img_norm) * (thickness - thinnest)
-    
-    x = np.linspace(-new_w/2, new_w/2, w)
-    y = np.linspace(-new_h/2, new_h/2, h)
+    pixel_w = max(2, int(round(new_w)))
+    pixel_h = max(2, int(round(new_h)))
+    img = cv2.resize(img, (pixel_w, pixel_h), interpolation=cv2.INTER_AREA)
+    image_h, image_w = img.shape
+
+    normalized = img.astype(np.float64) / 255.0
+    thickness_map = thinnest + (1.0 - normalized) * (thickness - thinnest)
+    # Insert a flat-thinnest ring around the image and let the shared mesh
+    # helper create bottom and side walls for a truly closed solid.
+    padded = np.pad(thickness_map, 1, mode="constant", constant_values=thinnest)
+    inner_x = np.linspace(-new_w / 2, new_w / 2, image_w)
+    inner_y = np.linspace(-new_h / 2, new_h / 2, image_h)
+    x = np.concatenate(([inner_x[0] - border], inner_x, [inner_x[-1] + border]))
+    y = np.concatenate(([inner_y[0] - border], inner_y, [inner_y[-1] + border]))
     xx, yy = np.meshgrid(x, y)
-    zz = thickness_map
-    
-    vertices = np.stack([xx, yy, zz], axis=-1).reshape(-1, 3)
-    
-    faces = []
-    for i in range(h - 1):
-        for j in range(w - 1):
-            v0 = i * w + j
-            v1 = i * w + j + 1
-            v2 = (i + 1) * w + j
-            v3 = (i + 1) * w + j + 1
-            faces.append([v0, v2, v1])
-            faces.append([v1, v2, v3])
-    
-    faces = np.array(faces)
-    mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-    
-    mesh = _add_lithophane_base(mesh, border, thinnest)
-    
-    mesh.export(output_path)
+    mesh = build_closed_heightfield(xx, yy, padded, bottom_z=0.0)
+
+    destination = Path(output_path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    mesh.export(str(destination))
+    if not destination.is_file() or destination.stat().st_size == 0:
+        raise RuntimeError("Lithophane export failed to produce a non-empty file.")
     return mesh
-
-
-def _add_lithophane_base(mesh: trimesh.Trimesh, border: float, thinnest: float) -> trimesh.Trimesh:
-    """Add base and border to lithophane."""
-    bounds = mesh.bounds
-    min_x, min_y = bounds[0, 0], bounds[0, 1]
-    max_x, max_y = bounds[1, 0], bounds[1, 1]
-    
-    base_verts = np.array([
-        [min_x - border, min_y - border, 0],
-        [max_x + border, min_y - border, 0],
-        [max_x + border, max_y + border, 0],
-        [min_x - border, max_y + border, 0],
-    ])
-    
-    base_faces = np.array([[0, 1, 2], [0, 2, 3]])
-    
-    min_z = mesh.vertices[:, 2].min()
-    bottom_mask = np.abs(mesh.vertices[:, 2] - min_z) < 0.01
-    bottom_verts = mesh.vertices[bottom_mask]
-    
-    all_verts = np.vstack([mesh.vertices, base_verts])
-    all_faces = np.vstack([mesh.faces, base_faces + len(mesh.vertices)])
-    
-    result = trimesh.Trimesh(vertices=all_verts, faces=all_faces, process=True)
-    result.fill_holes()
-    return result
-
 
 if __name__ == "__main__":
     converter = ImageTo3DConverter("MiDaS_small")

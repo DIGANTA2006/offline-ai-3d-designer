@@ -1,9 +1,10 @@
 import Link from "next/link";
-import { ArrowLeft, ArrowRight, Box, Plus } from "lucide-react";
+import { ArrowLeft, ArrowRight, Bookmark, Box, Plus } from "lucide-react";
 import { requireUser } from "@/lib/auth/server";
 import { prisma } from "@/lib/prisma";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { MAX_ACTIVE_PROJECTS } from "@/lib/project-retention-core";
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +21,7 @@ export default async function ProjectsPage() {
   const projects = await prisma.project.findMany({
     where: { userId: user.id },
     orderBy: { updatedAt: "desc" },
-    select: { id: true, name: true, description: true, status: true, updatedAt: true },
+    select: { id: true, name: true, description: true, status: true, isImportant: true, updatedAt: true },
   });
 
   return (
@@ -30,7 +31,7 @@ export default async function ProjectsPage() {
           <div>
             <Link href="/dashboard" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" /> Dashboard</Link>
             <h1 className="mt-4 text-3xl font-semibold tracking-tight">My projects</h1>
-            <p className="mt-2 text-sm text-muted-foreground">Your saved CAD jobs and drawing uploads.</p>
+            <p className="mt-2 text-sm text-muted-foreground">Your saved CAD jobs and drawing uploads.</p><p className="mt-1 text-xs text-muted-foreground">{projects.length} of {MAX_ACTIVE_PROJECTS} saved projects. Important projects are preserved; older unimportant projects may be removed automatically when the limit is reached.</p>
           </div>
           <Button asChild><Link href="/dashboard/projects/new"><Plus className="size-4" /> New project</Link></Button>
         </header>
@@ -38,7 +39,7 @@ export default async function ProjectsPage() {
           {projects.map((project) => (
             <Link key={project.id} href={`/dashboard/projects/${project.id}`} className="block rounded-2xl focus:outline-none focus:ring-2 focus:ring-primary">
               <Card className="transition-colors hover:border-primary/50"><CardContent className="flex flex-wrap items-center justify-between gap-4 p-5">
-                <div className="flex min-w-0 items-center gap-3"><span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-secondary text-muted-foreground"><Box className="size-5" /></span><div className="min-w-0"><h2 className="truncate font-semibold">{project.name}</h2><p className="mt-1 max-w-2xl truncate text-sm text-muted-foreground">{project.description || "No description"}</p><p className="mt-1 text-xs text-muted-foreground">Updated {project.updatedAt.toLocaleString("en-IN")}</p></div></div>
+                <div className="flex min-w-0 items-center gap-3"><span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-secondary text-muted-foreground"><Box className="size-5" /></span><div className="min-w-0"><h2 className="truncate font-semibold">{project.name} {project.isImportant && <span className="inline-flex items-center gap-1 text-xs font-medium text-primary"><Bookmark className="inline size-3.5" /> Important</span>}</h2><p className="mt-1 max-w-2xl truncate text-sm text-muted-foreground">{project.description || "No description"}</p><p className="mt-1 text-xs text-muted-foreground">Updated {project.updatedAt.toLocaleString("en-IN")}</p></div></div>
                 <div className="flex items-center gap-3"><span className={`rounded-full border px-2.5 py-1 text-xs ${statusStyle[project.status] ?? statusStyle.DRAFT}`}>{project.status}</span><ArrowRight className="size-4 text-muted-foreground" /></div>
               </CardContent></Card>
             </Link>

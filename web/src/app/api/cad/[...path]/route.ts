@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { isSameOriginRequest } from "@/lib/security/same-origin";
+import { getCadServiceConfig } from "@/lib/cad-service-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,19 +22,7 @@ const MAX_REQUEST_BYTES = 64 * 1024;
 const MAX_RESPONSE_BYTES = 12 * 1024 * 1024;
 const UPSTREAM_TIMEOUT_MS = 30_000;
 
-function getCadServiceBaseUrl(): string | null {
-  const configured = process.env.CAD_SERVICE_URL?.trim().replace(/\/+$/, "");
-  if (!configured) return process.env.NODE_ENV === "production" ? null : "http://127.0.0.1:8000";
 
-  try {
-    const url = new URL(configured);
-    const loopbackHost = ["localhost", "127.0.0.1", "::1"].includes(url.hostname);
-    if (url.protocol !== "https:" && !(process.env.NODE_ENV !== "production" && url.protocol === "http:" && loopbackHost)) return null;
-    return url.toString().replace(/\/+$/, "");
-  } catch {
-    return null;
-  }
-}
 
 async function handleCadProxy(request: Request): Promise<Response> {
   const pathname = new URL(request.url).pathname;
@@ -72,14 +61,15 @@ async function handleCadProxy(request: Request): Promise<Response> {
     }
   }
 
-  const baseUrl = getCadServiceBaseUrl();
-  if (!baseUrl) {
-    return NextResponse.json({ error: "CAD service is not configured." }, { status: 503 });
+  let serviceConfig: ReturnType<typeof getCadServiceConfig>;
+  try {
+    serviceConfig = getCadServiceConfig();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "CAD service configuration is invalid.";
+    return NextResponse.json({ error: message }, { status: 503 });
   }
-  const token = process.env.CAD_SERVICE_TOKEN?.trim();
-  if (process.env.NODE_ENV === "production" && !token) {
-    return NextResponse.json({ error: "CAD_SERVICE_TOKEN is not configured on the web service." }, { status: 503 });
-  }
+  const baseUrl = serviceConfig.baseUrl.toString().replace(/\/+$/, "");
+  const token = serviceConfig.token;
 
   let body: string | undefined;
   if (request.method === "POST") {

@@ -1,0 +1,41 @@
+{
+  "version": 2,
+  "name": "Generic FDM Extruder 0.4mm",
+  "inherits": "fdmextruder",
+  "metadata": {
+    "type": "extruder",
+    "author": "Offline AI 3D Designer",
+    "manufacturer": "Generic",
+    "visible": false,
+    "position": "0"
+  },
+  "overrides": {
+    "machine_nozzle_size": {
+      "default_value": 0.4
+    },
+    "material_diameter": {
+      "default_value": 1.75
+    },
+    "material_print_temperature": {
+      "default_value": 200
+    },
+    "material_print_temperature_layer_0": {
+      "default_value": 205
+    },
+    "material_bed_temperature": {
+      "default_value": 60
+    },
+    "material_bed_temperature_layer_0": {
+      "default_value": 60
+    },
+    "retraction_enable": {
+      "default_value": true
+    },
+    "retraction_amount": {
+      "default_value": 5
+    },
+    "retraction_speed": {
+      "default_value": 40
+    }
+  }
+}

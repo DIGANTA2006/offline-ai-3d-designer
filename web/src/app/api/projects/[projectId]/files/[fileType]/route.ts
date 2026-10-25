@@ -19,16 +19,30 @@ export async function GET(_request: Request, { params }: Context) {
   if (!user) return NextResponse.json({ error: "Authentication required." }, { status: 401 });
 
   const { projectId, fileType } = await params;
+  const requestedVersionId = new URL(_request.url).searchParams.get("versionId");
   if (fileType !== "step" && fileType !== "stl") {
     return NextResponse.json({ error: "Unsupported export format." }, { status: 400 });
   }
 
   const project = await prisma.project.findFirst({
     where: { id: projectId, userId: user.id },
-    include: { versions: { orderBy: { version: "desc" }, take: 1 } },
+    select: { id: true },
   });
-  const version = project?.versions[0];
-  if (!project || !version) return NextResponse.json({ error: "Project or export not found." }, { status: 404 });
+  if (!project) return NextResponse.json({ error: "Project or export not found." }, { status: 404 });
+  const version = requestedVersionId
+    ? await prisma.projectVersion.findFirst({
+        where: { id: requestedVersionId, projectId: project.id },
+        select: { id: true, version: true, stepFilePath: true, stlFilePath: true },
+      })
+    : await prisma.projectVersion.findFirst({
+        where: {
+          projectId: project.id,
+          ...(fileType === "step" ? { stepFilePath: { not: null } } : { stlFilePath: { not: null } }),
+        },
+        orderBy: [{ version: "desc" }, { createdAt: "desc" }],
+        select: { id: true, version: true, stepFilePath: true, stlFilePath: true },
+      });
+  if (!version) return NextResponse.json({ error: "Project or export not found." }, { status: 404 });
   const pathname = fileType === "step" ? version.stepFilePath : version.stlFilePath;
   if (!pathname) return NextResponse.json({ error: "This project has no stored export in that format." }, { status: 404 });
 

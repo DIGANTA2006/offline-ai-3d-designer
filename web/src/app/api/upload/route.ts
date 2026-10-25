@@ -1,10 +1,11 @@
-import { put } from "@vercel/blob";
+import { del, put } from "@vercel/blob";
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { getCurrentUser } from "@/lib/auth/server";
 import { isSameOriginRequest } from "@/lib/security/same-origin";
 import { validateFiles } from "@/lib/upload/validation";
 import { prisma } from "@/lib/prisma";
+import { assertProjectCapacity, ProjectCapacityError, pruneUserProjects } from "@/lib/project-retention";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,7 +37,11 @@ export async function POST(request: Request) {
   }
 
   let projectId: string | null = null;
+  let uploadedPathnames: string[] = [];
+  let versionPersisted = false;
+  let retentionWarning: string | undefined;
   try {
+    await assertProjectCapacity(user.id);
     const formData = await request.formData();
     const values = formData.getAll("files");
     if (!values.length || values.some((value) => typeof value === "string" || !(value instanceof File))) {
@@ -57,7 +62,7 @@ export async function POST(request: Request) {
       data: {
         userId: user.id,
         name: valid[0].file.name.replace(/\.[^.]+$/, "").slice(0, 80) || "Engineering drawing upload",
-        description: `Stored ${valid.length} source file(s). Automated drawing OCR and drawing-to-CAD generation are not implemented yet.`,
+        description: `Stored ${valid.length} private source file(s). Open this project to analyze supported drawings with OCR and review the extracted text before generating CAD.`,
         status: "DRAFT",
       },
       select: { id: true },
@@ -73,6 +78,7 @@ export async function POST(request: Request) {
         addRandomSuffix: true,
         contentType: item.file.type || "application/octet-stream",
       });
+      uploadedPathnames.push(blob.pathname);
       uploadedFiles.push({ pathname: blob.pathname, name: originalName, type: item.type, size: item.size, contentType: item.file.type || "application/octet-stream" });
     }
 
@@ -85,6 +91,13 @@ export async function POST(request: Request) {
       },
       select: { id: true, version: true },
     });
+    versionPersisted = true;
+    uploadedPathnames = [];
+    try { await pruneUserProjects(user.id, privateBlobToken, { excludeProjectId: project.id }); }
+    catch (error) {
+      console.error("Project retention pruning failed after a successful upload.", error);
+      retentionWarning = "Upload succeeded, but old project cleanup could not finish. Retry cleanup later.";
+    }
 
     await prisma.auditLog.create({
       data: {
@@ -103,15 +116,27 @@ export async function POST(request: Request) {
       version: version.version,
       uploadedFiles: uploadedFiles.map(({ name, type, size }) => ({ name, type, size })),
       rejected: rejected.map((item) => ({ name: item.file.name, reason: item.reason })),
-      processingAvailable: false,
-      message: "Files were stored privately. Automatic drawing OCR and drawing-to-CAD conversion are not implemented yet.",
+      processingAvailable: true,
+      ...(retentionWarning ? { retentionWarning } : {}),
+      message: "Files were stored privately. Open the project to analyze supported drawings with OCR and review the extracted text before CAD generation.",
     }, { status: 201 });
   } catch (error) {
     console.error("Private drawing upload failed.", error);
-    if (projectId) {
+    const token = process.env.PRIVATE_BLOB_READ_WRITE_TOKEN?.trim();
+    let blobsCleaned = uploadedPathnames.length === 0;
+    if (uploadedPathnames.length && token) {
+      try { await del([...new Set(uploadedPathnames)], { token }); blobsCleaned = true; }
+      catch (cleanupError) { console.error("Could not remove partially uploaded source files.", cleanupError); }
+    }
+    if (projectId && !versionPersisted && blobsCleaned) {
+      try { await prisma.project.delete({ where: { id: projectId } }); }
+      catch (deleteError) { console.error("Could not remove failed upload project metadata.", deleteError); }
+    } else if (projectId && !versionPersisted) {
       try { await prisma.project.update({ where: { id: projectId }, data: { status: "FAILED" } }); }
       catch (updateError) { console.error("Could not mark failed upload project.", updateError); }
     }
-    return NextResponse.json({ error: "Upload failed. Check private Blob storage configuration and deployment logs." }, { status: 500 });
+    const status = error instanceof ProjectCapacityError ? 409 : 500;
+    const message = error instanceof ProjectCapacityError ? error.message : "Upload failed. Check private Blob storage configuration and deployment logs.";
+    return NextResponse.json({ error: message }, { status });
   }
 }

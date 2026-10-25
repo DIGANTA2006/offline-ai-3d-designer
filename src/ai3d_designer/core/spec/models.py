@@ -4,6 +4,7 @@ Defines the schema for describing mechanical parts and features.
 """
 
 from enum import Enum
+from math import isfinite
 from typing import Optional, List, Dict, Any, Union
 from pydantic import BaseModel, Field, field_validator, model_validator
 import uuid
@@ -59,6 +60,14 @@ class ParameterSpec(BaseModel):
 
     @model_validator(mode="after")
     def validate_range(self):
+        if not isfinite(self.value):
+            raise ValueError("Parameter value must be finite.")
+        if self.min_value is not None and not isfinite(self.min_value):
+            raise ValueError("Parameter minimum must be finite.")
+        if self.max_value is not None and not isfinite(self.max_value):
+            raise ValueError("Parameter maximum must be finite.")
+        if self.min_value is not None and self.max_value is not None and self.min_value > self.max_value:
+            raise ValueError("Parameter minimum cannot exceed its maximum.")
         if self.min_value is not None and self.value < self.min_value:
             raise ValueError(f"Value {self.value} below minimum {self.min_value}")
         if self.max_value is not None and self.value > self.max_value:
@@ -134,10 +143,17 @@ class PartSpec(BaseModel):
         ids = [f.id for f in self.features]
         if len(ids) != len(set(ids)):
             errors.append("Duplicate feature IDs found")
-        # Validate each feature
+        # Validate profile data according to each modelling operation.
         for feature in self.features:
-            if feature.type in (PrimitiveType.EXTRUSION, PrimitiveType.REVOLUTION, 
-                               PrimitiveType.LOFT, PrimitiveType.SWEEP):
+            if feature.type in (PrimitiveType.EXTRUSION, PrimitiveType.REVOLUTION):
                 if not feature.metadata.get("profile"):
-                    errors.append(f"Feature {feature.id} ({feature.type.value}) requires a profile")
+                    errors.append(f"Feature {feature.id} ({feature.type.value}) requires metadata.profile")
+            elif feature.type == PrimitiveType.LOFT:
+                profiles = feature.metadata.get("profiles")
+                if not isinstance(profiles, list) or len(profiles) < 2:
+                    errors.append(f"Feature {feature.id} (loft) requires at least two metadata.profiles sections")
+            elif feature.type == PrimitiveType.SWEEP:
+                if not feature.metadata.get("profile") or not feature.metadata.get("path"):
+                    errors.append(f"Feature {feature.id} (sweep) requires metadata.profile and metadata.path")
+
         return errors
