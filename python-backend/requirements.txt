@@ -21,7 +21,7 @@ psutil>=7.0.0
 # OCR for engineering drawings (Tesseract executable is installed in the backend image)
 pytesseract>=0.3.13
 Pillow>=10.0.0
-PyMuPDF>=1.24.0
+PyMuPDF>=1.24.10,<2
 httpx>=0.27.2
 
 # Image to 3D (Phase 4+)
