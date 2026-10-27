@@ -1,9 +1,9 @@
 """
 Embedded Hardware Library & Auto-Enclosure Bridge (Step E).
 
-Provides built-in ComponentSpec presets with ParameterSource.DATASHEET and confirmed=True
-for common development boards and components, plus a function to generate a ready-to-build
-EnclosureSpec and PartSpec for any component.
+Provides source-labelled but unconfirmed hardware starting presets, a dimension fit check,
+and separate buildable enclosure-body/lid PartSpecs. Derived geometry stays unconfirmed until
+the user reviews dimensions, clearances, mounting positions, and the exact component revision.
 """
 
 from math import isfinite
