@@ -13,6 +13,8 @@ type CadRoute = {
 
 const routes: Record<string, CadRoute> = {
   health: { method: "GET", upstreamPath: "/health", requiresUser: false },
+  "fit-check/presets": { method: "GET", upstreamPath: "/api/v1/fit-check/presets", requiresUser: true },
+  "fit-check": { method: "POST", upstreamPath: "/api/v1/fit-check", requiresUser: true },
   "text-to-cad": { method: "POST", upstreamPath: "/api/v1/text-to-cad", requiresUser: true },
   "ocr/extract": { method: "POST", upstreamPath: "/api/v1/ocr/extract", requiresUser: true },
   generate: { method: "POST", upstreamPath: "/api/v1/generate", requiresUser: true },
@@ -36,11 +38,12 @@ async function handleCadProxy(request: Request): Promise<Response> {
     });
   }
 
-  // The project-creation endpoint applies quota checks and persists outputs.
-  // Disable alternate paths that would otherwise bypass project persistence and quotas.
-  if (routeName !== "health") {
+  // Generation and drawing endpoints must use the project workflow so quota checks,
+  // persistence, and version history cannot be bypassed. The fit-check endpoints are
+  // non-generative utilities: they return only metadata and a dimension report.
+  if (routeName !== "health" && routeName !== "fit-check/presets" && routeName !== "fit-check") {
     return NextResponse.json(
-      { error: "Direct CAD endpoints are disabled. Use POST /api/projects to create a saved, quota-managed CAD project." },
+      { error: "Direct CAD generation endpoints are disabled. Use POST /api/projects for saved, quota-managed CAD generation." },
       { status: 410 },
     );
   }
