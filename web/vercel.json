@@ -1,8 +1,7 @@
 {
-  "crons": [
-    {
-      "path": "/api/cron/account-deletion",
-      "schedule": "17 2 * * *"
-    }
-  ]
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "buildCommand": "cd web && npm run build",
+  "devCommand": "cd web && npm run dev",
+  "installCommand": "cd web && npm ci"
 }
