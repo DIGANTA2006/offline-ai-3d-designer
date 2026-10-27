@@ -1,15 +1,18 @@
 # Work Status — Offline AI 3D Designer
 
-Updated: 23 October 2026 — OCR Preview routing fix added; latest checks running
+Updated: 27 October 2026 — PR #6 now includes the connected hardware fit-check workflow; validation pending
 
-## Current repository state
+## Current review branch — 27 October 2026
 
-- Repository: `DIGANTA2006/offline-ai-3d-designer` (private).
-- Feature branch: `feat/cad-engine-reliability-upgrade-20261023`.
-- Pull request: [#3 — Improve CAD engine reliability and safe slicing](https://github.com/DIGANTA2006/offline-ai-3d-designer/pull/3).
-- PR is **open and Draft**, not merged. Production and `main` remain unchanged by this feature branch.
-- Last fully verified source HEAD before the OCR Preview-routing fix: `8be700b0f435425313b6adef37f4f089b585142d`. The OCR routing, Preview-only environment selection, Railway Dockerfile configuration, and regression-test commits came after that SHA; the latest PR checks must pass before treating those additions as verified.
-- Full current state and next steps: [`NEXT_SESSION_HANDOFF.md`](NEXT_SESSION_HANDOFF.md).
+- Repository: `DIGANTA2006/offline-ai-3d-designer` (private); default branch: `main`.
+- Current review PR: [#6 — Core fit-check and CuraEngine deployment fixes](https://github.com/DIGANTA2006/offline-ai-3d-designer/pull/6).
+- Review branch: `fix/core-fitcheck-cura-smoke-20261027`.
+- PR #6 adds a supported CuraEngine image smoke test, hardens dimension/mount alignment fit checks, corrects generated enclosure body geometry, separates the removable lid as its own PartSpec, and connects an authenticated hardware fit-check API to the dashboard.
+- Component preset dimensions and derived enclosure parameters are explicitly unconfirmed until the user reviews the exact component variant and enclosure dimensions.
+- **Validation limitation:** Vercel Preview passed for the PR revision, but GitHub Actions Python/Web jobs failed or queued without usable step logs. Do not claim the test suite or Docker image has passed until those jobs execute their steps. The PR remains unmerged.
+- Previous OCR/drawing-to-CAD notes below are retained as historical context; check the PR branch and current Actions results before following old branch/commit instructions.
+
+## Historical OCR/CAD reliability notes (23–24 October)
 
 ## New OCR deployment fix (23 October 2026)
 
