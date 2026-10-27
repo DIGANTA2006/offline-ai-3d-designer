@@ -125,4 +125,5 @@ def test_fit_check_rejects_ambiguous_component_source(client):
     )
 
     assert response.status_code == 422
-    assert "exactly one" in response.json()["detail"]
+    detail = response.json()["detail"]
+    assert any("exactly one" in item.get("msg", "") for item in detail)
