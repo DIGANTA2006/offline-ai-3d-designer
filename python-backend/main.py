@@ -18,7 +18,7 @@ load_dotenv()
 from fastapi import Depends, FastAPI, File, UploadFile, Form, Header, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 import uvicorn
 
 # Import our CAD engine
@@ -29,6 +29,9 @@ from ai3d_designer.core.spec.models import (
     PartSpec, FeatureSpec, ParameterSpec,
     PrimitiveType, OperationType, UnitSystem
 )
+from ai3d_designer.fitcheck.engine import FitCheckEngine
+from ai3d_designer.fitcheck.models import ComponentSpec, EnclosureSpec
+from ai3d_designer.fitcheck.presets import get_preset_component, list_hardware_presets
 from ai3d_designer.core.geometry.engine import create_part_from_spec
 from ai3d_designer.core.export.exporter import export_step, export_stl, export_3mf, export_zip_bundle, ExportResult, check_export_blockers
 from ai3d_designer.core.validation.validator import validate_spec, validate_geometry
@@ -201,6 +204,22 @@ class ExportResponse(BaseModel):
     validationErrors: list[str] = Field(default_factory=list)
 
 
+class FitCheckRequest(BaseModel):
+    """Request for an axis-aligned component/enclosure fit check."""
+
+    presetId: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    component: Optional[ComponentSpec] = None
+    componentConfirmed: bool = False
+    enclosure: EnclosureSpec
+    clearanceMm: Optional[float] = Field(default=None, ge=0, le=100)
+
+    @model_validator(mode="after")
+    def validate_component_source(self):
+        if (self.presetId is None) == (self.component is None):
+            raise ValueError("Provide exactly one of presetId or component.")
+        return self
+
+
 def require_cad_service_token(authorization: Optional[str] = Header(default=None)) -> None:
     """Require the shared web-to-CAD token; only explicit development/test may omit it."""
     app_env = os.environ.get("APP_ENV", "").strip().lower()
@@ -355,6 +374,72 @@ async def health():
         slicingStatusReason=slicing_capability["reason"],
         limitations=limitations,
     )
+
+
+@app.get("/api/v1/fit-check/presets", dependencies=[Depends(require_cad_service_token)])
+def fit_check_presets():
+    """Return built-in hardware starting points; users must confirm exact board dimensions."""
+    return {
+        "presets": list_hardware_presets(),
+        "notice": (
+            "Preset dimensions are starting points only. Verify the exact manufacturer, "
+            "board revision, mounting-hole coordinates, and dimensions before relying on a fit check."
+        ),
+    }
+
+
+@app.post("/api/v1/fit-check", dependencies=[Depends(require_cad_service_token)])
+def fit_check(request: FitCheckRequest):
+    """Check a confirmed component against confirmed axis-aligned enclosure dimensions."""
+    if not request.enclosure.confirmed:
+        raise HTTPException(
+            status_code=422,
+            detail="Confirm the enclosure's interior dimensions before running a fit check.",
+        )
+
+    if request.presetId is not None:
+        if not request.componentConfirmed:
+            raise HTTPException(
+                status_code=422,
+                detail="Confirm the selected preset's dimensions for your exact hardware revision.",
+            )
+        try:
+            component = get_preset_component(request.presetId)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        # Confirmation is scoped to this explicit request; preset data remains unconfirmed in code.
+        component = component.model_copy(update={"confirmed": True})
+    else:
+        component = request.component
+        if component is None:
+            raise HTTPException(status_code=422, detail="A component specification is required.")
+        if not component.confirmed:
+            raise HTTPException(
+                status_code=422,
+                detail="Confirm the component dimensions before running a fit check.",
+            )
+
+    clearance = component.clearance_mm if request.clearanceMm is None else request.clearanceMm
+    try:
+        report = FitCheckEngine(default_clearance_mm=clearance).check_all_components(
+            [component],
+            request.enclosure,
+            clearance_mm=clearance,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return {
+        "success": True,
+        "component": component.model_dump(mode="json"),
+        "enclosure": request.enclosure.model_dump(mode="json"),
+        "report": report.model_dump(mode="json"),
+        "limitations": [
+            "The current check compares axis-aligned width, depth, and height; it does not test rotated placements, keep-out zones, thermal clearances, or full 3D interference.",
+            "Mounting-hole alignment is checked only when enclosure mounting-boss coordinates are supplied.",
+            "A successful fit check does not certify printability, material suitability, structural strength, or manufacturing readiness.",
+        ],
+    }
 
 
 @app.post("/api/v1/ocr/extract", response_model=OcrResponse, dependencies=[Depends(require_cad_service_token)])
