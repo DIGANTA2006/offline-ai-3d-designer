@@ -50,7 +50,8 @@ async function handleCadProxy(request: Request): Promise<Response> {
 
   let userId: string | undefined;
   if (route.requiresUser) {
-    if (!isSameOriginRequest(request)) {
+    // GET endpoints are read-only; enforce the same-origin CSRF check on state-changing POSTs.
+    if (request.method === "POST" && !isSameOriginRequest(request)) {
       return NextResponse.json({ error: "Request origin could not be verified." }, { status: 403 });
     }
     try {
