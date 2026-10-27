@@ -603,7 +603,7 @@ class TestFixes:
         
         # Check that the new orientation passes
         new_bed_checks = [r for r in fix_result.new_checks if r.check_id.startswith("bed_fit_")]
-        side_pass = any(r.status == CheckStatus.PASS and "pos_x" in r.check_id.lower() for r in new_bed_checks)
+        side_pass = any(r.status == CheckStatus.PASS and r.orientation == "+X (on side)" for r in new_bed_checks)
         assert side_pass, f"No side orientation passes: {[(r.check_id, r.status) for r in new_bed_checks]}"
 
     def test_thicken_fix_for_wall(self):
