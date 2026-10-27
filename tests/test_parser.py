@@ -24,16 +24,17 @@ def test_box_triplet_with_center_through_hole():
     assert hole.position == [0.0, 0.0, 0.0]
 
 
-def test_mixed_triplet_units_normalize_to_millimeters():
+def test_mixed_triplet_units_preserve_original_units():
     result = RuleBasedParser().parse("A 2 x 3 x 1 cm box")
 
     assert result.success, result.error
     assert result.spec is not None
     feature = result.spec.features[0]
-    assert feature.parameters["width"].value == 20
-    assert feature.parameters["depth"].value == 30
-    assert feature.parameters["height"].value == 10
-    assert all(parameter.unit == UnitSystem.MM for parameter in feature.parameters.values())
+    # Values preserved in original units (cm)
+    assert feature.parameters["width"].value == 2
+    assert feature.parameters["depth"].value == 3
+    assert feature.parameters["height"].value == 1
+    assert all(parameter.unit == UnitSystem.CM for parameter in feature.parameters.values())
 
 
 def test_named_cylinder_dimensions_are_not_misread():
@@ -52,9 +53,11 @@ def test_bare_triplet_uses_requested_default_units():
     assert result.success, result.error
     assert result.spec is not None
     feature = result.spec.features[0]
-    assert feature.parameters["width"].value == 40
-    assert feature.parameters["depth"].value == 20
-    assert feature.parameters["height"].value == 10
+    # Values preserved in requested default units (cm)
+    assert feature.parameters["width"].value == 4
+    assert feature.parameters["depth"].value == 2
+    assert feature.parameters["height"].value == 1
+    assert all(parameter.unit == UnitSystem.CM for parameter in feature.parameters.values())
 
 
 def test_tube_generates_a_real_inner_bore():
@@ -103,7 +106,7 @@ def test_unpositioned_multiple_holes_are_not_guessed():
     result = RuleBasedParser().parse("A 50x30x10mm box with four 5mm holes")
 
     assert result.success is False
-    assert "explicit hole coordinates" in (result.error or "").lower()
+    assert "explicit positions" in (result.error or "").lower()
 
 
 def test_plate_with_explicit_thickness():

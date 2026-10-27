@@ -4,7 +4,8 @@ FROM python:3.11-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app/src
+    PYTHONPATH=/app/src \
+    CURA_PRINTER_DEFINITION=/app/python-backend/cura_resources/definitions/generic_fdm_printer.def.json;/app/python-backend/cura_resources/definitions/generic_fdm_extruder.def.json
 
 # Runtime libraries for OpenCascade/build123d, VTK/PyVista, and headless OCR.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -27,6 +28,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
+# Create non-root user for security
+RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser
+
 WORKDIR /app
 
 # Install the backend's Linux-compatible runtime requirements, including build123d.
@@ -45,11 +49,26 @@ RUN python -m pip install --no-cache-dir --no-deps .
 COPY python-backend/ ./python-backend/
 WORKDIR /app/python-backend
 
+# Copy Cura resources to the expected location
+COPY python-backend/cura_resources/ ./cura_resources/
+
+# Fix ownership for non-root user
+RUN chown -R appuser:appuser /app
+
 # Fail the image build, rather than deploy a service that returns cadAvailable=false.
 # This smoke test also verifies the OCR runtime and system Tesseract executable.
 RUN python -c "import build123d, ai3d_designer, main; assert main.cad_runtime_is_available(), 'build123d runtime import failed'; assert main.is_ocr_available(), 'Tesseract/PyMuPDF/Pillow OCR runtime is unavailable'; print('CAD_RUNTIME_AVAILABLE=true OCR_AVAILABLE=true')"
 
+# Validate CuraEngine is available and functional (fail build if not)
+RUN python -c "import subprocess; result = subprocess.run(['CuraEngine', '--version'], capture_output=True, timeout=10); assert result.returncode == 0, f'CuraEngine not found or failed: {result.stderr.decode()}'; print('CURA_ENGINE_AVAILABLE=true')"
+
+# Validate bundled Cura definitions are present and valid JSON
+RUN python -c "import json, os; p1='/app/python-backend/cura_resources/definitions/generic_fdm_printer.def.json'; p2='/app/python-backend/cura_resources/definitions/generic_fdm_extruder.def.json'; assert os.path.isfile(p1) and os.path.isfile(p2), 'Bundled Cura definitions missing'; json.load(open(p1)); json.load(open(p2)); print('CURA_DEFINITIONS_VALID=true')"
+
 EXPOSE 8000
+
+# Switch to non-root user
+USER appuser
 
 # This check is independent of curl and honors Railway's runtime PORT.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \

@@ -141,9 +141,17 @@ class GeometryEngine:
             raise ValueError(f"{label} must contain at least three distinct points.")
 
         try:
-            return Wire.make_polygon(vectors, close=close)
+            wire = Wire.make_polygon(vectors, close=close)
         except Exception as exc:
             raise ValueError(f"Could not construct {label}: {exc}") from exc
+
+        # Check for self-intersection by attempting to create a face
+        if close and wire.is_closed:
+            face = Face(wire)
+            if not face.is_valid:
+                raise ValueError(f"{label} self-intersects.")
+
+        return wire
 
     def _create_primitive(self, feature: FeatureSpec) -> Shape:
         """Create one primitive/profile feature without applying its transform."""
@@ -297,7 +305,7 @@ class GeometryEngine:
 
                 if result is None:
                     if feature.operation != OperationType.UNION:
-                        raise ValueError(f"First feature '{feature.id}' must use the 'union' operation.")
+                        raise ValueError(f"first feature must use the union operation.")
                     result = part
                 elif feature.operation == OperationType.UNION:
                     result = result + part
@@ -309,7 +317,7 @@ class GeometryEngine:
                     raise ValueError(f"Unsupported boolean operation: {feature.operation}")
 
                 if result is None or not isfinite(float(result.volume)) or result.volume <= 1e-9:
-                    raise ValueError("Boolean operation produced an empty or non-finite solid.")
+                    raise ValueError("Boolean operation produced an empty or invalid geometry.")
             except Exception as exc:
                 if isinstance(exc, ValueError) and str(exc).startswith("First feature"):
                     raise

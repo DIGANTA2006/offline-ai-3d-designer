@@ -894,12 +894,12 @@ async def extract_blueprint(
                 timeout=vision_timeout,
             )
             vision_model = getattr(vision, "model", type(vision).__name__)
-        except (httpx.HTTPError, TimeoutError, ValueError, ValidationError) as exc:
+        except (httpx.HTTPError, TimeoutError, asyncio.TimeoutError, ValueError, ValidationError) as exc:
             if isinstance(exc, httpx.HTTPStatusError):
                 body = str(getattr(exc.response, "text", "")).strip()[:1500]
                 status = getattr(exc.response, "status_code", "unknown")
                 detail = f"HTTP {status}: {body or str(exc)}"
-            elif isinstance(exc, (httpx.TimeoutException, TimeoutError))
+            elif isinstance(exc, (httpx.TimeoutException, TimeoutError, asyncio.TimeoutError)):
                 request = getattr(exc, "request", None)
                 endpoint = str(getattr(request, "url", "(URL unavailable)"))
                 detail = f"{type(exc).__name__} after {getattr(vision, 'timeout', VISION_DEFAULT_TIMEOUT_SECONDS):g}s at {endpoint}"

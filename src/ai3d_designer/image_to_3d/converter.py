@@ -1,4 +1,3 @@
-
 """
 Image to 3D conversion module using depth estimation (MiDaS) and mesh generation.
 """
@@ -131,7 +130,10 @@ class ImageTo3DConverter:
             raise ValueError("Simplification must be in the range [0, 1).")
 
         height, width = depth.shape
-        xx, yy = np.meshgrid(np.linspace(0, scale, width), np.linspace(0, scale, height))
+        # Preserve aspect ratio: X spans [0, scale], Y spans [0, scale * height/width]
+        scale_x = float(scale)
+        scale_y = float(scale) * height / width
+        xx, yy = np.meshgrid(np.linspace(0, scale_x, width), np.linspace(0, scale_y, height))
         zz = np.clip(depth, 0.0, 1.0) * height_scale + base_thickness
         color_grid = None
         if image is not None:

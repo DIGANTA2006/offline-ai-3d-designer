@@ -8,14 +8,14 @@ from PIL import Image
 from ai3d_designer.image_to_3d.converter import (
     ImageTo3DConverter,
     MIDAS_AVAILABLE,
-    _build_watertight_heightfield,
     create_lithophane,
 )
+from ai3d_designer.image_to_3d.mesh import build_closed_heightfield
 
 
 def test_heightfield_builder_returns_a_closed_positive_volume_solid():
     heights = np.array([[1.0, 2.0, 1.0], [2.0, 3.0, 2.0], [1.0, 2.0, 1.0]])
-    mesh = _build_watertight_heightfield(heights, scale_x=20, scale_y=10)
+    mesh = build_closed_heightfield(heights, scale_x=20, scale_y=10)
     assert mesh.is_watertight
     assert mesh.is_volume
     assert mesh.volume > 0
@@ -26,9 +26,9 @@ def test_heightfield_builder_returns_a_closed_positive_volume_solid():
 
 def test_heightfield_builder_rejects_nonfinite_and_degenerate_inputs():
     with pytest.raises(ValueError, match="finite"):
-        _build_watertight_heightfield(np.array([[1.0, float("nan")], [1.0, 2.0]]), 10, 10)
-    with pytest.raises(ValueError, match="2 × 2"):
-        _build_watertight_heightfield(np.array([[1.0]]), 10, 10)
+        build_closed_heightfield(np.array([[1.0, float("nan")], [1.0, 2.0]]), 10, 10)
+    with pytest.raises(ValueError, match="2 x 2"):
+        build_closed_heightfield(np.array([[1.0]]), 10, 10)
 
 
 def test_depth_to_mesh_builds_watertight_aspect_preserving_relief():

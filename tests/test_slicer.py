@@ -1,5 +1,10 @@
 """Safety regression tests for the CuraEngine adapter."""
 
+import subprocess
+import tempfile
+import os
+from pathlib import Path
+
 import trimesh
 
 from ai3d_designer.slicing.slicer import SliceSettings, Slicer
@@ -104,3 +109,203 @@ def test_cura_engine_filament_summary_reports_length_and_mass_separately():
     assert print_time == 125
     assert filament_grams == 10.5
     assert Slicer._parse_filament_length_m(output) == 3.5
+
+
+def test_slice_settings_presets():
+    """Test that presets create valid settings."""
+    quick = SliceSettings.from_preset("Quick")
+    assert quick.layer_height == 0.3
+    assert quick.wall_thickness == 0.8
+    assert quick.infill_density == 10.0
+    assert quick.support_enabled is False
+    assert quick.print_speed == 60.0
+    
+    balanced = SliceSettings.from_preset("Balanced")
+    assert balanced.layer_height == 0.2
+    assert balanced.wall_thickness == 1.2
+    assert balanced.infill_density == 20.0
+    assert balanced.support_enabled is False
+    assert balanced.print_speed == 50.0
+    
+    strong = SliceSettings.from_preset("Strong")
+    assert strong.layer_height == 0.15
+    assert strong.wall_thickness == 1.6
+    assert strong.infill_density == 40.0
+    assert strong.support_enabled is True
+    assert strong.print_speed == 40.0
+
+
+def test_slice_settings_preset_invalid():
+    """Test that invalid preset raises ValueError."""
+    try:
+        SliceSettings.from_preset("Invalid")
+        assert False, "Should have raised ValueError"
+    except ValueError as e:
+        assert "Unknown preset" in str(e)
+
+
+def test_slicer_finds_bundled_definitions(monkeypatch):
+    """Test that Slicer finds bundled Cura definitions."""
+    # Mock the definitions directory to point to our bundled one
+    import ai3d_designer.slicing.slicer as slicer_module
+    original_find = slicer_module.Slicer._find_definitions_dir
+    
+    def mock_find_definitions_dir(self):
+        return str(Path(__file__).parent.parent / "python-backend" / "cura_resources" / "definitions")
+    
+    monkeypatch.setattr(slicer_module.Slicer, "_find_definitions_dir", mock_find_definitions_dir)
+    
+    slicer = Slicer(cura_engine_path="/fake/path")
+    assert slicer._definitions_dir is not None
+    assert "cura_resources" in slicer._definitions_dir
+
+
+def test_slicer_build_command_includes_definitions(monkeypatch):
+    """Test that the CuraEngine command includes printer and extruder definitions."""
+    import ai3d_designer.slicing.slicer as slicer_module
+    
+    def mock_find_definitions_dir(self):
+        return str(Path(__file__).parent.parent / "python-backend" / "cura_resources" / "definitions")
+    
+    monkeypatch.setattr(slicer_module.Slicer, "_find_definitions_dir", mock_find_definitions_dir)
+    
+    slicer = Slicer(cura_engine_path="/fake/CuraEngine")
+    settings = SliceSettings()
+    cmd = slicer._build_command("/fake/input.stl", "/fake/output.gcode", settings)
+    
+    # Check that -j flags are present for printer and extruder
+    assert "-j" in cmd
+    printer_def_idx = cmd.index("-j")
+    assert "generic_fdm_printer.def.json" in cmd[printer_def_idx + 1]
+    # There should be a second -j for extruder
+    assert cmd.count("-j") == 2
+
+
+def test_slicer_settings_to_args():
+    """Test that settings are correctly converted to CuraEngine arguments."""
+    slicer = Slicer(cura_engine_path="/fake/CuraEngine")
+    settings = SliceSettings(
+        layer_height=0.2,
+        wall_thickness=1.2,
+        infill_density=20.0,
+        print_speed=50.0,
+        nozzle_temp=200.0,
+        bed_temp=60.0,
+    )
+    args = slicer._settings_to_args(settings)
+    
+    # Check key settings are present
+    args_str = " ".join(args)
+    assert "layer_height=0.2" in args_str
+    assert "wall_thickness=1.2" in args_str
+    assert "infill_sparse_density=20.0" in args_str
+    assert "speed_print=50.0" in args_str
+    assert "material_print_temperature=200.0" in args_str
+    assert "material_bed_temperature=60.0" in args_str
+
+
+def test_slicer_validate_gcode_structure(tmp_path):
+    """Test G-code validation with various scenarios."""
+    slicer = Slicer(cura_engine_path="/fake")
+    
+    # Valid G-code with homing, extrusion, temperature, layers
+    # Note: The layer count is based on ;LAYER: markers, not ;LAYER_COUNT
+    valid_gcode = (
+        ";FLAVOR:Marlin\n"
+        ";LAYER_COUNT:2\n"
+        "G21\nM104 S200\nG28\n;LAYER:0\n"
+        "G1 X10 Y10 Z0.2 F1500\n"
+        "G1 X20 Y10 E1.0 F1500\n"
+        ";LAYER:1\n"
+        "G1 X20 Y20 Z0.4 F1500\n"
+        "G1 X10 Y20 E2.0 F1500\n"
+        "M104 S0\n"
+    )
+    path = tmp_path / "valid.gcode"
+    path.write_text(valid_gcode)
+    result = slicer.validate_gcode(str(path))
+    assert result["valid"] is True
+    assert result["stats"]["has_home"] is True
+    assert result["stats"]["has_extrusion"] is True
+    assert result["stats"]["has_temp"] is True
+    # The validator counts ;LAYER: markers, which are 2 (LAYER:0 and LAYER:1)
+    assert result["stats"]["layers"] == 2
+    
+    # Missing homing
+    no_home = valid_gcode.replace("G28\n", "")
+    path2 = tmp_path / "no_home.gcode"
+    path2.write_text(no_home)
+    result2 = slicer.validate_gcode(str(path2))
+    assert result2["valid"] is False
+    assert "homing" in result2["error"].lower()
+    
+    # Missing extrusion
+    no_extrude = valid_gcode.replace("E1.0", "E0").replace("E2.0", "E0")
+    path3 = tmp_path / "no_extrude.gcode"
+    path3.write_text(no_extrude)
+    result3 = slicer.validate_gcode(str(path3))
+    assert result3["valid"] is False
+    assert "extrusion" in result3["error"].lower()
+    
+    # No layers - has extrusion and homing but no Z moves or layer markers
+    no_layers = "G21\nG28\nM104 S200\nG1 X10 Y10 E1.0 F1500\nM104 S0\n"
+    path4 = tmp_path / "no_layers.gcode"
+    path4.write_text(no_layers)
+    result4 = slicer.validate_gcode(str(path4))
+    assert result4["valid"] is False
+    assert "layers" in result4["error"].lower()
+
+
+def test_slicer_parse_gcode_metadata(tmp_path):
+    """Test parsing of G-code metadata."""
+    slicer = Slicer(cura_engine_path="/fake")
+    
+    gcode = (
+        ";TIME:3600\n"
+        ";LAYER_COUNT:10\n"
+        ";Filament used: 5000mm, 15.5g\n"
+        "G21\nG28\n;LAYER:0\nG1 X10 Y10 Z0.2 E1\n"
+    )
+    path = tmp_path / "meta.gcode"
+    path.write_text(gcode)
+    
+    metadata = slicer._parse_gcode_metadata(str(path))
+    assert metadata["print_time"] == 3600
+    # The metadata parser reads LAYER_COUNT from the comment, which is 10
+    assert metadata["layers"] == 10
+    assert metadata["filament_length_m"] == 5.0
+    assert metadata["filament_used"] == 15.5
+    assert metadata["filament_weight_estimated"] is True
+
+
+def test_slicer_preset_integration(monkeypatch):
+    """Test that presets work through the slice method."""
+    import ai3d_designer.slicing.slicer as slicer_module
+    
+    def mock_find_definitions_dir(self):
+        return str(Path(__file__).parent.parent / "python-backend" / "cura_resources" / "definitions")
+    
+    monkeypatch.setattr(slicer_module.Slicer, "_find_definitions_dir", mock_find_definitions_dir)
+    
+    # Create a mock CuraEngine that just writes a valid G-code file
+    def mock_run(cmd, **kwargs):
+        # Write a minimal valid G-code to the output path
+        output_idx = cmd.index("-o")
+        output_path = cmd[output_idx + 1]
+        with open(output_path, "w") as f:
+            f.write(";FLAVOR:Marlin\n;LAYER_COUNT:1\nG21\nM104 S200\nG28\n;LAYER:0\nG1 X10 Y10 Z0.2 E1\nM104 S0\n")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+    
+    monkeypatch.setattr(subprocess, "run", mock_run)
+    
+    slicer = Slicer(cura_engine_path="/fake/CuraEngine")
+    settings = SliceSettings.from_preset("Quick")
+    
+    with tempfile.TemporaryDirectory() as tmpdir:
+        stl_path = os.path.join(tmpdir, "test.stl")
+        trimesh.creation.box(extents=(10, 10, 10)).export(stl_path)
+        gcode_path = os.path.join(tmpdir, "test.gcode")
+        
+        result = slicer.slice(stl_path, gcode_path, settings=settings)
+        assert result.success is True
+        assert result.gcode_path == gcode_path

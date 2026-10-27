@@ -6,43 +6,93 @@ mechanical dimensions; this utility creates an approximate relief, not exact CAD
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Union
 
 import numpy as np
 import trimesh
 
 
 def build_closed_heightfield(
-    x_grid: np.ndarray,
-    y_grid: np.ndarray,
-    top_z: np.ndarray,
+    x_grid: Union[np.ndarray, float],
+    y_grid: Union[np.ndarray, float, None] = None,
+    top_z: Optional[np.ndarray] = None,
+    scale_x: Optional[float] = None,
+    scale_y: Optional[float] = None,
     *,
     bottom_z: float = 0.0,
     vertex_colors: Optional[np.ndarray] = None,
 ) -> trimesh.Trimesh:
     """Build a watertight solid under a regular XY heightfield.
 
-    x_grid, y_grid and top_z must be equally shaped 2-D arrays of at least 2x2.
-    vertex_colors, when present, must be RGB/RGBA for each top-grid vertex.
-    """
-    x = np.asarray(x_grid, dtype=np.float64)
-    y = np.asarray(y_grid, dtype=np.float64)
-    z = np.asarray(top_z, dtype=np.float64)
-    if x.ndim != 2 or x.shape != y.shape or x.shape != z.shape:
-        raise ValueError("x_grid, y_grid, and top_z must be equally shaped 2-D arrays.")
-    height, width = x.shape
-    if height < 2 or width < 2:
-        raise ValueError("A heightfield needs at least two rows and two columns.")
-    if not (np.isfinite(x).all() and np.isfinite(y).all() and np.isfinite(z).all()):
-        raise ValueError("Heightfield coordinates must contain only finite values.")
-    if not np.isfinite(float(bottom_z)):
-        raise ValueError("bottom_z must be finite.")
-    if np.any(z <= bottom_z):
-        raise ValueError("All top_z values must be above bottom_z to form a solid.")
+    Two calling conventions are supported:
 
-    flat_top = np.column_stack((x.ravel(), y.ravel(), z.ravel()))
+    1. Explicit grids (preferred):
+       build_closed_heightfield(x_grid, y_grid, top_z, bottom_z=0.0, vertex_colors=None)
+       x_grid, y_grid and top_z must be equally shaped 2-D arrays of at least 2x2.
+
+    2. Simple heightfield with scales (backward compatible):
+       build_closed_heightfield(heights, scale_x=20, scale_y=10, bottom_z=0.0, vertex_colors=None)
+       OR
+       build_closed_heightfield(heights, 20, 10, bottom_z=0.0, vertex_colors=None)
+       heights is a 2-D array of Z values; X spans [0, scale_x], Y spans [0, scale_y].
+    """
+    # Detect simple heightfield API: first arg is 2D array, scale_x/scale_y provided (positional or keyword),
+    # y_grid/top_z not arrays (or are None/numbers)
+    is_simple_api = (
+        isinstance(x_grid, np.ndarray) and x_grid.ndim == 2
+        and (scale_x is not None or (isinstance(y_grid, (int, float)) and y_grid is not None))
+        and (scale_y is not None or (isinstance(top_z, (int, float)) and top_z is not None))
+        and (y_grid is None or isinstance(y_grid, (int, float)))
+        and (top_z is None or isinstance(top_z, (int, float)))
+    )
+    
+    if is_simple_api:
+        # Support both positional (y_grid, top_z) and keyword (scale_x, scale_y) for scales
+        if scale_x is None and isinstance(y_grid, (int, float)):
+            scale_x = float(y_grid)
+        if scale_y is None and isinstance(top_z, (int, float)):
+            scale_y = float(top_z)
+        
+        heights = np.asarray(x_grid, dtype=np.float64)
+        if heights.ndim != 2 or min(heights.shape, default=0) < 2:
+            raise ValueError("Heightfield needs at least 2 x 2.")
+        if not np.isfinite(heights).all():
+            raise ValueError("Heightfield coordinates must contain only finite values.")
+        if not (np.isfinite(scale_x) and scale_x > 0 and np.isfinite(scale_y) and scale_y > 0):
+            raise ValueError("scale_x and scale_y must be finite positive numbers.")
+        if not np.isfinite(float(bottom_z)):
+            raise ValueError("bottom_z must be finite.")
+        if np.any(heights <= bottom_z):
+            raise ValueError("All height values must be above bottom_z to form a solid.")
+
+        height, width = heights.shape
+        x = np.linspace(0.0, float(scale_x), width)
+        y = np.linspace(0.0, float(scale_y), height)
+        xx, yy = np.meshgrid(x, y)
+        z = heights
+        # Use the meshgrid outputs for correct shapes
+        x_use, y_use = xx, yy
+    else:
+        # Explicit grid API
+        x = np.asarray(x_grid, dtype=np.float64)
+        y = np.asarray(y_grid, dtype=np.float64)
+        z = np.asarray(top_z, dtype=np.float64)
+        if x.ndim != 2 or x.shape != y.shape or x.shape != z.shape:
+            raise ValueError("x_grid, y_grid, and top_z must be equally shaped 2-D arrays.")
+        height, width = x.shape
+        if height < 2 or width < 2:
+            raise ValueError("A heightfield needs at least 2 x 2.")
+        if not (np.isfinite(x).all() and np.isfinite(y).all() and np.isfinite(z).all()):
+            raise ValueError("Heightfield coordinates must contain only finite values.")
+        if not np.isfinite(float(bottom_z)):
+            raise ValueError("bottom_z must be finite.")
+        if np.any(z <= bottom_z):
+            raise ValueError("All top_z values must be above bottom_z to form a solid.")
+        x_use, y_use = x, y
+
+    flat_top = np.column_stack((x_use.ravel(), y_use.ravel(), z.ravel()))
     flat_bottom = np.column_stack(
-        (x.ravel(), y.ravel(), np.full(x.size, float(bottom_z), dtype=np.float64))
+        (x_use.ravel(), y_use.ravel(), np.full(x_use.size, float(bottom_z), dtype=np.float64))
     )
     count = height * width
     faces: list[list[int]] = []

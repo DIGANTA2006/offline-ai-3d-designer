@@ -30,7 +30,7 @@ from ai3d_designer.core.spec.models import (
     PrimitiveType, OperationType, UnitSystem
 )
 from ai3d_designer.core.geometry.engine import create_part_from_spec
-from ai3d_designer.core.export.exporter import export_step, export_stl, ExportResult
+from ai3d_designer.core.export.exporter import export_step, export_stl, export_3mf, export_zip_bundle, ExportResult, check_export_blockers
 from ai3d_designer.core.validation.validator import validate_spec, validate_geometry
 from ai3d_designer.core.nlp.parser import parse_natural_language
 from ai3d_designer.ocr.pipeline import (
@@ -100,6 +100,7 @@ class SliceSettingsRequest(BaseModel):
     wall_thickness: float = Field(default=1.2, gt=0, le=40.0)
     infill_density: float = Field(default=20.0, ge=0, le=100)
     support_enabled: bool = False
+    preset: Optional[str] = Field(default=None, description="Quick, Balanced, or Strong")
 
 
 class SliceRequest(BaseModel):
@@ -182,6 +183,24 @@ class TextToCadResponse(BaseModel):
     error: Optional[str] = None
 
 
+class ExportRequest(BaseModel):
+    partSpec: dict
+    formats: list[str] = Field(default_factory=lambda: ["step", "stl", "3mf", "zip"])
+    settings: Optional[dict] = None
+
+
+class ExportResponse(BaseModel):
+    success: bool
+    stepBase64: Optional[str] = None
+    stlBase64: Optional[str] = None
+    mfBase64: Optional[str] = None
+    zipBase64: Optional[str] = None
+    dimensionReport: Optional[dict] = None
+    printGuide: Optional[str] = None
+    error: Optional[str] = None
+    validationErrors: list[str] = Field(default_factory=list)
+
+
 def require_cad_service_token(authorization: Optional[str] = Header(default=None)) -> None:
     """Require the shared web-to-CAD token; only explicit development/test may omit it."""
     app_env = os.environ.get("APP_ENV", "").strip().lower()
@@ -209,13 +228,13 @@ jobs: dict[str, dict] = {}
 
 def _export_part_to_base64(part, formats: list[str]) -> dict:
     """Export the requested formats; never report success for a skipped/failed export."""
-    supported = {"step", "stl"}
+    supported = {"step", "stl", "3mf"}
     normalized = list(dict.fromkeys(str(fmt).strip().lower() for fmt in formats if str(fmt).strip()))
     if not normalized:
-        raise ValueError("Choose at least one export format: step or stl.")
+        raise ValueError("Choose at least one export format: step, stl, or 3mf.")
     unknown = sorted(set(normalized) - supported)
     if unknown:
-        raise ValueError(f"Unsupported export format(s): {', '.join(unknown)}. Supported: step, stl.")
+        raise ValueError(f"Unsupported export format(s): {', '.join(unknown)}. Supported: step, stl, 3mf.")
 
     results = {}
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -225,9 +244,12 @@ def _export_part_to_base64(part, formats: list[str]) -> dict:
             if fmt == "step":
                 result = export_step(part, file_path)
                 result_key = "stepBase64"
-            else:
+            elif fmt == "stl":
                 result = export_stl(part, file_path)
                 result_key = "stlBase64"
+            else:
+                result = export_3mf(part, file_path)
+                result_key = "mfBase64"
 
             if not result.success or not os.path.isfile(file_path) or os.path.getsize(file_path) == 0:
                 details = "; ".join(result.validation_errors) or "exporter did not produce a non-empty file"
@@ -237,6 +259,20 @@ def _export_part_to_base64(part, formats: list[str]) -> dict:
                 results[result_key] = base64.b64encode(exported_file.read()).decode("ascii")
 
     return results
+
+
+def _export_zip_bundle_to_base64(part, part_spec: dict, settings: Optional[dict] = None) -> dict:
+    """Export ZIP bundle and return base64."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        zip_path = os.path.join(tmpdir, "bundle.zip")
+        result = export_zip_bundle(part, zip_path, part_spec=part_spec, settings=settings, include_step=True, include_stl=True, include_3mf=True, validate=True)
+        if not result.success or not os.path.isfile(zip_path) or os.path.getsize(zip_path) == 0:
+            details = "; ".join(result.validation_errors) or "exporter did not produce a non-empty ZIP file"
+            raise RuntimeError(f"ZIP export failed: {details}")
+        with open(zip_path, "rb") as f:
+            return {"zipBase64": base64.b64encode(f.read()).decode("ascii")}
+
+
 # =============================================================================
 # Lifespan
 # =============================================================================
@@ -408,10 +444,12 @@ async def ocr_extract(request: OcrRequest):
         raise HTTPException(status_code=500, detail="Drawing extraction failed unexpectedly. Check service logs.") from exc
 
 
-
 @app.post("/api/v1/slice", dependencies=[Depends(require_cad_service_token)])
 def slice_stl(request: SliceRequest):
-    """Slice a validated STL using CuraEngine; return G-code only on real success."""
+    """Slice a validated STL using CuraEngine; return G-code only on real success.
+    
+    Supports both project-generated STLs and standalone uploaded STLs (T63).
+    """
     capability = get_slicing_capability()
     if not capability["available"]:
         raise HTTPException(
@@ -426,13 +464,28 @@ def slice_stl(request: SliceRequest):
     if not stl_bytes or len(stl_bytes) > 20 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="STL must be non-empty and no larger than 20 MiB.")
 
+    # Apply preset if specified
+    settings_dict = request.settings.model_dump()
+    preset = settings_dict.pop("preset", None)
+    if preset:
+        try:
+            preset_settings = SliceSettings.from_preset(preset)
+            # Merge preset with any explicitly provided settings
+            for key, value in settings_dict.items():
+                if value is not None:
+                    setattr(preset_settings, key, value)
+            settings = preset_settings
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    else:
+        settings = SliceSettings(**settings_dict)
+
     with tempfile.TemporaryDirectory(prefix="offline-ai-slice-") as work_dir:
         stl_path = os.path.join(work_dir, "input.stl")
         gcode_path = os.path.join(work_dir, "output.gcode")
         with open(stl_path, "wb") as handle:
             handle.write(stl_bytes)
 
-        settings = SliceSettings(**request.settings.model_dump())
         result = Slicer().slice(stl_path, gcode_path, settings=settings, timeout_seconds=45.0)
         if not result.success or not result.gcode_path:
             detail = "; ".join(result.errors)[:1500] or "CuraEngine did not produce a valid G-code file."
@@ -639,6 +692,84 @@ def text_to_cad(request: TextToCadRequest):
         return TextToCadResponse(
             success=False,
             error="CAD generation failed. Check the service logs and try a simpler dimensioned description.",
+        )
+
+
+@app.post("/api/v1/export", response_model=ExportResponse, dependencies=[Depends(require_cad_service_token)])
+def export_part(request: ExportRequest):
+    """Export a part to STEP, STL, 3MF, and/or ZIP bundle with dimension report and print guide.
+    
+    Blocks export on unconfirmed defaults (L-05) and sprocket previews (L-06).
+    """
+    try:
+        # Check export blockers
+        blockers = check_export_blockers(request.partSpec)
+        if blockers:
+            return ExportResponse(
+                success=False,
+                error="Export blocked",
+                validationErrors=blockers,
+            )
+        
+        # Create PartSpec from dict
+        part_spec = PartSpec(**request.partSpec)
+        
+        # Validate spec
+        spec_validation = validate_spec(part_spec)
+        if not spec_validation.is_valid:
+            return ExportResponse(
+                success=False,
+                error="Specification validation failed",
+                validationErrors=[issue.message for issue in spec_validation.errors],
+            )
+        
+        # Generate geometry
+        part = create_part_from_spec(part_spec)
+        
+        # Validate geometry
+        geom_validation = validate_geometry(part)
+        if not geom_validation.is_valid:
+            return ExportResponse(
+                success=False,
+                error="Geometry validation failed",
+                validationErrors=[issue.message for issue in geom_validation.errors],
+            )
+        
+        # Export individual formats
+        export_results = _export_part_to_base64(part, request.formats)
+        
+        # Generate dimension report
+        dimension_report = None
+        if "step" in request.formats or "stl" in request.formats or "3mf" in request.formats or "zip" in request.formats:
+            dimension_report = generate_dimension_report(part, part_spec.model_dump(mode="json"))
+        
+        # Generate print guide
+        print_guide = None
+        if "zip" in request.formats:
+            print_guide = generate_print_guide(part, request.settings)
+        
+        # Export ZIP bundle if requested
+        zip_base64 = None
+        if "zip" in request.formats:
+            zip_result = _export_zip_bundle_to_base64(part, part_spec.model_dump(mode="json"), request.settings)
+            zip_base64 = zip_result.get("zipBase64")
+        
+        return ExportResponse(
+            success=True,
+            stepBase64=export_results.get("stepBase64"),
+            stlBase64=export_results.get("stlBase64"),
+            mfBase64=export_results.get("mfBase64"),
+            zipBase64=zip_base64,
+            dimensionReport=dimension_report,
+            printGuide=print_guide,
+        )
+        
+    except Exception as e:
+        traceback.print_exc()
+        return ExportResponse(
+            success=False,
+            error="Export failed. Check the service logs.",
+            validationErrors=[str(e)],
         )
 
 

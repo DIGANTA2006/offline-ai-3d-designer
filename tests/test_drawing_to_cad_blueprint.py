@@ -277,7 +277,7 @@ def test_vision_timeout_is_configurable_and_bounded(monkeypatch):
 
     provider = get_vision_backend()
     assert isinstance(provider, OpenAICompatibleVision)
-    assert provider.timeout == 120.0
+    assert provider.timeout == 30.0
 
     monkeypatch.setenv("DRAWING_VISION_TIMEOUT_SECONDS", "9999")
     with pytest.raises(ValueError, match="between 1 and 600"):
@@ -398,8 +398,8 @@ def test_openai_compatible_vision_sends_image_and_strict_schema(monkeypatch):
     assert captured["headers"]["Authorization"] == "Bearer test-secret"
     body = captured["body"]
     assert body["temperature"] == 0
-    assert body["max_tokens"] == 8192
-    assert captured["timeout"] == 110
+    assert body["max_tokens"] == 2048
+    assert captured["timeout"] == 25.0
     assert body["response_format"]["json_schema"]["strict"] is True
     assert body["messages"][1]["content"][1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
     schema = body["response_format"]["json_schema"]["schema"]

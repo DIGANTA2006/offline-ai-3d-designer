@@ -2,6 +2,11 @@
 
 import asyncio
 import base64
+import sys
+import os
+
+# Add python-backend to path so we can import main
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python-backend"))
 
 import pytest
 from fastapi import HTTPException
