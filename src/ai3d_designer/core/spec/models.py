@@ -187,18 +187,27 @@ class ComponentType(str, Enum):
 
 
 class ComponentSpec(BaseModel):
-    """Specification for a component that needs to fit inside an enclosure."""
+    """Specification for a component that needs to fit inside an enclosure.
+    
+    Uses standard terminology: width (X), depth (Y), height (Z).
+    """
     id: str = Field(default_factory=lambda: str(uuid.uuid4())[:8])
     name: str
     type: ComponentType = ComponentType.CUSTOM
-    # Dimensions in mm (bounding box)
+    # Dimensions in mm (bounding box) - width=X, depth=Y, height=Z
     width: float
     depth: float
     height: float
+    # Required clearance around component in mm (per axis)
+    clearance_mm: float = 1.0
     # Optional: mounting hole positions relative to component origin
     mounting_holes: List[List[float]] = Field(default_factory=list)
     # Optional: keep-out zones (areas that must not be obstructed)
     keepout_zones: List[Dict[str, Any]] = Field(default_factory=list)
+    # Optional: metadata for vendor info, part numbers, etc.
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    # Optional: description
+    description: str = ""
     # Source of the specification
     source: ParameterSource = ParameterSource.USER
     # Whether the user has confirmed these dimensions
@@ -211,40 +220,77 @@ class ComponentSpec(BaseModel):
     @model_validator(mode="after")
     def validate_dimensions(self):
         if not isfinite(self.width) or self.width <= 0:
-            raise ValueError("Component width must be finite and positive")
+            raise ValueError("width must be finite and positive")
         if not isfinite(self.depth) or self.depth <= 0:
-            raise ValueError("Component depth must be finite and positive")
+            raise ValueError("depth must be finite and positive")
         if not isfinite(self.height) or self.height <= 0:
-            raise ValueError("Component height must be finite and positive")
+            raise ValueError("height must be finite and positive")
+        if not isfinite(self.clearance_mm) or self.clearance_mm < 0:
+            raise ValueError("clearance_mm must be finite and non-negative")
         return self
+
+    @property
+    def length(self) -> float:
+        """Alias for depth (Y-axis dimension) for backward compatibility."""
+        return self.depth
 
 
 class EnclosureSpec(BaseModel):
     """Specification for an enclosure interior volume."""
     id: str = Field(default_factory=lambda: str(uuid.uuid4())[:8])
     name: str
-    # Interior dimensions in mm
+    # Interior dimensions in mm - width=X, depth=Y, height=Z
     interior_width: float
     interior_depth: float
     interior_height: float
     # Wall thickness in mm
     wall_thickness: float = 2.0
+    # Optional: lid clearance (extra Z height for lid)
+    lid_clearance: float = 0.0
     # Optional: mounting boss positions
     mounting_bosses: List[List[float]] = Field(default_factory=list)
     # Optional: cutouts/ports
     cutouts: List[Dict[str, Any]] = Field(default_factory=list)
+    # Source of the specification
+    source: ParameterSource = ParameterSource.USER
+    # Whether the user has confirmed these dimensions
+    confirmed: bool = False
+    # Optional: description
+    description: str = ""
 
     @model_validator(mode="after")
     def validate_dimensions(self):
         if not isfinite(self.interior_width) or self.interior_width <= 0:
-            raise ValueError("Enclosure interior width must be finite and positive")
+            raise ValueError("interior width must be finite and positive")
         if not isfinite(self.interior_depth) or self.interior_depth <= 0:
-            raise ValueError("Enclosure interior depth must be finite and positive")
+            raise ValueError("interior depth must be finite and positive")
         if not isfinite(self.interior_height) or self.interior_height <= 0:
-            raise ValueError("Enclosure interior height must be finite and positive")
+            raise ValueError("interior height must be finite and positive")
         if not isfinite(self.wall_thickness) or self.wall_thickness < 0:
             raise ValueError("wall thickness must be finite and non-negative")
+        if not isfinite(self.lid_clearance) or self.lid_clearance < 0:
+            raise ValueError("lid clearance must be finite and non-negative")
         return self
+
+    @property
+    def exterior_width(self) -> float:
+        return self.interior_width + 2 * self.wall_thickness
+
+    @property
+    def exterior_depth(self) -> float:
+        return self.interior_depth + 2 * self.wall_thickness
+
+    @property
+    def exterior_height(self) -> float:
+        return self.interior_height + 2 * self.wall_thickness
+
+    @property
+    def exterior_length(self) -> float:
+        return self.exterior_depth  # alias for depth (longer dimension)
+
+    @property
+    def interior_length(self) -> float:
+        return self.interior_depth  # alias for depth (longer dimension)
 
 
 class FitCheckResult(BaseModel):
