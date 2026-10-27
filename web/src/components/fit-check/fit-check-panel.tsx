@@ -82,8 +82,6 @@ export function FitCheckPanel() {
   useEffect(() => {
     let cancelled = false;
     async function loadPresets() {
-      setLoadingPresets(true);
-      setError("");
       try {
         const response = await fetch("/api/cad/fit-check/presets", {
           method: "GET",
