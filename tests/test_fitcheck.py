@@ -10,6 +10,7 @@ from ai3d_designer.fitcheck.presets import (
     get_preset_component,
     list_hardware_presets,
     generate_enclosure_for_component,
+    run_fit_check,
 )
 from ai3d_designer.core.spec.models import ParameterSource, PartSpec, FeatureSpec, PrimitiveType, OperationType, UnitSystem
 
@@ -354,13 +355,78 @@ def test_component_with_mounting_holes():
         interior_width=100.0,
         interior_depth=80.0,
         interior_height=40.0,
-        mounting_bosses=[[10, 10, 0], [40, 10, 0], [10, 20, 0], [40, 20, 0]],
+        # Bosses are in enclosure coordinates; the component is centred in the interior.
+        mounting_bosses=[[37, 37, 0], [67, 37, 0], [37, 47, 0], [67, 47, 0]],
     )
 
     engine = FitCheckEngine()
     result = engine.check_component_fit(component, enclosure)
 
     assert result.fits is True
+    assert result.issues == []
+
+
+def test_fit_check_rejects_misaligned_mounting_bosses():
+    component = ComponentSpec(
+        name="PCB with Mounts",
+        width=50.0,
+        depth=30.0,
+        height=10.0,
+        mounting_holes=[[10, 10], [40, 10], [10, 20], [40, 20]],
+    )
+    enclosure = EnclosureSpec(
+        name="Enclosure",
+        interior_width=100.0,
+        interior_depth=80.0,
+        interior_height=40.0,
+        wall_thickness=2.0,
+        mounting_bosses=[[38, 37], [67, 37], [37, 47], [67, 47]],
+    )
+
+    result = FitCheckEngine().check_component_fit(component, enclosure)
+
+    assert result.fits is False
+    assert any("does not align" in issue for issue in result.issues)
+
+
+def test_fit_check_rejects_invalid_clearances():
+    with pytest.raises(ValueError, match="default_clearance_mm must be finite and non-negative"):
+        FitCheckEngine(default_clearance_mm=-1.0)
+
+    component = ComponentSpec(name="PCB", width=10, depth=10, height=5)
+    enclosure = EnclosureSpec(name="Enclosure", interior_width=20, interior_depth=20, interior_height=20)
+    with pytest.raises(ValueError, match="clearance_mm must be finite and non-negative"):
+        FitCheckEngine().check_component_fit(component, enclosure, clearance_mm=float("nan"))
+
+
+def test_fit_check_zero_clearance_is_reported_correctly():
+    component = ComponentSpec(name="PCB", width=10, depth=10, height=5)
+    enclosure = EnclosureSpec(name="Enclosure", interior_width=20, interior_depth=20, interior_height=20)
+
+    report = FitCheckEngine().check_all_components([component], enclosure, clearance_mm=0.0)
+
+    assert report.overall_fit is True
+    assert "with 0.0 mm clearance" in report.summary
+
+
+def test_fit_check_empty_component_list_is_not_reported_as_success():
+    enclosure = EnclosureSpec(name="Empty", interior_width=20, interior_depth=20, interior_height=20)
+
+    report = FitCheckEngine().check_all_components([], enclosure)
+
+    assert report.overall_fit is False
+    assert "No components were supplied" in report.summary
+
+
+def test_run_fit_check_uses_available_engine_api_for_presets():
+    component = get_preset_component("esp32_devkit")
+    enclosure, _part_spec = generate_enclosure_for_component(component)
+
+    report = run_fit_check(component, enclosure)
+
+    assert report.overall_fit is True
+    assert len(report.results) == 1
+    assert report.results[0].component_id == component.id
 
 
 def test_component_confirmed_flag():
