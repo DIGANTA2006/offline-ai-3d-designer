@@ -389,14 +389,14 @@ def export_zip_bundle(
             # Generate dimension report
             report = generate_dimension_report(part, part_spec)
             report_path = tmpdir_path / "dimension_report.json"
-            with open(report_path, "w") as f:
+            with open(report_path, "w", encoding="utf-8", newline="\n") as f:
                 json.dump(report, f, indent=2)
             exported_files["report"] = report_path
             
             # Generate print guide
             guide = generate_print_guide(part, settings)
             guide_path = tmpdir_path / "print_guide.md"
-            with open(guide_path, "w") as f:
+            with open(guide_path, "w", encoding="utf-8", newline="\n") as f:
                 f.write(guide)
             exported_files["guide"] = guide_path
             
