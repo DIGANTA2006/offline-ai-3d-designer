@@ -1,5 +1,6 @@
 """Authenticated API tests for the hardware fit-check workflow."""
 
+import pytest
 import sys
 from pathlib import Path
 
