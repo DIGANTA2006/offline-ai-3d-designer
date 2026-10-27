@@ -60,7 +60,7 @@ RUN chown -R appuser:appuser /app
 RUN python -c "import build123d, ai3d_designer, main; assert main.cad_runtime_is_available(), 'build123d runtime import failed'; assert main.is_ocr_available(), 'Tesseract/PyMuPDF/Pillow OCR runtime is unavailable'; print('CAD_RUNTIME_AVAILABLE=true OCR_AVAILABLE=true')"
 
 # Validate CuraEngine is available and functional (fail build if not)
-RUN python -c "import subprocess; result = subprocess.run(['CuraEngine', '--version'], capture_output=True, timeout=10); assert result.returncode == 0, f'CuraEngine not found or failed: {result.stderr.decode()}'; print('CURA_ENGINE_AVAILABLE=true')"
+RUN python -c "import shutil, subprocess; path = shutil.which('CuraEngine'); assert path, 'CuraEngine binary not found on PATH'; result = subprocess.run([path, 'help'], capture_output=True, timeout=10); out = (result.stdout + result.stderr).decode(errors='replace'); assert 'CuraEngine slice' in out, 'CuraEngine help output unexpected: ' + out[:500]; print('CURA_ENGINE_AVAILABLE=true', path)"
 
 # Validate bundled Cura definitions are present and valid JSON
 RUN python -c "import json, os; p1='/app/python-backend/cura_resources/definitions/generic_fdm_printer.def.json'; p2='/app/python-backend/cura_resources/definitions/generic_fdm_extruder.def.json'; assert os.path.isfile(p1) and os.path.isfile(p2), 'Bundled Cura definitions missing'; json.load(open(p1)); json.load(open(p2)); print('CURA_DEFINITIONS_VALID=true')"
