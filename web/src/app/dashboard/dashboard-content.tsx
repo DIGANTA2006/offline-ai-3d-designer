@@ -8,6 +8,7 @@ import {
   FolderKanban,
   LayoutDashboard,
   Plus,
+  Ruler,
   Settings2,
   ShieldCheck,
   Sparkles,
@@ -53,6 +54,7 @@ export default function DashboardContent({ user, projects, stats }: DashboardPro
             <Link href="/dashboard" className="flex items-center gap-3 rounded-xl bg-primary/10 px-3 py-2.5 text-sm font-medium text-primary"><LayoutDashboard className="size-4" /> Overview</Link>
             <Link href="/dashboard/projects" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"><FolderKanban className="size-4" /> Projects</Link>
             <Link href="/dashboard/projects" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"><Workflow className="size-4" /> CAD jobs</Link>
+            <Link href="/dashboard/fit-check" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"><Ruler className="size-4" /> Hardware fit check</Link>
           </nav>
           <p className="mb-3 mt-8 px-3 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Account</p>
           <nav className="space-y-1">
@@ -61,7 +63,7 @@ export default function DashboardContent({ user, projects, stats }: DashboardPro
           </nav>
           <div className="mt-auto rounded-2xl border border-border bg-background p-4">
             <p className="text-sm font-semibold">CAD workspace</p>
-            <p className="mt-2 text-xs leading-5 text-muted-foreground">Text-to-CAD is available when the protected Python service is configured. Drawing OCR and image-to-3D are not yet implemented.</p>
+            <p className="mt-2 text-xs leading-5 text-muted-foreground">Text-to-CAD and reviewable drawing OCR are available for supported inputs. General single-image-to-parametric-CAD reconstruction remains unsupported.</p>
           </div>
         </aside>
 
@@ -130,8 +132,14 @@ export default function DashboardContent({ user, projects, stats }: DashboardPro
                   <div className="rounded-xl border border-border bg-background/60 p-4">
                     <FileUp className="size-5 text-primary" />
                     <p className="mt-3 text-sm font-semibold">Store an engineering drawing</p>
-                    <p className="mt-1 text-xs leading-5 text-muted-foreground">Secure file storage is available. Automated OCR and drawing-to-CAD conversion are not implemented yet.</p>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">Extract drawing text and review a structured blueprint. Only supported, confirmed dimensions can be used for generation.</p>
                     <Button className="mt-4 w-full" variant="outline" asChild><Link href="/dashboard/upload">Upload drawing</Link></Button>
+                  </div>
+                  <div className="rounded-xl border border-border bg-background/60 p-4">
+                    <Ruler className="size-5 text-primary" />
+                    <p className="mt-3 text-sm font-semibold">Check component fit</p>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">Compare a confirmed hardware preset with usable enclosure dimensions and review shortfalls.</p>
+                    <Button className="mt-4 w-full" variant="outline" asChild><Link href="/dashboard/fit-check">Open fit checker</Link></Button>
                   </div>
                 </CardContent>
               </Card>
