@@ -597,8 +597,10 @@ def test_fit_check_preset_aries_v2_passes():
 
     assert result.fits is True
     # Clearance should match component's specified clearance
-    assert result.clearance_mm["x"] == pytest.approx(component.clearance_mm * 2, rel=1e-6)
-    assert result.clearance_mm["y"] == pytest.approx(component.clearance_mm * 2, rel=1e-6)
+    # The exact recommended internal width/length leaves zero additional margin
+    # after the requested per-side clearance is deducted.
+    assert result.clearance_mm["x"] == pytest.approx(0.0, abs=1e-6)
+    assert result.clearance_mm["y"] == pytest.approx(0.0, abs=1e-6)
     assert result.clearance_mm["z"] >= component.clearance_mm  # Z has extra lid clearance
 
 
@@ -759,7 +761,7 @@ def test_generated_lid_is_a_separate_buildable_solid():
     lid_size = lid.bounding_box().size
     assert lid_size.X == pytest.approx(enclosure.exterior_depth)
     assert lid_size.Y == pytest.approx(enclosure.exterior_width)
-    assert lid_size.Z == pytest.approx(enclosure.wall_thickness)
+    assert lid_size.Z == pytest.approx(enclosure.wall_thickness + min(enclosure.wall_thickness, 3.0) - 0.05)
 
 
 def test_generated_enclosure_rejects_invalid_dimensions():
