@@ -10,6 +10,7 @@ from ai3d_designer.fitcheck.presets import (
     get_preset_component,
     list_hardware_presets,
     generate_enclosure_for_component,
+    generate_lid_for_enclosure,
     run_fit_check,
 )
 from ai3d_designer.core.spec.models import ParameterSource, PartSpec, FeatureSpec, PrimitiveType, OperationType, UnitSystem
@@ -486,7 +487,7 @@ def test_get_preset_component_aries_v2_riscv():
     assert component.height == 12.0
     assert component.clearance_mm == 2.0
     assert component.source == ParameterSource.DATASHEET
-    assert component.confirmed is True
+    assert component.confirmed is False
     assert component.type == ComponentType.PCB
 
 
@@ -501,7 +502,7 @@ def test_get_preset_component_aries_alpha_riscv():
     assert component.height == 12.0
     assert component.clearance_mm == 2.0
     assert component.source == ParameterSource.DATASHEET
-    assert component.confirmed is True
+    assert component.confirmed is False
 
 
 def test_get_preset_component_iot_sensor_node():
@@ -514,8 +515,8 @@ def test_get_preset_component_iot_sensor_node():
     assert component.width == 48.0
     assert component.height == 15.0
     assert component.clearance_mm == 2.0
-    assert component.source == ParameterSource.DATASHEET
-    assert component.confirmed is True
+    assert component.source == ParameterSource.DEFAULT
+    assert component.confirmed is False
 
 
 def test_get_preset_component_esp32_devkit():
@@ -529,7 +530,7 @@ def test_get_preset_component_esp32_devkit():
     assert component.height == 13.0
     assert component.clearance_mm == 1.5
     assert component.source == ParameterSource.DATASHEET
-    assert component.confirmed is True
+    assert component.confirmed is False
 
 
 def test_get_preset_component_raspberry_pi_4():
@@ -543,7 +544,7 @@ def test_get_preset_component_raspberry_pi_4():
     assert component.height == 17.0
     assert component.clearance_mm == 2.0
     assert component.source == ParameterSource.DATASHEET
-    assert component.confirmed is True
+    assert component.confirmed is False
 
 
 def test_get_preset_component_arduino_uno_r3():
@@ -557,7 +558,7 @@ def test_get_preset_component_arduino_uno_r3():
     assert component.height == 15.0
     assert component.clearance_mm == 2.0
     assert component.source == ParameterSource.DATASHEET
-    assert component.confirmed is True
+    assert component.confirmed is False
 
 
 def test_get_preset_component_invalid_raises():
@@ -620,8 +621,8 @@ def test_generate_enclosure_for_component_aries_v2():
     # Check EnclosureSpec
     assert isinstance(enclosure, EnclosureSpec)
     assert enclosure.name == "Enclosure for VEGA ARIES v2.0/v3.0 (THEJAS32 RISC-V Dev Board)"
-    assert enclosure.confirmed is True
-    assert enclosure.source == ParameterSource.DATASHEET
+    assert enclosure.confirmed is False
+    assert enclosure.source == ParameterSource.DEFAULT
     assert enclosure.wall_thickness == 2.5  # default
     assert enclosure.lid_clearance == 4.0  # default
 
@@ -645,13 +646,13 @@ def test_generate_enclosure_for_component_aries_v2():
     assert isinstance(part_spec, PartSpec)
     assert part_spec.name == "Enclosure for VEGA ARIES v2.0/v3.0 (THEJAS32 RISC-V Dev Board)"
     assert part_spec.unit_system == UnitSystem.MM
-    assert len(part_spec.features) == 4  # base, cavity, lid, lid_cavity
+    assert len(part_spec.features) == 10  # outer shell, cavity, four bosses, four boss holes
 
-    # Verify features have confirmed parameters
+    # Generated dimensions are derived suggestions and require user confirmation.
     for feature in part_spec.features:
         for param in feature.parameters.values():
-            assert param.confirmed is True
-            assert param.source == ParameterSource.DATASHEET
+            assert param.confirmed is False
+            assert param.source == ParameterSource.DEFAULT
 
 
 def test_generate_enclosure_for_component_custom_wall_thickness():
@@ -702,6 +703,11 @@ def test_generated_part_spec_is_buildable():
     part = create_part_from_spec(part_spec)
     assert part is not None
     assert part.volume > 0
+    assert len(part.solids()) == 1, "The generated enclosure body must be one connected solid."
+    size = part.bounding_box().size
+    assert size.X == pytest.approx(enclosure.exterior_depth)
+    assert size.Y == pytest.approx(enclosure.exterior_width)
+    assert size.Z == pytest.approx(enclosure.interior_height + enclosure.wall_thickness)
 
     # Validate geometry
     geom_validation = validate_geometry(part)
@@ -724,10 +730,43 @@ def test_all_presets_generate_buildable_enclosures():
         part = create_part_from_spec(part_spec)
         assert part is not None, f"Preset {preset_id} geometry creation failed"
         assert part.volume > 0, f"Preset {preset_id} has zero volume"
+        assert len(part.solids()) == 1, f"Preset {preset_id} must produce one connected enclosure body"
 
         # Validate geometry
         geom_validation = validate_geometry(part)
         assert geom_validation.is_valid, f"Preset {preset_id} geometry invalid: {geom_validation.errors}"
+
+
+def test_generated_lid_is_a_separate_buildable_solid():
+    from ai3d_designer.core.geometry.engine import create_part_from_spec
+    from ai3d_designer.core.validation.validator import validate_spec, validate_geometry
+
+    enclosure, body_spec = generate_enclosure_for_component("esp32_devkit")
+    lid_spec = generate_lid_for_enclosure(enclosure)
+
+    assert body_spec.metadata["assembly_role"] == "enclosure_body"
+    assert lid_spec.metadata["assembly_role"] == "enclosure_lid"
+    assert len(lid_spec.features) == 2
+
+    body = create_part_from_spec(body_spec)
+    lid = create_part_from_spec(lid_spec)
+    assert len(body.solids()) == 1
+    assert len(lid.solids()) == 1
+    assert lid.volume > 0
+    assert validate_spec(lid_spec).is_valid
+    assert validate_geometry(lid).is_valid
+
+    lid_size = lid.bounding_box().size
+    assert lid_size.X == pytest.approx(enclosure.exterior_depth)
+    assert lid_size.Y == pytest.approx(enclosure.exterior_width)
+    assert lid_size.Z == pytest.approx(enclosure.wall_thickness)
+
+
+def test_generated_enclosure_rejects_invalid_dimensions():
+    with pytest.raises(ValueError, match="wall_thickness_mm must be positive"):
+        generate_enclosure_for_component("esp32_devkit", wall_thickness_mm=0)
+    with pytest.raises(ValueError, match="extra_clearance_mm must be finite and non-negative"):
+        generate_enclosure_for_component("esp32_devkit", extra_clearance_mm=float("nan"))
 
 
 def test_preset_metadata_includes_vendor_info():
