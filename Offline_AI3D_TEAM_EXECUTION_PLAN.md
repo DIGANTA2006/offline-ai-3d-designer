@@ -644,7 +644,9 @@ The product is one system that turns any description, drawing, sketch, datasheet
 
 ---
 
-## 15. Current product status (verified on the uploaded code and the patched copy)
+## 15. Current product status (main baseline plus PR #6 review branch; latest CI verification pending)
+
+Updated 27 October 2026. PR #6 connects the component-fit capability to the authenticated web app and corrects the enclosure-body/lid generation model. These changes are not merged yet; do not treat them as production-verified until CI executes the Python tests and Docker smoke test.
 
 ### 15.1 What exists, by layer
 
@@ -665,7 +667,7 @@ The product is one system that turns any description, drawing, sketch, datasheet
 | Drawing reading (OCR and vision) | Partial | Falls back to labelled text when the vision provider fails. Hosted provider receives drawings by default | T32, T35, T02 |
 | Photo or sketch to CAD | Not supported (approximate relief only) | Photos have no reliable scale | Later phase |
 | Sprocket | Preview only, not engagement-certified | ISO 606 tooth form not built | Later phase |
-| Datasheet research and fit check | Not built (specification template only) | Research, citation and fit logic missing | T40 to T45 |
+| Hardware component fit check | Existing fit engine and six starting presets are now connected to a protected FastAPI endpoint and `/dashboard/fit-check` UI in PR #6; component and enclosure dimensions require explicit confirmation | Latest CI run has not provided usable test logs yet. Presets still require verification against the exact board revision; fit check is axis-aligned and does not perform full 3D interference/keep-out analysis. Automated datasheet research remains open | T40 to T45 |
 | Printability checks and explanations | Not built as a module. Only validity and watertight checks exist | Bed fit, overhang, minimum wall, hole size, and the four-part explanations are missing | T50 to T54 |
 | Slicing to G-code | Web route and validator exist. CuraEngine not installed in the sandbox (slicing reports unavailable) | Printer profiles, time and filament, container install | T60 to T63 |
 | Exports | STEP and STL working for the text path | ZIP, 3MF and dimension report not found in the code | T64 |
@@ -761,7 +763,7 @@ The product is one system that turns any description, drawing, sketch, datasheet
 | U-02 | Feature checker: defaults must be confirmed before export; references validated; holes inside walls | T16 |
 | U-03 | Printability module: minimum wall, hole size, overhang, bed fit in six orientations, bridging, base contact | T50, T51 |
 | U-04 | Explanation keys with the four parts (what, why, fix, learn more) | T52, T53 |
-| U-05 | Fit-check module and component specification validation | T40, T43 |
+| U-05 | Extend the fit-check workflow: confirmed preset selection, dimension report, separate buildable enclosure body/lid specs; full 3D keep-out/interference checks remain a later task | T40, T43 |
 | U-06 | Planner prompt set with schema-restricted output and question and refusal engines | T20 to T23 |
 | U-07 | Reader: confidence per token, grounding, review log hooks | T31, T34 |
 | U-08 | Slicing: CuraEngine in the image, printer profiles, G-code structure check, time and filament | T60 to T63 |
@@ -798,6 +800,6 @@ The product is one system that turns any description, drawing, sketch, datasheet
 1. Close the silent-default and review gaps: L-05 (block export on defaults), L-01 and L-02 (review and log), L-07 (fallback banner).
 2. Verify the two unverified builds: OPEN-01 (web type check and build) and OPEN-02 (container image as non-root, with CuraEngine).
 3. Finish the must-have types through U-01 to U-03.
-4. Add printability explanations (U-04) and the fit check (U-05) before any component feature is shown.
+4. Verify the fit-check UI/API and enclosure-body/lid geometry after CI executes; continue printability explanations (U-04) and any remaining advanced fit checks (U-05).
 5. Put slicing, exports, and the access helper in place (U-08, U-09, U-12).
 6. Deploy to staging, run the end-to-end tests, and record the results (U-16, U-19).
