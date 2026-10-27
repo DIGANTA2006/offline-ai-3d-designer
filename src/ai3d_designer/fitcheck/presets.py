@@ -404,8 +404,12 @@ def run_fit_check(component: Union[str, ComponentSpec], enclosure: EnclosureSpec
     if isinstance(component, str):
         component = get_preset_component(component)
     
-    engine = FitCheckEngine()
-    return engine.check_fit(component, enclosure)
+    engine = FitCheckEngine(default_clearance_mm=component.clearance_mm)
+    return engine.check_all_components(
+        [component],
+        enclosure,
+        clearance_mm=component.clearance_mm,
+    )
 
 
 # =============================================================================
