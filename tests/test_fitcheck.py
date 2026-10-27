@@ -542,7 +542,8 @@ def test_get_preset_component_raspberry_pi_4():
     assert component.length == 85.0
     assert component.width == 56.0
     assert component.height == 17.0
-    assert component.clearance_mm == 2.0
+    # This is a suggested enclosure clearance, not a manufacturer-guaranteed tolerance.
+    assert component.clearance_mm == 2.5
     assert component.source == ParameterSource.DATASHEET
     assert component.confirmed is False
 
