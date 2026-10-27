@@ -794,97 +794,48 @@ class PrintabilityChecker:
     
     def _is_bottom_face_supported(self, part: Part, face: Face, face_bbox) -> bool:
         """
-        Check if a horizontal face facing DOWN is supported from above.
-        
-        A downward-facing face is supported if there are vertical walls around
-        its perimeter that extend upward, meaning it's the bottom of a cavity
-        or the underside of a solid feature.
+        Determine whether a horizontal underside is backed by solid material.
+
+        Side walls around a face do not make its underside printable: an isolated
+        box has side walls too. Instead, sample points across the face and inspect
+        the geometry a small distance below it. A face is treated as supported
+        only when nearly all sampled interior points have material immediately
+        below them. Partial support is conservatively treated as an unsupported
+        bridge so an open span is not hidden by support at its edges.
         """
         try:
-            supported_edges = 0
-            
-            # Check four edges for vertical walls extending upward
-            # X-min edge
-            has_vertical_wall = False
-            for other_face in part.faces():
-                if other_face == face:
-                    continue
-                try:
-                    other_bbox = other_face.bounding_box()
-                    other_normal = other_face.normal_at()
-                    if abs(other_normal.Z) < 0.5:
-                        if abs(other_bbox.min.X - face_bbox.min.X) < 0.1 or abs(other_bbox.max.X - face_bbox.min.X) < 0.1:
-                            if (other_bbox.min.Y <= face_bbox.max.Y and other_bbox.max.Y >= face_bbox.min.Y):
-                                if other_bbox.min.Z <= face_bbox.max.Z + 0.1:
-                                    has_vertical_wall = True
-                                    break
-                except Exception:
-                    continue
-            if has_vertical_wall:
-                supported_edges += 1
-            
-            # X-max edge
-            has_vertical_wall = False
-            for other_face in part.faces():
-                if other_face == face:
-                    continue
-                try:
-                    other_bbox = other_face.bounding_box()
-                    other_normal = other_face.normal_at()
-                    if abs(other_normal.Z) < 0.5:
-                        if abs(other_bbox.min.X - face_bbox.max.X) < 0.1 or abs(other_bbox.max.X - face_bbox.max.X) < 0.1:
-                            if (other_bbox.min.Y <= face_bbox.max.Y and other_bbox.max.Y >= face_bbox.min.Y):
-                                if other_bbox.min.Z <= face_bbox.max.Z + 0.1:
-                                    has_vertical_wall = True
-                                    break
-                except Exception:
-                    continue
-            if has_vertical_wall:
-                supported_edges += 1
-            
-            # Y-min edge
-            has_vertical_wall = False
-            for other_face in part.faces():
-                if other_face == face:
-                    continue
-                try:
-                    other_bbox = other_face.bounding_box()
-                    other_normal = other_face.normal_at()
-                    if abs(other_normal.Z) < 0.5:
-                        if abs(other_bbox.min.Y - face_bbox.min.Y) < 0.1 or abs(other_bbox.max.Y - face_bbox.min.Y) < 0.1:
-                            if (other_bbox.min.X <= face_bbox.max.X and other_bbox.max.X >= face_bbox.min.X):
-                                if other_bbox.min.Z <= face_bbox.max.Z + 0.1:
-                                    has_vertical_wall = True
-                                    break
-                except Exception:
-                    continue
-            if has_vertical_wall:
-                supported_edges += 1
-            
-            # Y-max edge
-            has_vertical_wall = False
-            for other_face in part.faces():
-                if other_face == face:
-                    continue
-                try:
-                    other_bbox = other_face.bounding_box()
-                    other_normal = other_face.normal_at()
-                    if abs(other_normal.Z) < 0.5:
-                        if abs(other_bbox.min.Y - face_bbox.max.Y) < 0.1 or abs(other_bbox.max.Y - face_bbox.max.Y) < 0.1:
-                            if (other_bbox.min.X <= face_bbox.max.X and other_bbox.max.X >= face_bbox.min.X):
-                                if other_bbox.min.Z <= face_bbox.max.Z + 0.1:
-                                    has_vertical_wall = True
-                                    break
-                except Exception:
-                    continue
-            if has_vertical_wall:
-                supported_edges += 1
-            
-            return supported_edges >= 3
+            size_x = float(face_bbox.size.X)
+            size_y = float(face_bbox.size.Y)
+            if size_x <= 0.0 or size_y <= 0.0:
+                return False
+
+            # Keep sampling bounded for large faces while using multiple interior
+            # samples for ordinary print-sized geometry.
+            samples_x = min(11, max(3, int(np.ceil(size_x / 5.0))))
+            samples_y = min(11, max(3, int(np.ceil(size_y / 5.0))))
+            z_sample = float(face.center().Z) - 0.1
+            supported = 0
+            tested = 0
+
+            for ix in range(1, samples_x):
+                x = float(face_bbox.min.X) + size_x * ix / samples_x
+                for iy in range(1, samples_y):
+                    y = float(face_bbox.min.Y) + size_y * iy / samples_y
+                    point_on_face = (x, y, float(face.center().Z))
+                    if not face.is_inside(point_on_face, tolerance=1e-5):
+                        continue
+                    tested += 1
+                    if part.is_inside((x, y, z_sample), tolerance=1e-5):
+                        supported += 1
+
+            if tested == 0:
+                return False
+
+            return (supported / tested) >= 0.9
         except Exception:
-            pass
-        return False
-    
+            # A failed geometric probe must not silently mark a bridge as safe.
+            return False
+
     def _find_affected_features(self, spec: PartSpec, *faces: Face) -> List[str]:
         """
         Find which features in the spec are affected by the given faces.
