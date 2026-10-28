@@ -9,7 +9,7 @@ import json
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Any
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 from build123d import Part
 from build123d import export_step as b123d_export_step
@@ -224,7 +224,7 @@ def generate_dimension_report(part: Part, part_spec: Optional[Dict[str, Any]] = 
     com_x, com_y, com_z = _get_center_of_mass(part)
     
     report = {
-        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + "Z",
         "bounding_box": {
             "min": [float(bbox.min.X), float(bbox.min.Y), float(bbox.min.Z)],
             "max": [float(bbox.max.X), float(bbox.max.Y), float(bbox.max.Z)],
@@ -258,7 +258,7 @@ def generate_print_guide(part: Part, settings: Optional[Dict[str, Any]] = None) 
     
     guide = f"""# Print Guide
 
-Generated: {datetime.utcnow().isoformat()}Z
+Generated: {datetime.now(timezone.utc).replace(tzinfo=None).isoformat()}Z
 
 ## Part Overview
 - **Volume**: {volume:.2f} mm³ ({volume/1000:.3f} cm³)

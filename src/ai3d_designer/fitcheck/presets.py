@@ -12,6 +12,7 @@ from ai3d_designer.core.spec.models import (
     ComponentSpec,
     ComponentType,
     EnclosureSpec,
+    FitCheckReport,
     PartSpec,
     FeatureSpec,
     PrimitiveType,

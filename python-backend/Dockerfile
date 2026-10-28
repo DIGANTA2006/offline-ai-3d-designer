@@ -34,9 +34,9 @@ RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuse
 WORKDIR /app
 
 # Install the backend's Linux-compatible runtime requirements, including build123d.
-COPY python-backend/requirements.txt ./python-backend/requirements.txt
+COPY python-backend/requirements.lock ./python-backend/requirements.lock
 RUN python -m pip install --no-cache-dir --upgrade pip setuptools wheel \
-    && python -m pip install --no-cache-dir -r ./python-backend/requirements.txt \
+    && python -m pip install --no-cache-dir -r ./python-backend/requirements.lock \
     && python -m pip check
 
 # Install the repository's own package metadata/code without re-installing its

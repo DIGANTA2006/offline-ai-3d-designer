@@ -33,7 +33,16 @@ from ai3d_designer.fitcheck.engine import FitCheckEngine
 from ai3d_designer.fitcheck.models import ComponentSpec, EnclosureSpec
 from ai3d_designer.fitcheck.presets import get_preset_component, list_hardware_presets
 from ai3d_designer.core.geometry.engine import create_part_from_spec
-from ai3d_designer.core.export.exporter import export_step, export_stl, export_3mf, export_zip_bundle, ExportResult, check_export_blockers
+from ai3d_designer.core.export.exporter import (
+    export_step,
+    export_stl,
+    export_3mf,
+    export_zip_bundle,
+    generate_dimension_report,
+    generate_print_guide,
+    ExportResult,
+    check_export_blockers,
+)
 from ai3d_designer.core.validation.validator import validate_spec, validate_geometry
 from ai3d_designer.core.nlp.parser import parse_natural_language
 from ai3d_designer.ocr.pipeline import (
@@ -320,7 +329,9 @@ cors_origins = [origin.strip().rstrip("/") for origin in os.environ.get("CORS_OR
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
-    allow_credentials=True,
+    # Browsers never call this service directly: the web app reaches it through its
+    # server-side proxy, so credentials are not needed here.
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -345,9 +356,12 @@ async def health():
     vision_url = os.environ.get("DRAWING_VISION_URL", "").strip()
     if vision_provider == "ollama":
         vision_url = vision_url or os.environ.get("OLLAMA_URL", "").strip()
+    hosted_vision_providers = {"openai", "openai_compatible", "openai-compatible"}
+    hosted_vision_allowed = os.environ.get("DRAWING_VISION_ALLOW_HOSTED", "").strip().lower() in {"1", "true", "yes"}
+    hosted_vision_blocked = vision_provider in hosted_vision_providers and not hosted_vision_allowed
     vision_available = bool(vision_url) and vision_provider in {
         "ollama", "openai", "openai_compatible", "openai-compatible"
-    }
+    } and not hosted_vision_blocked
     slicing_capability = get_slicing_capability()
     limitations = [
         "Drawing OCR recognizes text and common annotations; it does not guarantee reconstruction of arbitrary 3D geometry from drawing views.",
@@ -357,6 +371,10 @@ async def health():
     if not vision_available:
         limitations.append(
             "No vision model endpoint is configured. Structured extraction uses conservative explicit-label fallback; configure DRAWING_VISION_URL and DRAWING_VISION_MODEL for visual semantic extraction."
+        )
+    if hosted_vision_blocked:
+        limitations.append(
+            "A hosted vision provider is configured but blocked: drawings are not sent to a third-party model until DRAWING_VISION_ALLOW_HOSTED=true is set after the data-handling decision (plan T02/T84)."
         )
     if not slicing_capability["available"]:
         limitations.append("STL slicing is unavailable: " + str(slicing_capability["reason"]))

@@ -8,7 +8,7 @@ import base64
 import hashlib
 import hmac
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, Dict, Any
 from cryptography.hazmat.primitives import hashes, serialization
@@ -62,7 +62,7 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...
                 valid=True,
                 license_type="trial",
                 features=["basic_geometry", "step_export", "stl_export"],
-                issued_at=datetime.utcnow().isoformat(),
+                issued_at=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             )
             return self._cached_license
         
@@ -84,7 +84,7 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...
             expires_at = license_data.get("expires_at")
             if expires_at:
                 exp_date = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
-                if datetime.utcnow() > exp_date:
+                if datetime.now(timezone.utc).replace(tzinfo=None) > exp_date:
                     self._cached_license = LicenseInfo(
                         valid=False,
                         license_type="expired",
@@ -214,7 +214,7 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...
         
         if info.expires_at:
             exp_date = datetime.fromisoformat(info.expires_at.replace('Z', '+00:00'))
-            days_left = (exp_date - datetime.utcnow()).days
+            days_left = (exp_date - datetime.now(timezone.utc).replace(tzinfo=None)).days
             status["expires_at"] = info.expires_at
             status["days_remaining"] = max(0, days_left)
             if days_left <= 30:

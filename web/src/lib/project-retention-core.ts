@@ -2,7 +2,13 @@
  * Pure retention policy helpers. Kept separate from Prisma/Blob so the policies
  * can be tested without a live database or storage credentials.
  */
-export const MAX_ACTIVE_PROJECTS = 10;
+/** Free plan: one saved project. Pro plan: unlimited. Nothing is ever deleted automatically. */
+export const FREE_PROJECT_LIMIT = 1;
+
+/** Pure rule: may this account save another project? */
+export function canCreateProject(savedProjectCount: number, hasUnlimitedProjects: boolean): boolean {
+  return hasUnlimitedProjects || savedProjectCount < FREE_PROJECT_LIMIT;
+}
 export const MAX_UNPROTECTED_OUTPUT_VERSIONS = 2;
 
 const HEAVY_JSON_KEY =
@@ -45,25 +51,7 @@ export function compactStoredJson<T>(value: T): T {
   return visit(value) as T;
 }
 
-type ProjectRetentionRecord = { id: string; isImportant: boolean; status: string };
-
-/** Projects must be supplied oldest-first; active jobs and important projects are never candidates. */
-export function selectProjectIdsToPrune(
-  projects: ProjectRetentionRecord[],
-  options: { excludeProjectId?: string; maxProjects?: number } = {},
-): string[] {
-  const excess = projects.length - (options.maxProjects ?? MAX_ACTIVE_PROJECTS);
-  if (excess <= 0) return [];
-  return projects
-    .filter((project) =>
-      !project.isImportant
-      && project.status !== "PROCESSING"
-      && project.status !== "QUEUED"
-      && project.id !== options.excludeProjectId
-    )
-    .slice(0, excess)
-    .map((project) => project.id);
-}
+// Projects are never pruned automatically. Deleting a project is always an explicit user action.
 
 type OutputRetentionRecord = { id: string; isProtected: boolean };
 

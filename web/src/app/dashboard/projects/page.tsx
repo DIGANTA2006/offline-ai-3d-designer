@@ -4,7 +4,7 @@ import { requireUser } from "@/lib/auth/server";
 import { prisma } from "@/lib/prisma";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { MAX_ACTIVE_PROJECTS } from "@/lib/project-retention-core";
+import { FREE_PROJECT_LIMIT } from "@/lib/project-retention-core";
 
 export const dynamic = "force-dynamic";
 
@@ -31,7 +31,7 @@ export default async function ProjectsPage() {
           <div>
             <Link href="/dashboard" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" /> Dashboard</Link>
             <h1 className="mt-4 text-3xl font-semibold tracking-tight">My projects</h1>
-            <p className="mt-2 text-sm text-muted-foreground">Your saved CAD jobs and drawing uploads.</p><p className="mt-1 text-xs text-muted-foreground">{projects.length} of {MAX_ACTIVE_PROJECTS} saved projects. Important projects are preserved; older unimportant projects may be removed automatically when the limit is reached.</p>
+            <p className="mt-2 text-sm text-muted-foreground">Your saved CAD jobs and drawing uploads.</p><p className="mt-1 text-xs text-muted-foreground">{projects.length} saved {projects.length === 1 ? "project" : "projects"}. Nothing is deleted automatically: the free plan includes {FREE_PROJECT_LIMIT} saved project, and Pro is unlimited.</p>
           </div>
           <Button asChild><Link href="/dashboard/projects/new"><Plus className="size-4" /> New project</Link></Button>
         </header>
