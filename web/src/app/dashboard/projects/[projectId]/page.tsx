@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { DrawingProcessor } from "@/components/projects/drawing-processor";
 import { SlicePanel } from "@/components/projects/slice-panel";
 import { ProjectImportanceToggle, ProjectVersionActions } from "@/components/projects/project-retention-controls";
+import { ProjectDeleteButton } from "@/components/projects/project-delete-button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 export const dynamic = "force-dynamic";
@@ -81,7 +82,7 @@ export default async function ProjectDetailPage({ params }: Props) {
     <main className="min-h-screen bg-background px-4 py-8 sm:px-8">
       <div className="mx-auto max-w-4xl">
         <Link href="/dashboard/projects" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" /> Projects</Link>
-        <header className="mt-5 flex flex-wrap items-start justify-between gap-4"><div><div className="flex items-center gap-2"><Box className="size-6 text-primary" /><h1 className="text-3xl font-semibold tracking-tight">{project.name}</h1></div><p className="mt-2 text-sm text-muted-foreground">Created {project.createdAt.toLocaleString("en-IN")} · Status: {project.status}</p></div><div className="flex flex-wrap items-center gap-2"><ProjectImportanceToggle projectId={project.id} initialImportant={project.isImportant} /><Button variant="outline" asChild><Link href="/dashboard/projects/new"><RefreshCw className="size-4" /> New generation</Link></Button></div></header>
+        <header className="mt-5 flex flex-wrap items-start justify-between gap-4"><div><div className="flex items-center gap-2"><Box className="size-6 text-primary" /><h1 className="text-3xl font-semibold tracking-tight">{project.name}</h1></div><p className="mt-2 text-sm text-muted-foreground">Created {project.createdAt.toLocaleString("en-IN")} · Status: {project.status}</p></div><div className="flex flex-wrap items-center gap-2"><ProjectImportanceToggle projectId={project.id} initialImportant={project.isImportant} /><Button variant="outline" asChild><Link href="/dashboard/projects/new"><RefreshCw className="size-4" /> New generation</Link></Button><ProjectDeleteButton projectId={project.id} projectName={project.name} /></div></header>
 
         <Card className="mt-7"><CardHeader><CardTitle>Input description</CardTitle><CardDescription>Keep this prompt with the exported model so its assumptions are visible.</CardDescription></CardHeader><CardContent><p className="whitespace-pre-wrap text-sm leading-7">{project.description || "No description was saved."}</p></CardContent></Card>
 

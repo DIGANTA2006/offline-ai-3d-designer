@@ -31,3 +31,8 @@ httpx>=0.27.2
 
 # Required by ai3d_designer core licensing module
 cryptography>=42.0.0
+
+# 3MF/ZIP export (trimesh) needs lxml and networkx; default data folder needs appdirs
+lxml>=5.3.0
+networkx>=3.2
+appdirs>=1.4.4

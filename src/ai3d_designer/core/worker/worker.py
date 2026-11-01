@@ -5,7 +5,7 @@ Worker module for background processing of CAD operations.
 import asyncio
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional, Any, Callable, Dict, List
 from concurrent.futures import ThreadPoolExecutor
@@ -33,7 +33,7 @@ class Job:
     progress: float = 0.0
     result: Any = None
     error: Optional[str] = None
-    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None).isoformat())
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -75,7 +75,7 @@ class WorkerPool:
     def _run_job(self, job: Job) -> Any:
         """Run a job and update its status."""
         job.status = JobStatus.RUNNING
-        job.started_at = datetime.utcnow().isoformat()
+        job.started_at = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         job.progress = 0.0
         self._notify_callbacks(job)
         
@@ -89,12 +89,12 @@ class WorkerPool:
             job.result = result
             job.status = JobStatus.COMPLETED
             job.progress = 1.0
-            job.completed_at = datetime.utcnow().isoformat()
+            job.completed_at = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
             
         except Exception as e:
             job.error = f"{type(e).__name__}: {str(e)}"
             job.status = JobStatus.FAILED
-            job.completed_at = datetime.utcnow().isoformat()
+            job.completed_at = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
             # Print traceback for debugging
             traceback.print_exc()
         
@@ -143,7 +143,7 @@ class WorkerPool:
             if future:
                 future.cancel()
             job.status = JobStatus.CANCELLED
-            job.completed_at = datetime.utcnow().isoformat()
+            job.completed_at = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
             job.error = "Cancelled by user"
             self._notify_callbacks(job)
             return True
@@ -159,7 +159,7 @@ class WorkerPool:
     
     def clear_completed(self, max_age_hours: int = 24):
         """Clear old completed jobs."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         to_remove = []
         for job_id, job in self._jobs.items():
             if job.status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):

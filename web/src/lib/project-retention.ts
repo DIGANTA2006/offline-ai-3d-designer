@@ -1,16 +1,15 @@
 import { del } from "@vercel/blob";
 import { prisma } from "@/lib/prisma";
 import {
-  MAX_ACTIVE_PROJECTS,
-  selectProjectIdsToPrune,
+  canCreateProject,
   selectUnprotectedVersionIdsToPrune,
 } from "@/lib/project-retention-core";
 
-export { compactStoredJson, MAX_ACTIVE_PROJECTS, MAX_UNPROTECTED_OUTPUT_VERSIONS } from "@/lib/project-retention-core";
+export { compactStoredJson, FREE_PROJECT_LIMIT, MAX_UNPROTECTED_OUTPUT_VERSIONS } from "@/lib/project-retention-core";
 
 export class ProjectCapacityError extends Error {
   constructor() {
-    super("You have reached the 10-project storage limit. Mark an older project unimportant or delete it before creating another project.");
+    super("The free plan includes one saved project. Delete it to create another, or upgrade to Pro for unlimited projects.");
     this.name = "ProjectCapacityError";
   }
 }
@@ -45,20 +44,37 @@ async function deleteBlobs(pathnames: string[], token: string): Promise<void> {
   await del(unique, { token });
 }
 
-export async function assertProjectCapacity(userId: string): Promise<void> {
-  const count = await prisma.project.count({ where: { userId } });
-  if (count < MAX_ACTIVE_PROJECTS) return;
-  // Make sure enough old projects can be removed to get back under the cap after
-  // the new project is created, including when a legacy account is already over limit.
-  const requiredDeletable = count - MAX_ACTIVE_PROJECTS + 1;
-  const deletableCount = await prisma.project.count({
-    where: {
-      userId,
-      isImportant: false,
-      status: { notIn: ["PROCESSING", "QUEUED"] },
-    },
+/** Pro (active subscription) and admin accounts have no project cap. */
+async function hasUnlimitedProjects(userId: string, db: Pick<typeof prisma, "user" | "subscription">): Promise<boolean> {
+  const [user, subscription] = await Promise.all([
+    db.user.findUnique({ where: { id: userId }, select: { role: true } }),
+    db.subscription.findUnique({ where: { userId } }),
+  ]);
+  if (user?.role === "ADMIN") return true;
+  return subscription?.tier === "PRO" && subscription.status === "ACTIVE";
+}
+
+export async function assertProjectCapacity(
+  userId: string,
+  db: Pick<typeof prisma, "project" | "user" | "subscription"> = prisma,
+): Promise<void> {
+  const count = await db.project.count({ where: { userId } });
+  if (!canCreateProject(count, await hasUnlimitedProjects(userId, db))) throw new ProjectCapacityError();
+}
+
+/**
+ * Creates a project only when the plan allows it. The capacity check and the insert run in one
+ * database transaction under a per-user lock, so two simultaneous requests cannot both pass.
+ */
+export async function createProjectWithCapacity(
+  userId: string,
+  data: { name: string; description: string; status: "DRAFT" | "PROCESSING" },
+): Promise<{ id: string }> {
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${userId}))`;
+    await assertProjectCapacity(userId, tx);
+    return tx.project.create({ data: { userId, ...data }, select: { id: true } });
   });
-  if (deletableCount < requiredDeletable) throw new ProjectCapacityError();
 }
 
 export async function deleteProjectAndBlobs(projectId: string, userId: string, token: string): Promise<boolean> {
@@ -97,31 +113,7 @@ export async function deleteProjectAndBlobs(projectId: string, userId: string, t
   return true;
 }
 
-export async function pruneUserProjects(
-  userId: string,
-  token: string,
-  options: { excludeProjectId?: string } = {},
-): Promise<string[]> {
-  const projects = await prisma.project.findMany({
-    where: { userId },
-    orderBy: [{ createdAt: "asc" }, { updatedAt: "asc" }],
-    select: { id: true, isImportant: true, status: true },
-  });
-  let excess = projects.length - MAX_ACTIVE_PROJECTS;
-  if (excess <= 0) return [];
-  const pruneIds = new Set(selectProjectIdsToPrune(projects, options));
-  const deleted: string[] = [];
-  for (const project of projects) {
-    if (excess <= 0) break;
-    if (!pruneIds.has(project.id)) continue;
-    if (await deleteProjectAndBlobs(project.id, userId, token)) {
-      deleted.push(project.id);
-      excess -= 1;
-    }
-  }
-  if (excess > 0) throw new ProjectCapacityError();
-  return deleted;
-}
+// Projects are never deleted automatically. Deleting is always an explicit user action.
 
 export async function pruneProjectVersions(projectId: string, userId: string, token: string): Promise<number[]> {
   const project = await prisma.project.findFirst({

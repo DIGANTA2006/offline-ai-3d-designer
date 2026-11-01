@@ -255,6 +255,10 @@ def get_vision_backend() -> VisionBackend | None:
     if provider == "ollama":
         base_url = (os.getenv("DRAWING_VISION_URL") or os.getenv("OLLAMA_URL") or "").strip()
     elif provider in {"openai", "openai_compatible", "openai-compatible"}:
+        # Drawings are client data. A hosted model receives them only after the owner enables it
+        # explicitly (plan T02/T84, OPEN-08). Blocked by default: OCR-only extraction continues.
+        if os.getenv("DRAWING_VISION_ALLOW_HOSTED", "").strip().lower() not in {"1", "true", "yes"}:
+            return None
         base_url = os.getenv("DRAWING_VISION_URL", "").strip()
     else:
         raise ValueError("DRAWING_VISION_PROVIDER must be 'ollama' or 'openai_compatible'")

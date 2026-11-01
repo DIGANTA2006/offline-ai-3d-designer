@@ -10,6 +10,8 @@ from ai3d_designer.fitcheck.presets import (
     get_preset_component,
     list_hardware_presets,
     generate_enclosure_for_component,
+    generate_lid_for_enclosure,
+    run_fit_check,
 )
 from ai3d_designer.core.spec.models import ParameterSource, PartSpec, FeatureSpec, PrimitiveType, OperationType, UnitSystem
 
@@ -354,13 +356,78 @@ def test_component_with_mounting_holes():
         interior_width=100.0,
         interior_depth=80.0,
         interior_height=40.0,
-        mounting_bosses=[[10, 10, 0], [40, 10, 0], [10, 20, 0], [40, 20, 0]],
+        # Bosses are in enclosure coordinates; the component is centred in the interior.
+        mounting_bosses=[[37, 37, 0], [67, 37, 0], [37, 47, 0], [67, 47, 0]],
     )
 
     engine = FitCheckEngine()
     result = engine.check_component_fit(component, enclosure)
 
     assert result.fits is True
+    assert result.issues == []
+
+
+def test_fit_check_rejects_misaligned_mounting_bosses():
+    component = ComponentSpec(
+        name="PCB with Mounts",
+        width=50.0,
+        depth=30.0,
+        height=10.0,
+        mounting_holes=[[10, 10], [40, 10], [10, 20], [40, 20]],
+    )
+    enclosure = EnclosureSpec(
+        name="Enclosure",
+        interior_width=100.0,
+        interior_depth=80.0,
+        interior_height=40.0,
+        wall_thickness=2.0,
+        mounting_bosses=[[38, 37], [67, 37], [37, 47], [67, 47]],
+    )
+
+    result = FitCheckEngine().check_component_fit(component, enclosure)
+
+    assert result.fits is False
+    assert any("does not align" in issue for issue in result.issues)
+
+
+def test_fit_check_rejects_invalid_clearances():
+    with pytest.raises(ValueError, match="default_clearance_mm must be finite and non-negative"):
+        FitCheckEngine(default_clearance_mm=-1.0)
+
+    component = ComponentSpec(name="PCB", width=10, depth=10, height=5)
+    enclosure = EnclosureSpec(name="Enclosure", interior_width=20, interior_depth=20, interior_height=20)
+    with pytest.raises(ValueError, match="clearance_mm must be finite and non-negative"):
+        FitCheckEngine().check_component_fit(component, enclosure, clearance_mm=float("nan"))
+
+
+def test_fit_check_zero_clearance_is_reported_correctly():
+    component = ComponentSpec(name="PCB", width=10, depth=10, height=5)
+    enclosure = EnclosureSpec(name="Enclosure", interior_width=20, interior_depth=20, interior_height=20)
+
+    report = FitCheckEngine().check_all_components([component], enclosure, clearance_mm=0.0)
+
+    assert report.overall_fit is True
+    assert "with 0.0 mm clearance" in report.summary
+
+
+def test_fit_check_empty_component_list_is_not_reported_as_success():
+    enclosure = EnclosureSpec(name="Empty", interior_width=20, interior_depth=20, interior_height=20)
+
+    report = FitCheckEngine().check_all_components([], enclosure)
+
+    assert report.overall_fit is False
+    assert "No components were supplied" in report.summary
+
+
+def test_run_fit_check_uses_available_engine_api_for_presets():
+    component = get_preset_component("esp32_devkit")
+    enclosure, _part_spec = generate_enclosure_for_component(component)
+
+    report = run_fit_check(component, enclosure)
+
+    assert report.overall_fit is True
+    assert len(report.results) == 1
+    assert report.results[0].component_id == component.id
 
 
 def test_component_confirmed_flag():
@@ -420,7 +487,7 @@ def test_get_preset_component_aries_v2_riscv():
     assert component.height == 12.0
     assert component.clearance_mm == 2.0
     assert component.source == ParameterSource.DATASHEET
-    assert component.confirmed is True
+    assert component.confirmed is False
     assert component.type == ComponentType.PCB
 
 
@@ -435,7 +502,7 @@ def test_get_preset_component_aries_alpha_riscv():
     assert component.height == 12.0
     assert component.clearance_mm == 2.0
     assert component.source == ParameterSource.DATASHEET
-    assert component.confirmed is True
+    assert component.confirmed is False
 
 
 def test_get_preset_component_iot_sensor_node():
@@ -448,8 +515,8 @@ def test_get_preset_component_iot_sensor_node():
     assert component.width == 48.0
     assert component.height == 15.0
     assert component.clearance_mm == 2.0
-    assert component.source == ParameterSource.DATASHEET
-    assert component.confirmed is True
+    assert component.source == ParameterSource.DEFAULT
+    assert component.confirmed is False
 
 
 def test_get_preset_component_esp32_devkit():
@@ -463,7 +530,7 @@ def test_get_preset_component_esp32_devkit():
     assert component.height == 13.0
     assert component.clearance_mm == 1.5
     assert component.source == ParameterSource.DATASHEET
-    assert component.confirmed is True
+    assert component.confirmed is False
 
 
 def test_get_preset_component_raspberry_pi_4():
@@ -475,9 +542,10 @@ def test_get_preset_component_raspberry_pi_4():
     assert component.length == 85.0
     assert component.width == 56.0
     assert component.height == 17.0
-    assert component.clearance_mm == 2.0
+    # This is a suggested enclosure clearance, not a manufacturer-guaranteed tolerance.
+    assert component.clearance_mm == 2.5
     assert component.source == ParameterSource.DATASHEET
-    assert component.confirmed is True
+    assert component.confirmed is False
 
 
 def test_get_preset_component_arduino_uno_r3():
@@ -491,7 +559,7 @@ def test_get_preset_component_arduino_uno_r3():
     assert component.height == 15.0
     assert component.clearance_mm == 2.0
     assert component.source == ParameterSource.DATASHEET
-    assert component.confirmed is True
+    assert component.confirmed is False
 
 
 def test_get_preset_component_invalid_raises():
@@ -530,8 +598,10 @@ def test_fit_check_preset_aries_v2_passes():
 
     assert result.fits is True
     # Clearance should match component's specified clearance
-    assert result.clearance_mm["x"] == pytest.approx(component.clearance_mm * 2, rel=1e-6)
-    assert result.clearance_mm["y"] == pytest.approx(component.clearance_mm * 2, rel=1e-6)
+    # The exact recommended internal width/length leaves zero additional margin
+    # after the requested per-side clearance is deducted.
+    assert result.clearance_mm["x"] == pytest.approx(0.0, abs=1e-6)
+    assert result.clearance_mm["y"] == pytest.approx(0.0, abs=1e-6)
     assert result.clearance_mm["z"] >= component.clearance_mm  # Z has extra lid clearance
 
 
@@ -554,8 +624,8 @@ def test_generate_enclosure_for_component_aries_v2():
     # Check EnclosureSpec
     assert isinstance(enclosure, EnclosureSpec)
     assert enclosure.name == "Enclosure for VEGA ARIES v2.0/v3.0 (THEJAS32 RISC-V Dev Board)"
-    assert enclosure.confirmed is True
-    assert enclosure.source == ParameterSource.DATASHEET
+    assert enclosure.confirmed is False
+    assert enclosure.source == ParameterSource.DEFAULT
     assert enclosure.wall_thickness == 2.5  # default
     assert enclosure.lid_clearance == 4.0  # default
 
@@ -579,13 +649,13 @@ def test_generate_enclosure_for_component_aries_v2():
     assert isinstance(part_spec, PartSpec)
     assert part_spec.name == "Enclosure for VEGA ARIES v2.0/v3.0 (THEJAS32 RISC-V Dev Board)"
     assert part_spec.unit_system == UnitSystem.MM
-    assert len(part_spec.features) == 4  # base, cavity, lid, lid_cavity
+    assert len(part_spec.features) == 10  # outer shell, cavity, four bosses, four boss holes
 
-    # Verify features have confirmed parameters
+    # Generated dimensions are derived suggestions and require user confirmation.
     for feature in part_spec.features:
         for param in feature.parameters.values():
-            assert param.confirmed is True
-            assert param.source == ParameterSource.DATASHEET
+            assert param.confirmed is False
+            assert param.source == ParameterSource.DEFAULT
 
 
 def test_generate_enclosure_for_component_custom_wall_thickness():
@@ -636,6 +706,11 @@ def test_generated_part_spec_is_buildable():
     part = create_part_from_spec(part_spec)
     assert part is not None
     assert part.volume > 0
+    assert len(part.solids()) == 1, "The generated enclosure body must be one connected solid."
+    size = part.bounding_box().size
+    assert size.X == pytest.approx(enclosure.exterior_depth)
+    assert size.Y == pytest.approx(enclosure.exterior_width)
+    assert size.Z == pytest.approx(enclosure.interior_height + enclosure.wall_thickness)
 
     # Validate geometry
     geom_validation = validate_geometry(part)
@@ -658,10 +733,43 @@ def test_all_presets_generate_buildable_enclosures():
         part = create_part_from_spec(part_spec)
         assert part is not None, f"Preset {preset_id} geometry creation failed"
         assert part.volume > 0, f"Preset {preset_id} has zero volume"
+        assert len(part.solids()) == 1, f"Preset {preset_id} must produce one connected enclosure body"
 
         # Validate geometry
         geom_validation = validate_geometry(part)
         assert geom_validation.is_valid, f"Preset {preset_id} geometry invalid: {geom_validation.errors}"
+
+
+def test_generated_lid_is_a_separate_buildable_solid():
+    from ai3d_designer.core.geometry.engine import create_part_from_spec
+    from ai3d_designer.core.validation.validator import validate_spec, validate_geometry
+
+    enclosure, body_spec = generate_enclosure_for_component("esp32_devkit")
+    lid_spec = generate_lid_for_enclosure(enclosure)
+
+    assert body_spec.metadata["assembly_role"] == "enclosure_body"
+    assert lid_spec.metadata["assembly_role"] == "enclosure_lid"
+    assert len(lid_spec.features) == 2
+
+    body = create_part_from_spec(body_spec)
+    lid = create_part_from_spec(lid_spec)
+    assert len(body.solids()) == 1
+    assert len(lid.solids()) == 1
+    assert lid.volume > 0
+    assert validate_spec(lid_spec).is_valid
+    assert validate_geometry(lid).is_valid
+
+    lid_size = lid.bounding_box().size
+    assert lid_size.X == pytest.approx(enclosure.exterior_depth)
+    assert lid_size.Y == pytest.approx(enclosure.exterior_width)
+    assert lid_size.Z == pytest.approx(enclosure.wall_thickness + min(enclosure.wall_thickness, 3.0) - 0.05)
+
+
+def test_generated_enclosure_rejects_invalid_dimensions():
+    with pytest.raises(ValueError, match="wall_thickness_mm must be positive"):
+        generate_enclosure_for_component("esp32_devkit", wall_thickness_mm=0)
+    with pytest.raises(ValueError, match="extra_clearance_mm must be finite and non-negative"):
+        generate_enclosure_for_component("esp32_devkit", extra_clearance_mm=float("nan"))
 
 
 def test_preset_metadata_includes_vendor_info():

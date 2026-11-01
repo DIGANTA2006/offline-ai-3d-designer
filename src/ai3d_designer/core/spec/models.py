@@ -8,7 +8,7 @@ from math import isfinite
 from typing import Optional, List, Dict, Any, Union
 from pydantic import BaseModel, Field, field_validator, model_validator
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class UnitSystem(str, Enum):
@@ -117,14 +117,14 @@ class PartSpec(BaseModel):
     unit_system: UnitSystem = UnitSystem.MM
     features: List[FeatureSpec] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
-    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
-    updated_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None).isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None).isoformat())
     spec_hash: str = ""
 
     def add_feature(self, feature: FeatureSpec) -> None:
         """Add a feature to the part."""
         self.features.append(feature)
-        self.updated_at = datetime.utcnow().isoformat()
+        self.updated_at = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
 
     def get_feature(self, feature_id: str) -> Optional[FeatureSpec]:
         """Get a feature by ID."""

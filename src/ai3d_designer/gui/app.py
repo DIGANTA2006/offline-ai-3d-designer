@@ -694,8 +694,8 @@ class AI3DDesignerGUI:
                 self.root.after(0, lambda: self.send_to_slice_btn.config(state=tk.NORMAL))
                 
             except Exception as e:
-                self.root.after(0, lambda: self._log(f"Error: {str(e)}"))
-                self.root.after(0, lambda: messagebox.showerror("Error", str(e)))
+                self.root.after(0, lambda msg=str(e): self._log(f"Error: {msg}"))
+                self.root.after(0, lambda msg=str(e): messagebox.showerror("Error", msg))
                 self.root.after(0, lambda: self._set_status("Error"))
             finally:
                 self.root.after(0, lambda: self.generate_btn.config(state=tk.NORMAL))
@@ -786,8 +786,8 @@ class AI3DDesignerGUI:
                 self.root.after(0, lambda: self.slice_btn.config(state=tk.NORMAL))
                 
             except Exception as e:
-                self.root.after(0, lambda: self._log(f"Error: {str(e)}"))
-                self.root.after(0, lambda: messagebox.showerror("Error", str(e)))
+                self.root.after(0, lambda msg=str(e): self._log(f"Error: {msg}"))
+                self.root.after(0, lambda msg=str(e): messagebox.showerror("Error", msg))
                 self.root.after(0, lambda: self._set_status("Error"))
             finally:
                 self.root.after(0, lambda: self.convert_image_btn.config(state=tk.NORMAL))
@@ -851,8 +851,8 @@ class AI3DDesignerGUI:
                     
                     if result.success:
                         self.root.after(0, lambda f=result: self._log(f"\u2713 Exported {f.format}: {f.file_path} ({f.file_size} bytes)"))
-                        if f.warnings:
-                            for w in f.warnings:
+                        if result.warnings:
+                            for w in result.warnings:
                                 self.root.after(0, lambda w=w: self._log(f"  WARN: {w}"))
                     else:
                         self.root.after(0, lambda f=result: self._log(f"\u2717 Export {fmt.upper()} failed:"))
@@ -864,8 +864,8 @@ class AI3DDesignerGUI:
                 self.root.after(0, lambda: messagebox.showinfo("Success", f"Files exported to {output_dir}"))
                 
             except Exception as e:
-                self.root.after(0, lambda: self._log(f"Export error: {str(e)}"))
-                self.root.after(0, lambda: messagebox.showerror("Error", str(e)))
+                self.root.after(0, lambda msg=str(e): self._log(f"Export error: {msg}"))
+                self.root.after(0, lambda msg=str(e): messagebox.showerror("Error", msg))
             finally:
                 self.root.after(0, lambda: self.export_btn.config(state=tk.NORMAL))
                 self.root.after(0, lambda: self.progress.stop())
@@ -901,8 +901,8 @@ class AI3DDesignerGUI:
                 self.root.after(0, lambda: self._set_status("Ready - Validation complete"))
                 
             except Exception as e:
-                self.root.after(0, lambda: self._log(f"Validation error: {str(e)}"))
-                self.root.after(0, lambda: messagebox.showerror("Error", str(e)))
+                self.root.after(0, lambda msg=str(e): self._log(f"Validation error: {msg}"))
+                self.root.after(0, lambda msg=str(e): messagebox.showerror("Error", msg))
             finally:
                 self.root.after(0, lambda: self.validate_btn.config(state=tk.NORMAL))
                 self.root.after(0, lambda: self.progress.stop())
@@ -1012,7 +1012,7 @@ class AI3DDesignerGUI:
                     self.root.after(0, lambda: self._set_status("Slicing failed"))
                     
             except Exception as e:
-                self.root.after(0, lambda: self._slice_log(f"Error: {str(e)}"))
+                self.root.after(0, lambda msg=str(e): self._slice_log(f"Error: {msg}"))
                 self.root.after(0, lambda: self._set_status("Error"))
             finally:
                 self.root.after(0, lambda: self.slice_btn.config(state=tk.NORMAL))

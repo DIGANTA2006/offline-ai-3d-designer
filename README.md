@@ -11,6 +11,7 @@ An offline CAD generator that creates 3D models from natural language descriptio
 - 📤 **Exports**: STEP boundary-representation and STL mesh exports with stronger manifold/watertight validation
 - 🖼️ **Image relief and drawing OCR**: Closed heightfield/lithophane meshes plus OCR text/annotation extraction for supported PDF and raster drawings (not exact automatic reconstruction)
 - 🧩 **Slicing integration**: CuraEngine-backed slicing only; no fake placeholder G-code fallback
+- 📐 **Hardware fit check**: confirmed component presets, axis-aligned enclosure clearance report, and explicit dimension review before running checks
 - 🖥️ **CLI & GUI**: Command-line and desktop graphical interfaces
 - 🧪 **Regression tests**: CAD, unit, profile, parser, mesh and slicer safety tests
 

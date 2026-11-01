@@ -5,7 +5,7 @@ Storage module for saving/loading PartSpec and project files.
 import json
 import os
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
@@ -58,7 +58,7 @@ class SpecStorage:
             file_path = file_path.with_suffix(".json")
         
         data = spec.model_dump(mode="json")
-        data["_saved_at"] = datetime.utcnow().isoformat()
+        data["_saved_at"] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2)
@@ -120,8 +120,8 @@ class SpecStorage:
         metadata = ProjectMetadata(
             name=name,
             description=description,
-            created_at=datetime.utcnow().isoformat(),
-            updated_at=datetime.utcnow().isoformat(),
+            created_at=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
+            updated_at=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             tags=tags or [],
         )
         metadata_path = project_dir / "metadata.json"
@@ -144,8 +144,8 @@ class SpecStorage:
             metadata = ProjectMetadata(
                 name=path.name,
                 description="",
-                created_at=datetime.utcnow().isoformat(),
-                updated_at=datetime.utcnow().isoformat(),
+                created_at=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
+                updated_at=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             )
         
         return spec, metadata

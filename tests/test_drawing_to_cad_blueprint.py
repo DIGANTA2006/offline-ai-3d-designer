@@ -254,6 +254,7 @@ def test_text_only_fallback_uses_explicit_labels_for_flange_parameters():
 
 def test_selected_vision_provider_does_not_reuse_another_providers_url(monkeypatch):
     monkeypatch.setenv("DRAWING_VISION_PROVIDER", "openai_compatible")
+    monkeypatch.setenv("DRAWING_VISION_ALLOW_HOSTED", "true")  # explicit opt-in: hosted is blocked by default
     monkeypatch.delenv("DRAWING_VISION_URL", raising=False)
     monkeypatch.setenv("OLLAMA_URL", "http://ollama.internal:11434")
 
@@ -269,8 +270,21 @@ def test_selected_vision_provider_does_not_reuse_another_providers_url(monkeypat
     assert provider.api_key == "unit-test-secret"
 
 
+def test_hosted_vision_is_blocked_by_default(monkeypatch):
+    """Drawings are client data: a hosted model receives them only after an explicit opt-in."""
+    monkeypatch.setenv("DRAWING_VISION_PROVIDER", "openai_compatible")
+    monkeypatch.setenv("DRAWING_VISION_URL", "https://vision.example/v1")
+    monkeypatch.setenv("DRAWING_VISION_MODEL", "vision-model")
+    monkeypatch.delenv("DRAWING_VISION_ALLOW_HOSTED", raising=False)
+    assert get_vision_backend() is None
+
+    monkeypatch.setenv("DRAWING_VISION_ALLOW_HOSTED", "true")
+    assert isinstance(get_vision_backend(), OpenAICompatibleVision)
+
+
 def test_vision_timeout_is_configurable_and_bounded(monkeypatch):
     monkeypatch.setenv("DRAWING_VISION_PROVIDER", "openai_compatible")
+    monkeypatch.setenv("DRAWING_VISION_ALLOW_HOSTED", "true")  # explicit opt-in: hosted is blocked by default
     monkeypatch.setenv("DRAWING_VISION_URL", "https://vision.example/v1")
     monkeypatch.setenv("DRAWING_VISION_MODEL", "vision-model")
     monkeypatch.setenv("DRAWING_VISION_TIMEOUT_SECONDS", "120")

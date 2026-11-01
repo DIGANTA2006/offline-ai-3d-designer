@@ -43,26 +43,10 @@ try {
   assert.equal("imagePayload" in compacted.ocrResults[0], false);
   assert.deepEqual(compacted.candidatePayloads, ["keep-before", null, "keep-after"]);
 
-  const projectsOldestFirst = [
-    { id: "old-a", isImportant: false, status: "DRAFT" },
-    { id: "old-important", isImportant: true, status: "SUCCEEDED" },
-    { id: "processing", isImportant: false, status: "PROCESSING" },
-    { id: "queued", isImportant: false, status: "QUEUED" },
-    { id: "old-b", isImportant: false, status: "FAILED" },
-    { id: "middle", isImportant: false, status: "SUCCEEDED" },
-    { id: "pinned-mid", isImportant: true, status: "SUCCEEDED" },
-    { id: "next", isImportant: false, status: "DRAFT" },
-    { id: "recent-a", isImportant: false, status: "SUCCEEDED" },
-    { id: "recent-b", isImportant: false, status: "SUCCEEDED" },
-    { id: "recent-c", isImportant: false, status: "DRAFT" },
-    { id: "current", isImportant: false, status: "SUCCEEDED" },
-  ];
-  assert.deepEqual(
-    localJson(core.selectProjectIdsToPrune(projectsOldestFirst, { excludeProjectId: "current" })),
-    ["old-a", "old-b"],
-    "pruning must remove the oldest eligible projects while preserving important, active and current ones",
-  );
-  assert.deepEqual(localJson(core.selectProjectIdsToPrune(projectsOldestFirst.slice(0, 10))), []);
+  assert.equal(core.FREE_PROJECT_LIMIT, 1, "the free plan includes one saved project");
+  assert.equal(core.canCreateProject(0, false), true, "the first project is allowed on the free plan");
+  assert.equal(core.canCreateProject(1, false), false, "a second project is blocked on the free plan");
+  assert.equal(core.canCreateProject(25, true), true, "Pro accounts are not capped");
 
   const versionsNewestFirst = [
     { id: "v8", isProtected: true },
@@ -77,7 +61,7 @@ try {
     ["v5", "v3"],
     "keep two newest unprotected outputs plus every protected output",
   );
-  console.log("PASS: retention compaction, stable array indexes, ten-project cap and protected-output policy");
+  console.log("PASS: retention compaction, stable array indexes, one-project free cap and protected-output policy");
 } finally {
   rmSync(scratchDir, { recursive: true, force: true });
 }

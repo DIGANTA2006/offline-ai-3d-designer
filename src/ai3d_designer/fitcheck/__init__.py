@@ -9,6 +9,7 @@ from .presets import (
     get_preset_component,
     list_hardware_presets,
     generate_enclosure_for_component,
+    generate_lid_for_enclosure,
 )
 
 __all__ = [
@@ -23,4 +24,5 @@ __all__ = [
     "get_preset_component",
     "list_hardware_presets",
     "generate_enclosure_for_component",
+    "generate_lid_for_enclosure",
 ]

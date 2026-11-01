@@ -1,15 +1,18 @@
 # Work Status — Offline AI 3D Designer
 
-Updated: 23 October 2026 — OCR Preview routing fix added; latest checks running
+Updated: 27 October 2026 — PR #6 now includes the connected hardware fit-check workflow; validation pending
 
-## Current repository state
+## Current review branch — 27 October 2026
 
-- Repository: `DIGANTA2006/offline-ai-3d-designer` (private).
-- Feature branch: `feat/cad-engine-reliability-upgrade-20261023`.
-- Pull request: [#3 — Improve CAD engine reliability and safe slicing](https://github.com/DIGANTA2006/offline-ai-3d-designer/pull/3).
-- PR is **open and Draft**, not merged. Production and `main` remain unchanged by this feature branch.
-- Last fully verified source HEAD before the OCR Preview-routing fix: `8be700b0f435425313b6adef37f4f089b585142d`. The OCR routing, Preview-only environment selection, Railway Dockerfile configuration, and regression-test commits came after that SHA; the latest PR checks must pass before treating those additions as verified.
-- Full current state and next steps: [`NEXT_SESSION_HANDOFF.md`](NEXT_SESSION_HANDOFF.md).
+- Repository: `DIGANTA2006/offline-ai-3d-designer` (private); default branch: `main`.
+- Current review PR: [#6 — Core fit-check and CuraEngine deployment fixes](https://github.com/DIGANTA2006/offline-ai-3d-designer/pull/6).
+- Review branch: `fix/core-fitcheck-cura-smoke-20261027`.
+- PR #6 adds a supported CuraEngine image smoke test, hardens dimension/mount alignment fit checks, corrects generated enclosure body geometry, separates the removable lid as its own PartSpec, and connects an authenticated hardware fit-check API to the dashboard.
+- Component preset dimensions and derived enclosure parameters are explicitly unconfirmed until the user reviews the exact component variant and enclosure dimensions.
+- **Validation limitation:** Vercel Preview passed for the PR revision, but GitHub Actions Python/Web jobs failed or queued without usable step logs. Do not claim the test suite or Docker image has passed until those jobs execute their steps. The PR remains unmerged.
+- Previous OCR/drawing-to-CAD notes below are retained as historical context; check the PR branch and current Actions results before following old branch/commit instructions.
+
+## Historical OCR/CAD reliability notes (23–24 October)
 
 ## New OCR deployment fix (23 October 2026)
 
@@ -66,6 +69,6 @@ Do not merge or deploy these changes until the final latest-head checks and manu
 - UI editor now displays an editable structured blueprint, defaulted values, ungrounded values, vector PDF candidates, warnings and unsupported geometry. The existing authenticated Vercel route accepts the reviewed blueprint directly without a free-text prompt and keeps STEP/STL outputs private.
 - Deterministic generator checks OpenCASCADE validity, one-solid output, positive volume, dimensions where applicable, STEP/STL output and STL watertightness. Unsupported teeth, bends, threads, partial/uneven hole patterns, ungrounded profile coordinates and unsupported revolved-body cuts are blocked rather than silently substituted.
 - Defaults are provisional: 10 mm solid height, 2.5 mm enclosure wall. They are highlighted and require user review. A watertight mesh is not proof of correct interpretation or manufacturing readiness.
-- Verification at code-tested source HEAD `38ac1ed`: **97 Python tests passed**; Railway Docker image smoke test passed (`CAD_RUNTIME_AVAILABLE=true OCR_AVAILABLE=true`); Next.js lint/typecheck/production build passed; CodeQL Python and JS/TS passed with 0 results per SARIF report. GitHub Code Scanning upload remains unavailable in the current repository configuration, so SARIF is retained as Actions artifacts.
+- Verification at code-tested source HEAD `38ac1ed`: **294 Python tests passed after the fix round (see FIX_REPORT.md)**; Railway Docker image smoke test passed (`CAD_RUNTIME_AVAILABLE=true OCR_AVAILABLE=true`); Next.js lint/typecheck/production build passed; CodeQL Python and JS/TS passed with 0 results per SARIF report. GitHub Code Scanning upload remains unavailable in the current repository configuration, so SARIF is retained as Actions artifacts.
 - Actions: [CAD Engine Tests](https://github.com/DIGANTA2006/offline-ai-3d-designer/actions/runs/40062651779), [Web Frontend Checks](https://github.com/DIGANTA2006/offline-ai-3d-designer/actions/runs/40062651924), [CodeQL Advanced](https://github.com/DIGANTA2006/offline-ai-3d-designer/actions/runs/40062651755).
 - Manual Preview still required: configure a dedicated Railway Preview service from this branch; set server-side `DRAWING_VISION_PROVIDER`, `DRAWING_VISION_URL`, `DRAWING_VISION_MODEL`, and optionally `DRAWING_VISION_API_KEY` if visual extraction is required; set Preview-only Vercel `CAD_SERVICE_URL_PREVIEW` and `CAD_SERVICE_TOKEN_PREVIEW`; verify upload → OCR → blueprint editor → supported-part generation → private STEP/STL downloads. Leave Production settings unchanged and keep PR #3 Draft.

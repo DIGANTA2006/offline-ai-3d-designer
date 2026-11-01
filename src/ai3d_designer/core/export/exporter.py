@@ -9,7 +9,7 @@ import json
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Any
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 from build123d import Part
 from build123d import export_step as b123d_export_step
@@ -224,7 +224,7 @@ def generate_dimension_report(part: Part, part_spec: Optional[Dict[str, Any]] = 
     com_x, com_y, com_z = _get_center_of_mass(part)
     
     report = {
-        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + "Z",
         "bounding_box": {
             "min": [float(bbox.min.X), float(bbox.min.Y), float(bbox.min.Z)],
             "max": [float(bbox.max.X), float(bbox.max.Y), float(bbox.max.Z)],
@@ -258,7 +258,7 @@ def generate_print_guide(part: Part, settings: Optional[Dict[str, Any]] = None) 
     
     guide = f"""# Print Guide
 
-Generated: {datetime.utcnow().isoformat()}Z
+Generated: {datetime.now(timezone.utc).replace(tzinfo=None).isoformat()}Z
 
 ## Part Overview
 - **Volume**: {volume:.2f} mm³ ({volume/1000:.3f} cm³)
@@ -389,14 +389,14 @@ def export_zip_bundle(
             # Generate dimension report
             report = generate_dimension_report(part, part_spec)
             report_path = tmpdir_path / "dimension_report.json"
-            with open(report_path, "w") as f:
+            with open(report_path, "w", encoding="utf-8", newline="\n") as f:
                 json.dump(report, f, indent=2)
             exported_files["report"] = report_path
             
             # Generate print guide
             guide = generate_print_guide(part, settings)
             guide_path = tmpdir_path / "print_guide.md"
-            with open(guide_path, "w") as f:
+            with open(guide_path, "w", encoding="utf-8", newline="\n") as f:
                 f.write(guide)
             exported_files["guide"] = guide_path
             

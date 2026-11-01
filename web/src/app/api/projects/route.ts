@@ -5,7 +5,7 @@ import { getCurrentUser } from "@/lib/auth/server";
 import { isSameOriginRequest } from "@/lib/security/same-origin";
 import { prisma } from "@/lib/prisma";
 import { getCadServiceConfig } from "@/lib/cad-service-config";
-import { assertProjectCapacity, compactStoredJson, ProjectCapacityError, pruneProjectVersions, pruneUserProjects } from "@/lib/project-retention";
+import { assertProjectCapacity, compactStoredJson, createProjectWithCapacity, ProjectCapacityError, pruneProjectVersions } from "@/lib/project-retention";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -191,10 +191,7 @@ export async function POST(request: Request) {
     usageReserved = true;
 
     const name = requestedName || text.replace(/\s+/g, " ").slice(0, 72);
-    const project = await prisma.project.create({
-      data: { userId: user.id, name, description: text, status: "PROCESSING" },
-      select: { id: true },
-    });
+    const project = await createProjectWithCapacity(user.id, { name, description: text, status: "PROCESSING" });
     projectId = project.id;
 
     const abortController = new AbortController();
@@ -260,11 +257,7 @@ export async function POST(request: Request) {
       console.error("CAD output pruning failed after successful generation.", error);
       retentionWarning = "Generation succeeded, but older unprotected outputs could not be pruned. Retry cleanup later.";
     }
-    try { await pruneUserProjects(user.id, privateBlobToken, { excludeProjectId: project.id }); }
-    catch (error) {
-      console.error("Project history pruning failed after successful generation.", error);
-      retentionWarning = "Generation succeeded, but project history cleanup could not finish. Retry cleanup later.";
-    }
+    // Projects are never removed automatically: the free plan blocks a second project instead.
 
     try {
       await prisma.auditLog.create({
@@ -291,10 +284,8 @@ export async function POST(request: Request) {
     if (projectId) {
       try { await prisma.project.update({ where: { id: projectId }, data: { status: "FAILED" } }); }
       catch (updateError) { console.error("Could not mark failed CAD project.", updateError); }
-      // A failed run still created a project row. Restore the cap while keeping the
-      // new failed project visible; remove the oldest eligible older project instead.
-      try { await pruneUserProjects(user.id, privateBlobToken); }
-      catch (retentionError) { console.error("Failed-generation project history cleanup failed.", retentionError); }
+      // A failed run keeps its project row (status FAILED) so the user can see it and delete it.
+      // Nothing is removed automatically.
     }
     if (usageReserved) {
       try {

@@ -314,7 +314,7 @@ def _apply_thicken_fix(spec: PartSpec, check_id: str, params: Dict[str, Any]) ->
                 if dims[0][1] < min_thickness:
                     param_name = dims[0][0]
                     param = dims[0][2]
-                    feature.parameters[param_name] = ParameterSpec(
+                    outer_feat.parameters[param_name] = ParameterSpec(
                         name=param.name,
                         value=min_thickness,
                         unit=param.unit,

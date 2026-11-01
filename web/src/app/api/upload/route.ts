@@ -5,7 +5,7 @@ import { getCurrentUser } from "@/lib/auth/server";
 import { isSameOriginRequest } from "@/lib/security/same-origin";
 import { validateFiles } from "@/lib/upload/validation";
 import { prisma } from "@/lib/prisma";
-import { assertProjectCapacity, ProjectCapacityError, pruneUserProjects } from "@/lib/project-retention";
+import { assertProjectCapacity, createProjectWithCapacity, ProjectCapacityError } from "@/lib/project-retention";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -58,14 +58,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "No supported files were found.", rejected: rejected.map((item) => ({ name: item.file.name, reason: item.reason })) }, { status: 400 });
     }
 
-    const project = await prisma.project.create({
-      data: {
-        userId: user.id,
-        name: valid[0].file.name.replace(/\.[^.]+$/, "").slice(0, 80) || "Engineering drawing upload",
-        description: `Stored ${valid.length} private source file(s). Open this project to analyze supported drawings with OCR and review the extracted text before generating CAD.`,
-        status: "DRAFT",
-      },
-      select: { id: true },
+    const project = await createProjectWithCapacity(user.id, {
+      name: valid[0].file.name.replace(/\.[^.]+$/, "").slice(0, 80) || "Engineering drawing upload",
+      description: `Stored ${valid.length} private source file(s). Open this project to analyze supported drawings with OCR and review the extracted text before generating CAD.`,
+      status: "DRAFT",
     });
     projectId = project.id;
 
@@ -93,11 +89,7 @@ export async function POST(request: Request) {
     });
     versionPersisted = true;
     uploadedPathnames = [];
-    try { await pruneUserProjects(user.id, privateBlobToken, { excludeProjectId: project.id }); }
-    catch (error) {
-      console.error("Project retention pruning failed after a successful upload.", error);
-      retentionWarning = "Upload succeeded, but old project cleanup could not finish. Retry cleanup later.";
-    }
+    // Projects are never removed automatically (see canCreateProject).
 
     await prisma.auditLog.create({
       data: {

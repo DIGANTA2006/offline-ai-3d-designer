@@ -12,6 +12,7 @@ python-dotenv==1.0.1
 lib3mf==2.5.0
 svgwrite==1.4.3
 lxml==5.3.0
+networkx>=3.2
 requests==2.32.3
 tqdm==4.66.5
 psutil==7.0.0

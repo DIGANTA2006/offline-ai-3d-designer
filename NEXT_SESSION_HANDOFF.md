@@ -104,7 +104,7 @@ A model URL must be reachable from Railway; `localhost` in Railway is not the de
 
 ### Verified source HEAD `38ac1ed`
 
-- CAD Engine Tests: **97 passed**, Docker build passed with `CAD_RUNTIME_AVAILABLE=true OCR_AVAILABLE=true`.
+- CAD Engine Tests: **294 passed after the fix round**, Docker build passed with `CAD_RUNTIME_AVAILABLE=true OCR_AVAILABLE=true`.
 - Web Frontend Checks: lint, TypeScript and production build passed.
 - CodeQL Advanced: Python and JS/TS passed; each SARIF scan contained 0 findings under the configured gate. SARIF artifacts are downloadable; the repository's current settings prevent upload to the GitHub Security tab.
 - Runs: [CAD](https://github.com/DIGANTA2006/offline-ai-3d-designer/actions/runs/40062651779), [Web](https://github.com/DIGANTA2006/offline-ai-3d-designer/actions/runs/40062651924), [CodeQL](https://github.com/DIGANTA2006/offline-ai-3d-designer/actions/runs/40062651755).
