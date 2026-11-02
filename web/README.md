@@ -1,6 +1,6 @@
 # Offline AI 3D Designer — Web Platform
 
-This Next.js 15 application is being built beside the existing Python CAD engine. The excluded Xbox/XboxGames directory is not used by this web setup script.
+This is the Next.js 15 web platform paired with the repository's Python FastAPI CAD service. The hosted application uses Firebase Authentication, PostgreSQL through Prisma, private Vercel Blob storage, and the authenticated CAD-service API. The excluded Xbox/XboxGames directory is not used by this web setup.
 
 ## Requirements
 
@@ -9,7 +9,7 @@ This Next.js 15 application is being built beside the existing Python CAD engine
 - A Firebase project with Google, Email/Password, and Phone sign-in providers enabled
 - Firebase Admin service-account credentials for server-side session verification
 
-## Phase 2 setup
+## Setup
 
 1. Copy values from `.env.example` into `.env` and fill in all `NEXT_PUBLIC_FIREBASE_*` values from Firebase project settings.
 2. Set server-only Firebase Admin values: `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, and `FIREBASE_PRIVATE_KEY`. For the private key, preserve newlines as `\n` in the `.env` file.
@@ -20,6 +20,8 @@ This Next.js 15 application is being built beside the existing Python CAD engine
 7. In Firebase Console > Authentication > Settings, set authorized domains for local and deployed origins. Under Sign-in method, enable Google, Email/Password, and Phone; configure phone test numbers for safe development testing.
 8. Run `npm run prisma:generate` then `npx prisma migrate deploy` after confirming both database URLs point to the intended database. The checked-in migrations create the PostgreSQL tables; do not run migrations against an unverified production database.
 9. Run `npm run dev` and open `http://localhost:3000`.
+
+For Vercel, set **Root Directory** to `web`, Install Command to `npm ci`, Build Command to `npm run build`, and Output Directory to `.next`. Do not prefix commands with `cd web &&` when the Root Directory is already `web`. See the repository-root `DEPLOYMENT.md` for Railway/Preview isolation and the full environment-variable checklist.
 
 ## Authentication and sessions
 
@@ -38,6 +40,8 @@ The environment template contains placeholders, not working credentials. Put loc
 - PDF page rendering, OCR preprocessing, and vision image preparation are in-memory; CAD exporters use scoped `tempfile.TemporaryDirectory` contexts. Scratch STEP/STL files are removed after success or failure.
 - Persisted project JSON is compacted to remove Base64 exports, data URLs, and raw mesh/vertex/face arrays. Array placeholders preserve source/OCR indexes instead of shifting them when a heavy payload is stripped.
 - Each project keeps its two newest **unprotected** generated output versions; each version's STEP/STL files are one output pair. Protected versions remain until manually deleted.
-- Each account has a 10-project history cap. Important projects and queued/processing projects are excluded from automatic pruning. Failed text-to-CAD attempts run best-effort cleanup so failed jobs do not grow history indefinitely.
+- The Free plan allows one saved project. Active Pro subscriptions and ADMIN accounts have unlimited projects.
+- Projects are never pruned automatically. Users explicitly delete a project; queued/processing projects cannot be deleted while work is active.
+- Each project retains its two newest unprotected generated output versions; protected versions remain until manually deleted. Failed text-to-CAD attempts run best-effort cleanup so failed jobs do not leave unnecessary output records.
 - Export Protect/Delete controls are on project details. Mark/unmark Important is per project. Cleanup failures are logged and surfaced as warnings instead of being silently reported as successful.
 - Run `npm run test:retention` for pure policy tests without Supabase or Vercel Blob credentials.
