@@ -29,11 +29,11 @@
 
 ---
 
-## PR Preview: isolate the OCR-enabled CAD backend
+## Preview backend isolation (for branch testing)
 
-The message `OCR not yet implemented. Use /api/v1/text-to-cad for natural language input.` comes from the legacy backend implementation on `main`. The feature branch contains the OCR pipeline, but a Vercel Preview must not call the existing Production Railway service.
+Preview deployments must not silently reuse the Production CAD backend. Keep Production connected to the deployed `main` backend and configure a separate Preview service for any feature branch that needs isolated OCR/CAD testing.
 
-1. In Railway, create a **separate Preview service/environment** connected to branch `feat/cad-engine-reliability-upgrade-20261023`. Keep the existing Production service connected to `main`.
+1. In Railway, create a **separate Preview service/environment** connected to the branch being tested. Keep the existing Production service connected to `main`.
 2. Set the service root directory to the **repository root** (not `python-backend`), so the Docker build can copy the shared `src/` package. In **Railway → Service → Settings → Build**, choose the Dockerfile builder and set Dockerfile path to `python-backend/Dockerfile`. Do not rely on the tracked `python-backend/railway.toml` alone for a new service: Railway's Config as Code is deprecated for new services. See [Railway's current Config as Code notice](https://docs.railway.com/config-as-code). Do not use Railpack/Nixpacks for this service: the Dockerfile installs Tesseract, Python OCR dependencies, and CAD runtime dependencies.
 3. Configure the Preview Railway service with `APP_ENV=production` and a new random `CAD_SERVICE_TOKEN`. Keep the token server-side only. Let Railway inject `PORT`.
 4. Open the Preview backend's `/health` URL. Confirm `"status": "healthy"`, `"cadAvailable": true`, `"cadRuntimeAvailable": true`, `"serviceTokenConfigured": true`, and `"ocrAvailable": true`. The Docker build now fails before deployment if either `build123d` or the OCR runtime cannot import. If `cadRuntimeAvailable` is false, inspect Railway build logs for `CAD runtime import check failed`; if `serviceTokenConfigured` is false, configure a server-only `CAD_SERVICE_TOKEN` on the backend. Do not proceed while the service reports `degraded`.
@@ -47,7 +47,7 @@ Do not use `localhost` for a model server running on your laptop; from Railway, 
 5. In **Vercel → Project → Settings → Environment Variables**, add `CAD_SERVICE_URL_PREVIEW` and `CAD_SERVICE_TOKEN_PREVIEW` scoped to **Preview**. Use the new Railway Preview URL and the matching token from step 3. Do not replace Production's `CAD_SERVICE_URL` or `CAD_SERVICE_TOKEN`.
 6. Redeploy the Vercel Preview from the feature branch. The Preview routes now require the Preview-specific variables and check backend OCR readiness before accepting an OCR request.
 
-Use an isolated test account and verify that Preview's database and private Blob storage are not unintentionally sharing live user data. Keep PR #3 in Draft until OCR extraction, reviewed CAD generation, and private STEP/STL downloads pass.
+Use an isolated test account and verify that Preview's database and private Blob storage are not unintentionally sharing live user data. Before merging a future feature branch, test OCR extraction, reviewed CAD generation, private STEP/STL downloads, and the relevant refusal/error paths.
 
 ---
 
@@ -74,30 +74,34 @@ For a **Production release**, deploy from `main` only after the pull request has
 
 ### 2. Deploy Frontend to Vercel
 
-```bash
-# 1. Go to Vercel → Import Project → Select GitHub repo
-# 2. Configure:
-#    - Framework Preset: Next.js
-#    - Root Directory: repository root (leave blank/default)
-#    - Build Command: cd web && npm run build
-#    - Output Directory: web/.next
-#    - Install Command: cd web && npm ci
+Configure the Vercel project for the repository's actual monorepo layout:
 
-# 3. Set Environment Variables in Vercel:
-#    (Copy from web/.env.example and fill in)
-#    - NEXT_PUBLIC_FIREBASE_* (from Firebase Console)
-#    - FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY
-#    - DATABASE_URL (Supabase pooled connection for the Vercel runtime)
-#    - DIRECT_URL (Supabase direct/session connection for Prisma migrations)
-#    - CAD_SERVICE_URL=https://your-railway-url.railway.app
-#    - CAD_SERVICE_TOKEN (same value as Railway; generate locally with Python secrets.token_hex(32))
-#    - INITIAL_ADMIN_EMAIL=your-email@example.com (must match a verified Firebase email)
-#    - CRON_SECRET= (generate: openssl rand -hex 32)
-#    - BLOB_READ_WRITE_TOKEN (existing public assets only, if used)
-#    - PRIVATE_BLOB_READ_WRITE_TOKEN (from a separate Vercel Blob store set to Private)
+| Setting | Value |
+|---|---|
+| Framework Preset | Next.js |
+| Root Directory | `web` |
+| Install Command | `npm ci` |
+| Build Command | `npm run build` |
+| Output Directory | `.next` |
 
-# 4. Deploy!
-```
+The root directory is already `web`, so commands must **not** start with `cd web &&`. The Next.js build writes to `web/.next`; from Vercel's configured root this directory is `.next`. Keep `web/vercel.json` aligned with these commands and output directory. If the Output Directory override is enabled in the dashboard, enter the literal value `.next` (not the UI label `Next.js default`).
+
+Set Environment Variables in Vercel, using `web/.env.example` as the checklist:
+
+- `NEXT_PUBLIC_FIREBASE_*` (from Firebase Console)
+- `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`
+- `DATABASE_URL` (Supabase pooled connection for the Vercel runtime)
+- `DIRECT_URL` (direct/session connection for Prisma migrations)
+- `CAD_SERVICE_URL` and `CAD_SERVICE_TOKEN` for Production
+- `CAD_SERVICE_URL_PREVIEW` and `CAD_SERVICE_TOKEN_PREVIEW` for isolated Preview deployments
+- `INITIAL_ADMIN_EMAIL` (must match a verified Firebase email)
+- `CRON_SECRET`
+- `PRIVATE_BLOB_READ_WRITE_TOKEN` from a Vercel Blob store configured as Private
+- Razorpay variables only when recurring checkout is enabled
+
+Never put service tokens, database credentials, Firebase service-account keys, private Blob tokens, or Razorpay secrets in `NEXT_PUBLIC_*` variables or commit them to Git.
+
+The Vercel deployment log for `main` commit `f6a0449` confirmed `npm ci`, Prisma Client generation, Next.js build, serverless-function generation, and deployment completion. This is a build/deployment check, not an end-to-end runtime test.
 
 ### 3. Connect Them
 
@@ -206,9 +210,20 @@ curl -X POST http://localhost:8000/api/v1/text-to-cad \
 
 ## Troubleshooting
 
+### Vercel cannot find `web` or reports `cd: web: No such file or directory`
+
+- Check that Root Directory is `web`.
+- With that Root Directory, use `npm ci` and `npm run build`; do not prefix either command with `cd web &&`.
+
+### Vercel reports `NEXT_OUTPUT_DIR_MISSING`
+
+- Keep Root Directory set to `web`.
+- Set Output Directory to the literal `.next` when the dashboard override is enabled.
+- Do not enter `web/.next` (that would duplicate the configured root) or the UI label `Next.js default` as a literal directory.
+
 ### OCR still returns "OCR not yet implemented"
-- This response is from the legacy backend on `main`; do not work around it by pointing Preview at Production.
-- Confirm the Vercel Preview deployment commit includes the latest OCR routing fix, not just the earlier `fix: isolate Vercel Preview CAD backend configuration` commit. Redeploy the latest feature-branch tip after checks pass.
+- Confirm the Vercel deployment is using the intended current backend and that `CAD_SERVICE_URL` (Production) or `CAD_SERVICE_URL_PREVIEW` (Preview) points to it.
+- Do not work around a Preview readiness problem by pointing Preview at the Production backend.
 - Check the dedicated Preview Railway service's `/health` endpoint; it must report `status: "healthy"`, `cadAvailable: true`, `cadRuntimeAvailable: true`, `serviceTokenConfigured: true`, and `ocrAvailable: true`.
 - In Railway Build settings, use repository-root build context and Dockerfile path `python-backend/Dockerfile`; check the build log for the Docker smoke-test line `CAD_RUNTIME_AVAILABLE=true OCR_AVAILABLE=true`.
 - In Vercel Preview variables, set `CAD_SERVICE_URL_PREVIEW` and `CAD_SERVICE_TOKEN_PREVIEW`, then redeploy the latest Preview.
