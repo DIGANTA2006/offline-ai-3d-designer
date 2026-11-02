@@ -1,6 +1,6 @@
 # Offline AI 3D Designer
 
-An offline CAD generator that creates 3D models from natural language descriptions. Uses **build123d** for geometry operations and exports to **STEP** and **STL** formats.
+A hybrid CAD platform combining a local Python CAD engine and desktop tools with a browser-based Next.js application. The geometry pipeline uses **build123d** / OpenCASCADE and exports validated **STEP** and **STL** models for supported inputs.
 
 ## Features
 
@@ -11,9 +11,44 @@ An offline CAD generator that creates 3D models from natural language descriptio
 - 📤 **Exports**: STEP boundary-representation and STL mesh exports with stronger manifold/watertight validation
 - 🖼️ **Image relief and drawing OCR**: Closed heightfield/lithophane meshes plus OCR text/annotation extraction for supported PDF and raster drawings (not exact automatic reconstruction)
 - 🧩 **Slicing integration**: CuraEngine-backed slicing only; no fake placeholder G-code fallback
-- 📐 **Hardware fit check**: confirmed component presets, axis-aligned enclosure clearance report, and explicit dimension review before running checks
+- 📐 **Hardware fit check**: reviewable component presets, axis-aligned enclosure clearance reports, and explicit component/dimension confirmation before checks
 - 🖥️ **CLI & GUI**: Command-line and desktop graphical interfaces
 - 🧪 **Regression tests**: CAD, unit, profile, parser, mesh and slicer safety tests
+
+## Web Platform
+
+The browser application lives in `web/` and is paired with the authenticated Python service in `python-backend/`.
+
+- **Frontend:** Next.js 15 App Router, TypeScript, dashboard, profile, admin and fit-check pages.
+- **Authentication:** Firebase Authentication with server-side session validation.
+- **Database:** PostgreSQL through Prisma; Supabase is supported for hosted database connections.
+- **Project files:** private Vercel Blob storage for drawing uploads and generated outputs.
+- **Drawing workflow:** PDF/raster text and annotation extraction, structured blueprint review, and conservative generation for supported geometry. OCR output is not a guarantee of complete drawing reconstruction.
+- **CAD service:** FastAPI + build123d/OpenCASCADE, with STEP/STL validation and a service-token-protected API.
+- **Plans:** the Free plan allows one saved project; active Pro subscriptions and ADMIN accounts have unlimited projects. Project deletion is explicit rather than automatic.
+- **Fit check:** the dashboard reports axis-aligned mounting/clearance results. It is not a full 3D interference, thermal, structural, or manufacturing certification system.
+
+The hosted web application is **not fully offline**: it requires its configured authentication, database, private storage, and CAD backend services. The local Python/desktop workflow is documented separately below.
+
+### Run the web frontend locally
+
+```bash
+cd web
+npm ci
+cp .env.example .env.local
+# Fill in the required local values; never commit .env.local.
+npm run dev
+```
+
+See [Web Platform Setup](web/README.md) and the [Multi-Service Deployment Guide](DEPLOYMENT.md) for service configuration.
+
+## Deployment
+
+The Vercel project is configured with Root Directory `web`, install command `npm ci`, build command `npm run build`, and output directory `.next`. Keep the dashboard settings and `web/vercel.json` aligned.
+
+The latest recorded successful Vercel deployment in the project log was built from `main` commit `f6a0449` on 2 November 2026. The log shows Prisma Client generation, Next.js compilation, lint/type validation, 10/10 static pages, serverless-function generation, and deployment completion. This verifies the build/deploy step; it does **not** replace runtime testing of authentication, storage, database, OCR, or CAD-service integrations.
+
+See [Deployment Guide](DEPLOYMENT.md) and [Work Status](WORK_STATUS.md) for the current operational notes.
 
 ## Quick Start
 
@@ -114,7 +149,7 @@ python -m pytest tests/test_geometry.py -v
 
 ## Engineering accuracy and limitations
 
-The rule-based parser only generates geometry for recognized descriptions with enough dimensions. It may reject ambiguous or unsupported text; this is preferable to presenting a guessed shape as dimensionally correct. Extrusion/revolution/loft/sweep use explicit polygon profile metadata.
+The rule-based parser only generates geometry for recognized descriptions with enough dimensions. It may reject ambiguous or unsupported text; this is preferable to presenting a guessed shape as dimensionally correct. Extrusion/revolution/loft/sweep use explicit profile metadata. The web drawing workflow still requires users to review extracted information and only generates geometry for supported, grounded inputs.
 
 Single-view images produce approximate relief meshes and lithophanes. A single photo does not contain enough information to guarantee hidden geometry, exact scale, dimensions, threads, fits, or tolerances. Drawing OCR extracts visible text and common annotations (dimension triplets, diameters, radii, fits, threads, tolerances, materials and surface finish) when the Tesseract/PyMuPDF runtime is configured. It is not a complete drawing-understanding system: users must review the extraction and provide a supported, fully dimensioned description before CAD generation. Exact automatic reconstruction of arbitrary views remains unimplemented.
 
@@ -134,4 +169,4 @@ See `pyproject.toml` for the installable package and optional development depend
 
 ## License
 
-MIT License - Feel free to use and modify.
+There is currently no root `LICENSE` file. The package metadata in `pyproject.toml` identifies the project as **Proprietary — All rights reserved**. Do not treat the earlier MIT wording as a license grant; confirm and add the intended license before redistributing the code.
