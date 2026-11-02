@@ -1,16 +1,31 @@
 # Work Status — Offline AI 3D Designer
 
-Updated: 27 October 2026 — PR #6 now includes the connected hardware fit-check workflow; validation pending
+Updated: 2 November 2026 — PR #3 and PR #6 merged; Vercel deployment completed for `main` commit `f6a0449`
 
-## Current review branch — 27 October 2026
+## Current main status
 
 - Repository: `DIGANTA2006/offline-ai-3d-designer` (private); default branch: `main`.
-- Current review PR: [#6 — Core fit-check and CuraEngine deployment fixes](https://github.com/DIGANTA2006/offline-ai-3d-designer/pull/6).
-- Review branch: `fix/core-fitcheck-cura-smoke-20261027`.
-- PR #6 adds a supported CuraEngine image smoke test, hardens dimension/mount alignment fit checks, corrects generated enclosure body geometry, separates the removable lid as its own PartSpec, and connects an authenticated hardware fit-check API to the dashboard.
-- Component preset dimensions and derived enclosure parameters are explicitly unconfirmed until the user reviews the exact component variant and enclosure dimensions.
-- **Validation limitation:** Vercel Preview passed for the PR revision, but GitHub Actions Python/Web jobs failed or queued without usable step logs. Do not claim the test suite or Docker image has passed until those jobs execute their steps. The PR remains unmerged.
-- Previous OCR/drawing-to-CAD notes below are retained as historical context; check the PR branch and current Actions results before following old branch/commit instructions.
+- PR #3 — drawing-to-CAD/OCR workflow: **merged 25 October 2026**. Merge commit: `36992adfa34d30a70df3147eac725b9dfffebc1d`.
+- PR #6 — hardware fit-check and CuraEngine/CAD deployment fixes: **merged 1 November 2026**. Merge commit: `806b7b55b6f57c8a96546cafaf77fe3ab334bea1`. [PR #6](https://github.com/DIGANTA2006/offline-ai-3d-designer/pull/6)
+- PR #6 integrated the authenticated fit-check endpoints/dashboard flow, axis-aligned mounting-hole/boss checks, conservative preset confirmation, separate removable enclosure lid geometry, and the CuraEngine image capability smoke check.
+- **Vercel deployment:** the supplied deployment log shows `main` commit `f6a0449` completed successfully on 2 November 2026. `npm ci`, Prisma Client generation (6.19.3), Next.js 15.5.28 compilation, lint/type validation, 10/10 static page generation, serverless-function creation, output collection, and deployment all completed.
+- **Vercel project layout:** Root Directory `web`; Install Command `npm ci`; Build Command `npm run build`; Output Directory `.next`. Both root and `web/vercel.json` should remain consistent with the configured project root.
+- The successful build confirms compilation and deployment packaging. It does **not** establish that authentication, Supabase/PostgreSQL operations, private Blob access, Railway CAD/OCR calls, billing webhooks, or the cron route have passed end-to-end runtime testing.
+- **Build warnings to review separately:** npm reported 29 vulnerabilities (22 moderate, 7 high), deprecated package warnings, the unknown `cache-dir` npm configuration, and install scripts not yet covered by `allowScripts` for `prisma`, `protobufjs`, and `unrs-resolver`. These warnings did not stop this deployment. Review the dependency audit and package install scripts deliberately; do not run `npm audit fix --force` blindly.
+- **Free-plan retention:** one saved project. Active Pro subscriptions and ADMIN accounts have unlimited projects. Projects are not deleted automatically; users must explicitly delete them. Each project keeps its two newest unprotected output versions, while protected versions are retained.
+- **Engineering boundary:** fit-check is axis-aligned and does not provide arbitrary-rotation placement, complete 3D interference/keep-out analysis, thermal or structural analysis, or manufacturing certification. Drawing OCR/vision also requires human review and only supports the implemented geometry set.
+
+## Current next steps
+
+1. Run live smoke tests against the deployed URL: signup/login/session refresh, dashboard, project create/delete, private upload/download, and database persistence.
+2. Verify the configured Production CAD backend `/health` and service-token pairing. Test supported text-to-CAD, drawing OCR/blueprint review, STEP/STL generation, and the hardware fit-check flow.
+3. Verify Razorpay only if checkout is enabled, including webhook handling and subscription entitlements. Verify the daily account-deletion cron with the configured `CRON_SECRET`.
+4. Review the 29 npm audit findings and the three install-script approval warnings before changing dependency versions or allowing scripts.
+5. Keep representative CAD exports and slicing checks subject to independent CAD-viewer/Cura review; do not treat a green web build as engineering validation.
+
+## Historical implementation and verification notes
+
+The sections below preserve October 2026 implementation history. Their earlier statements that PR #3 or PR #6 were open, Draft, unmerged, or awaiting the first Vercel build are **superseded by the current status above**. Use the current main branch and the current deployment guide for operational steps.
 
 ## Historical OCR/CAD reliability notes (23–24 October)
 
