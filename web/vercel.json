@@ -4,6 +4,7 @@
   "buildCommand": "npm run build",
   "devCommand": "npm run dev",
   "installCommand": "npm ci",
+  "outputDirectory": ".next",
   "crons": [
     {
       "path": "/api/cron/account-deletion",
