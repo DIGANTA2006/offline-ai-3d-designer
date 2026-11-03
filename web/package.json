@@ -11,6 +11,7 @@
     "test:upload-validation": "node scripts/test-upload-validation.mjs",
     "test:upload-route": "node scripts/test-upload-route.mjs",
     "test:subscription-policy": "node scripts/test-subscription-policy.mjs",
+    "test:printability-route": "node scripts/test-printability-route.mjs",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy"
