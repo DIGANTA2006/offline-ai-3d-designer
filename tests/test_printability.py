@@ -157,6 +157,44 @@ def create_overhang_spec() -> PartSpec:
     )
 
 
+def create_cantilever_spec() -> PartSpec:
+    """Create a supported column with an exposed horizontal underside."""
+    return PartSpec(
+        name="Cantilever",
+        description="Horizontal arm extending beyond its supporting column",
+        unit_system=UnitSystem.MM,
+        features=[
+            FeatureSpec(
+                id="column",
+                type=PrimitiveType.BOX,
+                name="Supporting Column",
+                parameters={
+                    "width": ParameterSpec(name="width", value=10.0, unit=UnitSystem.MM),
+                    "depth": ParameterSpec(name="depth", value=10.0, unit=UnitSystem.MM),
+                    "height": ParameterSpec(name="height", value=20.0, unit=UnitSystem.MM),
+                },
+                position=[0.0, 0.0, 0.0],
+                rotation=[0.0, 0.0, 0.0],
+                operation=OperationType.UNION,
+            ),
+            FeatureSpec(
+                id="arm",
+                type=PrimitiveType.BOX,
+                name="Cantilever Arm",
+                parameters={
+                    "width": ParameterSpec(name="width", value=30.0, unit=UnitSystem.MM),
+                    "depth": ParameterSpec(name="depth", value=10.0, unit=UnitSystem.MM),
+                    "height": ParameterSpec(name="height", value=5.0, unit=UnitSystem.MM),
+                },
+                position=[15.0, 0.0, 7.5],
+                rotation=[0.0, 0.0, 0.0],
+                operation=OperationType.UNION,
+                parent_id="column",
+            ),
+        ],
+    )
+
+
 def create_tall_part_spec() -> PartSpec:
     """Create a part taller than bed Z but fits on side."""
     # Cylinder: radius 20mm (diameter 40mm), height 200mm (fits on side: 40x200 footprint, 40 height)
@@ -408,6 +446,16 @@ class TestPrintabilityChecks:
         spec = create_overhang_spec()
         results = run_all_checks(spec)
         overhang_check = next(r for r in results if r.check_id == "overhang_angle")
+        assert overhang_check.status == CheckStatus.WARNING
+        assert overhang_check.value is not None
+        assert overhang_check.value > 45.0
+
+    def test_overhang_detects_downward_facing_cantilever_underside(self):
+        """Exposed underside faces above the bed must not be silently ignored."""
+        spec = create_cantilever_spec()
+        results = run_all_checks(spec)
+        overhang_check = next(r for r in results if r.check_id == "overhang_angle")
+
         assert overhang_check.status == CheckStatus.WARNING
         assert overhang_check.value is not None
         assert overhang_check.value > 45.0

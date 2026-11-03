@@ -160,25 +160,36 @@ def test_slicer_finds_bundled_definitions(monkeypatch):
     assert "cura_resources" in slicer._definitions_dir
 
 
-def test_slicer_build_command_includes_definitions(monkeypatch):
-    """Test that the CuraEngine command includes printer and extruder definitions."""
+def test_slicer_build_command_includes_base_and_generic_definitions(tmp_path, monkeypatch):
+    """CuraEngine must receive the upstream base profiles and generic child profiles."""
     import ai3d_designer.slicing.slicer as slicer_module
-    
-    def mock_find_definitions_dir(self):
-        return str(Path(__file__).parent.parent / "python-backend" / "cura_resources" / "definitions")
-    
-    monkeypatch.setattr(slicer_module.Slicer, "_find_definitions_dir", mock_find_definitions_dir)
-    
+
+    definitions = tmp_path / "definitions"
+    definitions.mkdir()
+    for name, payload in (
+        ("fdmprinter.def.json", '{"name":"FDM base","settings":{}}'),
+        ("fdmextruder.def.json", '{"name":"Extruder base","settings":{}}'),
+        ("generic_fdm_printer.def.json", '{"name":"Generic printer","inherits":"fdmprinter","settings":{}}'),
+        ("generic_fdm_extruder.def.json", '{"name":"Generic extruder","inherits":"fdmextruder","settings":{}}'),
+    ):
+        (definitions / name).write_text(payload, encoding="utf-8")
+
+    monkeypatch.setattr(
+        slicer_module.Slicer,
+        "_find_definitions_dir",
+        lambda self: str(definitions),
+    )
     slicer = Slicer(cura_engine_path="/fake/CuraEngine")
-    settings = SliceSettings()
-    cmd = slicer._build_command("/fake/input.stl", "/fake/output.gcode", settings)
-    
-    # Check that -j flags are present for printer and extruder
-    assert "-j" in cmd
-    printer_def_idx = cmd.index("-j")
-    assert "generic_fdm_printer.def.json" in cmd[printer_def_idx + 1]
-    # There should be a second -j for extruder
-    assert cmd.count("-j") == 2
+    cmd = slicer._build_command("/fake/input.stl", "/fake/output.gcode", SliceSettings())
+
+    definition_args = [cmd[index + 1] for index, token in enumerate(cmd[:-1]) if token == "-j"]
+    assert [Path(path).name for path in definition_args] == [
+        "fdmprinter.def.json",
+        "fdmextruder.def.json",
+        "generic_fdm_printer.def.json",
+        "generic_fdm_extruder.def.json",
+    ]
+    assert cmd.count("-j") == 4
 
 
 def test_slicer_settings_to_args():
@@ -254,6 +265,85 @@ def test_slicer_validate_gcode_structure(tmp_path):
     result4 = slicer.validate_gcode(str(path4))
     assert result4["valid"] is False
     assert "layers" in result4["error"].lower()
+
+
+def test_slicing_capability_uses_supported_help_probe(tmp_path, monkeypatch):
+    import ai3d_designer.slicing.slicer as slicer_module
+
+    definitions = tmp_path / "definitions"
+    definitions.mkdir()
+    (definitions / "fdmprinter.def.json").write_text(
+        '{"name": "FDM Printer Base", "settings": {}}', encoding="utf-8"
+    )
+    (definitions / "fdmextruder.def.json").write_text(
+        '{"name": "FDM Extruder Base", "settings": {}}', encoding="utf-8"
+    )
+    (definitions / "generic_fdm_printer.def.json").write_text(
+        '{"name": "Generic Printer", "inherits": "fdmprinter", "settings": {}}', encoding="utf-8"
+    )
+    (definitions / "generic_fdm_extruder.def.json").write_text(
+        '{"name": "Generic Extruder", "inherits": "fdmextruder", "settings": {}}', encoding="utf-8"
+    )
+    monkeypatch.delenv("CURA_PRINTER_DEFINITION", raising=False)
+    monkeypatch.setattr(
+        slicer_module.Slicer,
+        "_find_cura_engine",
+        lambda self: "/fake/CuraEngine",
+    )
+    monkeypatch.setattr(
+        slicer_module.Slicer,
+        "_find_definitions_dir",
+        lambda self: str(definitions),
+    )
+
+    def fake_run(command, **kwargs):
+        assert command == ["/fake/CuraEngine", "help"]
+        assert kwargs["timeout"] == 10
+        return subprocess.CompletedProcess(
+            command, 0, stdout="CuraEngine slice command help", stderr=""
+        )
+
+    monkeypatch.setattr(slicer_module.subprocess, "run", fake_run)
+    capability = slicer_module.get_slicing_capability()
+
+    assert capability["available"] is True
+    assert capability["engine"] == "CuraEngine"
+
+
+def test_slice_rejects_invalid_settings_before_starting_engine(tmp_path):
+    model_path = tmp_path / "input.stl"
+    model_path.write_bytes(b"not-empty")
+    output_path = tmp_path / "output.gcode"
+
+    result = Slicer(cura_engine_path="/fake/CuraEngine").slice(
+        str(model_path),
+        str(output_path),
+        SliceSettings(layer_height=0),
+    )
+
+    assert result.success is False
+    assert any("Invalid slicing settings" in error for error in result.errors)
+    assert not output_path.exists()
+
+
+def test_slice_rejects_gcode_that_fails_structural_validation(tmp_path, monkeypatch):
+    model_path = tmp_path / "input.stl"
+    model_path.write_bytes(b"not-empty")
+    output_path = tmp_path / "output.gcode"
+
+    def fake_run(command, **kwargs):
+        generated_path = command[command.index("-o") + 1]
+        Path(generated_path).write_text("; PREVIEW only; invalid output\n", encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("ai3d_designer.slicing.slicer.subprocess.run", fake_run)
+    result = Slicer(cura_engine_path="/fake/CuraEngine").slice(
+        str(model_path), str(output_path), SliceSettings()
+    )
+
+    assert result.success is False
+    assert any("failed structural validation" in error for error in result.errors)
+    assert not output_path.exists()
 
 
 def test_slicer_parse_gcode_metadata(tmp_path):

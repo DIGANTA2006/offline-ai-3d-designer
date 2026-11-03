@@ -54,6 +54,7 @@ class FixResponse(BaseModel):
     success: bool
     result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+    notices: List[str] = Field(default_factory=list)
 
 
 class ExplanationResponse(BaseModel):
@@ -100,6 +101,9 @@ def check_printability(request: PrintabilityCheckRequest):
     for result in results:
         check_dict = result.to_dict()
         check_dict["explanation"] = get_explanation(result.check_id)
+        check_dict["available_fixes"] = [
+            action.value for action in get_available_fixes(result.check_id)
+        ]
         checks_with_explanations.append(check_dict)
     
     return PrintabilityCheckResponse(
@@ -139,7 +143,20 @@ def apply_printability_fix(request: FixRequest):
     if not result.success:
         return FixResponse(success=False, error=result.error)
     
-    return FixResponse(success=True, result=result.to_dict())
+    notices: List[str] = []
+    if request.action == FixAction.ADD_SUPPORT:
+        notices.append(
+            "This is a support recommendation only: it marks features as needing support, "
+            "but does not generate support geometry or change slicer settings. Configure "
+            "supports in the selected slicer and inspect its preview."
+        )
+    elif request.action == FixAction.SPLIT:
+        notices.append(
+            "This is a split recommendation only: it records split metadata but does not "
+            "create separate solids or exportable split parts."
+        )
+
+    return FixResponse(success=True, result=result.to_dict(), notices=notices)
 
 
 @router.get("/explanations/{check_id}", response_model=ExplanationResponse)
@@ -187,7 +204,9 @@ def get_available_fixes_for_check(check_id: str):
             FixAction.ROTATE.value: "Reorient the part on the build plate",
             FixAction.THICKEN.value: "Increase wall/shell thickness",
             FixAction.ENLARGE.value: "Enlarge holes or move features from edges",
-            FixAction.SPLIT.value: "Split part into multiple printable pieces",
-            FixAction.ADD_SUPPORT.value: "Enable support structures in slicer",
+            FixAction.SPLIT.value: "Record a proposed split; separate solids are not generated yet",
+            FixAction.ADD_SUPPORT.value: (
+                "Mark features as needing support; support geometry and slicer settings are not generated"
+            ),
         },
     }

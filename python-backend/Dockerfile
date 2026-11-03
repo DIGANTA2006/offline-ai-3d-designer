@@ -62,8 +62,12 @@ RUN python -c "import build123d, ai3d_designer, main; assert main.cad_runtime_is
 # Validate CuraEngine is available and functional (fail build if not)
 RUN python -c "import shutil, subprocess; path = shutil.which('CuraEngine'); assert path, 'CuraEngine binary not found on PATH'; result = subprocess.run([path, 'help'], capture_output=True, timeout=10); out = (result.stdout + result.stderr).decode(errors='replace'); assert 'CuraEngine slice' in out, 'CuraEngine help output unexpected: ' + out[:500]; print('CURA_ENGINE_AVAILABLE=true', path)"
 
-# Validate bundled Cura definitions are present and valid JSON
-RUN python -c "import json, os; p1='/app/python-backend/cura_resources/definitions/generic_fdm_printer.def.json'; p2='/app/python-backend/cura_resources/definitions/generic_fdm_extruder.def.json'; assert os.path.isfile(p1) and os.path.isfile(p2), 'Bundled Cura definitions missing'; json.load(open(p1)); json.load(open(p2)); print('CURA_DEFINITIONS_VALID=true')"
+# Validate upstream Cura base profiles, project generic profiles, and license are bundled.
+RUN python -c "import json, os; root='/app/python-backend/cura_resources'; names=['definitions/fdmprinter.def.json','definitions/fdmextruder.def.json','definitions/generic_fdm_printer.def.json','definitions/generic_fdm_extruder.def.json']; paths=[os.path.join(root,n) for n in names]; assert all(os.path.isfile(p) for p in paths), 'Cura definition resource missing'; parsed=[json.load(open(p, encoding='utf-8')) for p in paths]; assert all(isinstance(p.get('name'), str) and isinstance(p.get('metadata'), dict) for p in parsed), 'Cura definitions must contain names and metadata'; assert all(isinstance(p.get('settings'), dict) for p in parsed[:2]), 'Upstream base definitions must contain settings'; assert all(isinstance(p.get('overrides'), dict) for p in parsed[2:]), 'Generic child profiles must contain overrides'; assert not parsed[0].get('inherits') and not parsed[1].get('inherits'), 'Cura base definitions must not inherit'; assert parsed[2].get('inherits') == 'fdmprinter' and parsed[3].get('inherits') == 'fdmextruder', 'Generic profiles must inherit the matching Cura base definitions'; license_path=os.path.join(root,'CURA-UPSTREAM-LICENSE.txt'); assert os.path.isfile(license_path) and 'GNU LESSER GENERAL PUBLIC LICENSE' in open(license_path, encoding='utf-8').read(), 'Upstream Cura license missing'; print('CURA_DEFINITIONS_AND_LICENSE_VALID=true')"
+
+# Run a real STL-to-G-code slice with the installed engine and bundled profiles.
+# This verifies profile loading, CLI arguments, non-empty output, and G-code structure.
+RUN python scripts/smoke_curaengine.py
 
 EXPOSE 8000
 

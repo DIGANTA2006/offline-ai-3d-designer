@@ -58,6 +58,7 @@ from ai3d_designer.drawing_to_cad.blueprint import Blueprint
 from ai3d_designer.drawing_to_cad.extraction import extract_blueprint
 from ai3d_designer.drawing_to_cad.generator import GeometryError, export_blueprint
 from ai3d_designer.slicing.slicer import SliceSettings, Slicer, get_slicing_capability
+from ai3d_designer.printability import printability_router
 
 
 # =============================================================================
@@ -322,6 +323,12 @@ app = FastAPI(
     title="Offline AI 3D Designer - CAD Service",
     version="0.1.0",
     lifespan=lifespan,
+)
+
+# Every printability endpoint is internal to the authenticated web-to-CAD service.
+app.include_router(
+    printability_router,
+    dependencies=[Depends(require_cad_service_token)],
 )
 
 # Configure CORS

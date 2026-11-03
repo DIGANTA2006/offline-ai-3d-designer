@@ -252,13 +252,10 @@ class PrintabilityChecker:
         Horizontal face (ceiling): angle from vertical = 0°, overhang = 90°
         45° overhang: angle from vertical = 45°, overhang = 45°
         
-        Only faces facing UP (normal.Z > 0) are considered overhangs.
-        Faces facing DOWN (normal.Z < 0) are supported by bed or previous layers.
-        
-        IMPORTANT: Horizontal faces at the TOP of a solid (like a box top)
-        are supported by the walls below them, so they are NOT overhangs.
-        We detect this by checking if there are vertical walls around
-        the perimeter of the face that extend downward.
+        Downward-facing underside faces above the bed are potential overhangs.
+        The bed-contact underside at the part's minimum Z is excluded.
+        Upward-facing sloped faces retain the existing conservative heuristic;
+        top faces supported by walls are excluded by the perimeter check.
         """
         affected = []
         max_overhang = 0.0
@@ -287,21 +284,31 @@ class PrintabilityChecker:
                 # Horizontal ceiling (normal up): angle_from_vertical = 0, overhang = 90
                 overhang = 90.0 - angle_from_vertical
                 
-                # Only consider overhangs (faces facing somewhat upward)
-                # A face with normal.Z > 0 is facing up (ceiling/overhang)
-                # A face with normal.Z < 0 is facing down (floor - supported by bed)
-                if normal.Z > 0.1:  # Facing upward - potential overhang
-                    # Check if this face is SUPPORTED from below (not a true overhang)
-                    # A horizontal face at the top of a solid is supported by walls
+                # A downward-facing face above the bed is an underside. On a
+                # boundary representation, such a face is exposed because no
+                # solid occupies the space immediately below its surface.
+                # Do not discard it: cantilevers and horizontal undersides are
+                # precisely the cases the previous normal.Z > 0-only test missed.
+                underside_above_bed = (
+                    normal.Z < -0.1 and face_bbox.min.Z > z_min + 1e-6
+                )
+
+                if underside_above_bed:
+                    if overhang > max_overhang:
+                        max_overhang = overhang
+                        affected = self._find_affected_features(spec, face)
+
+                elif normal.Z > 0.1:
+                    # Keep the existing conservative treatment for upward-facing
+                    # sloped surfaces. A horizontal top face supported by walls
+                    # is not treated as an unsupported overhang.
                     supported = False
-                    if normal.Z > 0.9:  # Horizontal face facing up
-                        # Check if there are vertical walls around the perimeter
+                    if normal.Z > 0.9:
                         supported = self._is_top_face_supported(part, face, face_bbox)
-                    
-                    if not supported:
-                        if overhang > max_overhang:
-                            max_overhang = overhang
-                            affected = self._find_affected_features(spec, face)
+
+                    if not supported and overhang > max_overhang:
+                        max_overhang = overhang
+                        affected = self._find_affected_features(spec, face)
             except Exception:
                 continue
         
