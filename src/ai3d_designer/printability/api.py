@@ -101,6 +101,9 @@ def check_printability(request: PrintabilityCheckRequest):
     for result in results:
         check_dict = result.to_dict()
         check_dict["explanation"] = get_explanation(result.check_id)
+        check_dict["available_fixes"] = [
+            action.value for action in get_available_fixes(result.check_id)
+        ]
         checks_with_explanations.append(check_dict)
     
     return PrintabilityCheckResponse(
