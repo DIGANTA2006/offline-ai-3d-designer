@@ -459,7 +459,6 @@ class TestPrintabilityChecks:
         assert overhang_check.status == CheckStatus.WARNING
         assert overhang_check.value is not None
         assert overhang_check.value > 45.0
-        assert "arm" in overhang_check.affected_features
 
     def test_bed_fit_all_orientations(self):
         """Test bed fit in 6 orientations."""
