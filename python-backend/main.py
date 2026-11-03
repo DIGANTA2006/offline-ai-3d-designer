@@ -617,6 +617,8 @@ def slice_stl(request: SliceRequest):
             "X-Content-Type-Options": "nosniff",
             "X-Slice-Engine": str(capability["engine"] or "CuraEngine"),
             "X-Slice-Filament-Grams-Estimated": "true" if result.filament_weight_estimated else "false",
+            "X-Slice-Filament-Length-Source": result.filament_length_source or "unknown",
+            "X-Slice-Deposition-Moves": str(result.deposition_moves),
         }
         if result.print_time is not None:
             headers["X-Slice-Print-Time-Seconds"] = str(round(result.print_time, 2))
