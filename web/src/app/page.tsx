@@ -1,4 +1,4 @@
-import Link from "next/link";
+import Link from "next/link";\nimport { BrandLogo } from "@/components/brand-logo";
 import {
   ArrowRight,
   Check,
@@ -46,12 +46,7 @@ export default function HomePage() {
     <main className="min-h-screen overflow-hidden">
       <div className="pointer-events-none fixed inset-0 surface-grid opacity-60" />
       <header className="relative z-10 mx-auto flex max-w-7xl items-center justify-between px-5 py-5 sm:px-8">
-        <Link href="/" className="flex items-center gap-3 font-semibold tracking-tight">
-          <span className="flex size-10 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-            <Layers3 className="size-5" />
-          </span>
-          <span>Offline AI <span className="text-muted-foreground">3D Designer</span></span>
-        </Link>
+        <BrandLogo />
         <nav className="flex items-center gap-2">
           <a href="#features" className="hidden px-3 py-2 text-sm text-muted-foreground hover:text-foreground sm:inline-flex">
             Platform
