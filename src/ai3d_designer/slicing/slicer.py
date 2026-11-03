@@ -784,6 +784,43 @@ def get_slicing_capability() -> Dict[str, Any]:
                 ),
             }
 
+        if not slicer._definitions_dir:
+            return {
+                "available": False,
+                "engine": "CuraEngine",
+                "reason": "Cura definitions directory was not found.",
+            }
+
+        base_definitions = (
+            Path(slicer._definitions_dir) / "fdmprinter.def.json",
+            Path(slicer._definitions_dir) / "fdmextruder.def.json",
+        )
+        for definition in base_definitions:
+            if not definition.is_file():
+                return {
+                    "available": False,
+                    "engine": "CuraEngine",
+                    "reason": (
+                        f"Required Cura base definition is missing: {definition.name}. "
+                        "Install the pinned Cura 4.13 base definitions."
+                    ),
+                }
+            try:
+                with definition.open("r", encoding="utf-8") as handle:
+                    parsed = json.load(handle)
+            except (OSError, json.JSONDecodeError) as exc:
+                return {
+                    "available": False,
+                    "engine": "CuraEngine",
+                    "reason": f"Cura base definition is not valid JSON ({definition.name}): {exc}",
+                }
+            if not isinstance(parsed, dict) or not isinstance(parsed.get("settings"), dict) or parsed.get("inherits"):
+                return {
+                    "available": False,
+                    "engine": "CuraEngine",
+                    "reason": f"Cura base definition is incomplete: {definition.name}",
+                }
+
         for definition_path in (slicer._printer_def_path, slicer._extruder_def_path):
             definition = Path(definition_path)
             if not definition.is_file():
