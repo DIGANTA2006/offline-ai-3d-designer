@@ -113,6 +113,8 @@ The phases are ordered by dependency. A phase is complete only when its exit gat
 
 **Goal:** Never call an export successful when required geometry is unresolved, and ensure a successfully generated drawing model can be checked by the printability system.
 
+**Execution update — 3 November 2026:** PR #19 fixes the live JPEG-selection failure by passing the upload API's validated `contentType` and `type` through to the Drawing Processor. OCR source selection now uses MIME metadata first and retains filename-extension fallback for legacy projects. Tests cover extensionless JPEG/PDF files and explicitly reject DXF/BMP/TIFF from this OCR path. PR #19 is pending CI and review; it does not change Production until merged and deployed.
+
 - [x] Define a versioned API boundary for the reviewed drawing Blueprint and provide a blueprint-native printability path; PR #16 adds `/api/v1/printability/check-blueprint` rather than relabelling Blueprint fields as the legacy canonical `PartSpec`.
 - [ ] Persist the original reviewed blueprint separately from the normalized canonical geometry specification. Preserve measurement provenance and generation warnings.
 - [ ] Add regression tests for drawing-generated versions passing the printability endpoint, including supported flange, box/enclosure, and hole-feature examples.
