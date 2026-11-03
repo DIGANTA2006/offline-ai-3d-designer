@@ -714,7 +714,7 @@ def test_vision_schema_reads_image_callouts_even_when_ocr_inventory_is_empty():
                     "confidence": 0.85,
                     "region": {"x": 0.2, "y": 0.3, "width": 0.1, "height": 0.1},
                     "verification_status": "ocr_value_match",
-                    "ocr_inventory_id": "untrusted-model-id",
+                    "ocr_inventory_id": "fake-id",
                 }],
                 "warnings": [],
                 "unsupported_geometry": [],
