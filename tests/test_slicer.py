@@ -272,11 +272,17 @@ def test_slicing_capability_uses_supported_help_probe(tmp_path, monkeypatch):
 
     definitions = tmp_path / "definitions"
     definitions.mkdir()
+    (definitions / "fdmprinter.def.json").write_text(
+        '{"name": "FDM Printer Base", "settings": {}}', encoding="utf-8"
+    )
+    (definitions / "fdmextruder.def.json").write_text(
+        '{"name": "FDM Extruder Base", "settings": {}}', encoding="utf-8"
+    )
     (definitions / "generic_fdm_printer.def.json").write_text(
-        '{"inherits": "fdmprinter"}', encoding="utf-8"
+        '{"name": "Generic Printer", "inherits": "fdmprinter", "settings": {}}', encoding="utf-8"
     )
     (definitions / "generic_fdm_extruder.def.json").write_text(
-        '{"inherits": "fdmextruder"}', encoding="utf-8"
+        '{"name": "Generic Extruder", "inherits": "fdmextruder", "settings": {}}', encoding="utf-8"
     )
     monkeypatch.delenv("CURA_PRINTER_DEFINITION", raising=False)
     monkeypatch.setattr(
