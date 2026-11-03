@@ -82,6 +82,10 @@ def main() -> None:
         validation = slicer.validate_gcode(str(gcode_path))
         if not validation["valid"]:
             raise RuntimeError("Real CuraEngine G-code failed validation: " + str(validation["error"]))
+        if validation["stats"]["deposition_moves"] <= 0:
+            raise RuntimeError("Real CuraEngine output contains no positive extrusion on a print move.")
+        if validation["stats"]["extrusion_length_mm"] <= 0 or not result.filament_length_m or result.filament_length_m <= 0:
+            raise RuntimeError("Real CuraEngine output has zero or unknown filament extrusion length.")
 
         print(
             "CURAENGINE_REAL_SLICE_PASS "
