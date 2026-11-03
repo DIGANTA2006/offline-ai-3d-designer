@@ -243,7 +243,14 @@ class Slicer:
         """
         if settings is None:
             settings = SliceSettings()
-        
+
+        settings_errors = settings.validate()
+        if settings_errors:
+            return SliceResult(
+                success=False,
+                errors=["Invalid slicing settings: " + "; ".join(settings_errors)],
+            )
+
         errors = []
         warnings = []
         
@@ -291,8 +298,21 @@ class Slicer:
             if os.path.getsize(output_path) == 0:
                 errors.append("CuraEngine produced empty G-code file")
                 return SliceResult(success=False, errors=errors)
-            
-            # Parse G-code for metadata
+
+            # A zero-exit process is not sufficient: reject malformed or placeholder output.
+            gcode_validation = self.validate_gcode(output_path)
+            if not gcode_validation["valid"]:
+                try:
+                    os.remove(output_path)
+                except OSError:
+                    pass
+                errors.append(
+                    "CuraEngine output failed structural validation: "
+                    + str(gcode_validation["error"] or "unknown G-code validation error")
+                )
+                return SliceResult(success=False, errors=errors)
+
+            # Parse G-code for metadata only after the structural check passes.
             metadata = self._parse_gcode_metadata(output_path)
             
             return SliceResult(
@@ -713,50 +733,94 @@ def create_default_printer_definition(definitions_dir: Optional[str] = None) -> 
 
 
 def get_slicing_capability() -> Dict[str, Any]:
-    """Check if slicing is available and return capability info."""
+    """Probe the installed CuraEngine using its supported CLI and bundled definitions.
+
+    The actual printer/extruder profile load and STL-to-G-code path are exercised
+    by the Docker build smoke test; this lightweight probe is safe for /health.
+    """
     try:
-        # Check CuraEngine
-        result = subprocess.run(
-            ["CuraEngine", "--version"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        
-        if result.returncode != 0:
+        slicer = Slicer()
+        engine_path = slicer.cura_engine_path
+        if not engine_path:
             return {
                 "available": False,
                 "engine": None,
-                "reason": f"CuraEngine was not found: {result.stderr.strip()}",
+                "reason": "CuraEngine was not found on PATH or in a supported installation location.",
             }
-        
-        version = result.stdout.strip() or result.stderr.strip()
-        
-        # Check definitions - use the same logic as Slicer
-        slicer = Slicer()
-        if slicer._printer_def_path and slicer._extruder_def_path:
+
+        # CuraEngine 4.13 uses the 'help' subcommand; '--version' is not supported.
+        result = subprocess.run(
+            [engine_path, "help"],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=10,
+        )
+        output = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
+        if result.returncode != 0 or "CuraEngine slice" not in output:
+            detail = output[:500] or f"CLI exited with status {result.returncode}."
             return {
-                "available": True,
-                "engine": "CuraEngine",
-                "version": version,
-                "reason": None,
+                "available": False,
+                "engine": None,
+                "reason": f"CuraEngine CLI probe failed: {detail}",
             }
-        
+
+        if not slicer._printer_def_path or not slicer._extruder_def_path:
+            return {
+                "available": False,
+                "engine": "CuraEngine",
+                "reason": (
+                    "Cura printer/extruder definitions were not both resolved "
+                    "(CURA_PRINTER_DEFINITION or bundled definitions)."
+                ),
+            }
+
+        for definition_path in (slicer._printer_def_path, slicer._extruder_def_path):
+            definition = Path(definition_path)
+            if not definition.is_file():
+                return {
+                    "available": False,
+                    "engine": "CuraEngine",
+                    "reason": f"Cura definition file is missing: {definition.name}",
+                }
+            try:
+                with definition.open("r", encoding="utf-8") as handle:
+                    parsed = json.load(handle)
+            except (OSError, json.JSONDecodeError) as exc:
+                return {
+                    "available": False,
+                    "engine": "CuraEngine",
+                    "reason": f"Cura definition is not valid JSON ({definition.name}): {exc}",
+                }
+            if not isinstance(parsed, dict) or not parsed.get("inherits"):
+                return {
+                    "available": False,
+                    "engine": "CuraEngine",
+                    "reason": f"Cura definition is missing required inheritance metadata: {definition.name}",
+                }
+
         return {
-            "available": False,
+            "available": True,
             "engine": "CuraEngine",
-            "reason": "Cura definitions not found (checked CURA_PRINTER_DEFINITION env var and bundled definitions)",
+            "version": "CLI help verified; version string unavailable",
+            "reason": None,
         }
-        
+
     except FileNotFoundError:
         return {
             "available": False,
             "engine": None,
-            "reason": "CuraEngine was not found",
+            "reason": "CuraEngine executable could not be started.",
         }
-    except Exception as e:
+    except subprocess.TimeoutExpired:
         return {
             "available": False,
             "engine": None,
-            "reason": f"Slicing capability check failed: {str(e)}",
+            "reason": "CuraEngine CLI probe timed out after 10 seconds.",
+        }
+    except Exception as exc:
+        return {
+            "available": False,
+            "engine": None,
+            "reason": f"Slicing capability check failed: {type(exc).__name__}: {exc}",
         }
