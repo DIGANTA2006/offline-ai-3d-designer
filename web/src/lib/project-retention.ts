@@ -4,6 +4,7 @@ import {
   canCreateProject,
   selectUnprotectedVersionIdsToPrune,
 } from "@/lib/project-retention-core";
+import { hasPaidFeatureAccess } from "@/lib/billing/subscription-policy";
 
 export { compactStoredJson, FREE_PROJECT_LIMIT, MAX_UNPROTECTED_OUTPUT_VERSIONS } from "@/lib/project-retention-core";
 
@@ -50,8 +51,7 @@ async function hasUnlimitedProjects(userId: string, db: Pick<typeof prisma, "use
     db.user.findUnique({ where: { id: userId }, select: { role: true } }),
     db.subscription.findUnique({ where: { userId } }),
   ]);
-  if (user?.role === "ADMIN") return true;
-  return subscription?.tier === "PRO" && subscription.status === "ACTIVE";
+  return hasPaidFeatureAccess(user?.role ?? "USER", subscription);
 }
 
 export async function assertProjectCapacity(
