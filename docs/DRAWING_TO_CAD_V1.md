@@ -13,6 +13,14 @@ The path is:
 5. The user reviews the blueprint and submits it to POST /api/v1/generate. The deterministic generator builds the model, checks OpenCASCADE validity, checks for a single solid and positive volume, exports STEP/STL, and rejects an STL that is not watertight.
 6. The existing Next.js generation route stores both exports privately in Vercel Blob and records the new project version.
 
+## Image-read measurement candidates
+
+When a vision-capable provider is configured, the model must inspect the rendered drawing pixels independently of OCR. It returns named visual measurement candidates with the raw callout, numeric value when legible, unit, dimension kind, associated feature when clear, source page/view, normalized image region when locatable, and an uncalibrated confidence estimate.
+
+These candidates are stored inside the drawing Blueprint under `visual_measurements`. They remain separate from `base_sketch` and `features` and are never consumed by the CAD generator directly. The backend may mark a candidate `ocr_value_match` only when its value, unit, kind, and source page match the OCR inventory; that status confirms the value was also recognized by OCR, not that its association with a particular feature is correct. All other candidates remain `vision_only`.
+
+The project UI displays these candidates for review. A later measurement-editor phase will add explicit user confirmation and provenance-preserving editing. Until then, users must manually verify a candidate against the original callout before entering it into an editable blueprint dimension. Model confidence is uncalibrated and is not an accuracy guarantee.
+
 ## Vision provider configuration
 
 Set these only on the Python CAD service (Railway Preview service for Preview testing).
