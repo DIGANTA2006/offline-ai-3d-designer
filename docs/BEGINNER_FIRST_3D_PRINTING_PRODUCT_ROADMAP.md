@@ -135,6 +135,8 @@ The phases are ordered by dependency. A phase is complete only when its exit gat
 
 **Goal:** Understand the drawing image as a drawing, not merely extract its text.
 
+**Execution update — 3 November 2026:** Draft PR #18 adds typed image-read measurement candidates, instructs the vision model to inspect image pixels independently of OCR, reconciles candidate values against OCR evidence without trusting model-supplied verification, and displays candidates in the drawing review UI. Its Python regression, Docker/CuraEngine, frontend and CodeQL checks are still being verified. This is an initial implementation slice, not completion of Phase 2. The live Railway service has not yet reported an approved vision provider, so actual image-read results still require an explicit provider/data-handling decision and a live test.
+
 - [ ] Keep OCR for text recognition, but add visual analysis of the rendered page: view detection, dimension arrows/extension lines, leader lines, symbols, geometry candidates, section views, and repeated-feature counts.
 - [ ] Combine OCR text, PDF-native text/vector evidence, and vision output. No single model response should be treated as ground truth.
 - [ ] Associate each candidate measurement with a name, value, unit, tolerance (when present), feature, source page/view, image coordinates or crop, extraction method, and confidence.
