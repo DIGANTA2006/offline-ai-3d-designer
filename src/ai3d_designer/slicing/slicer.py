@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import shutil
 import json
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
@@ -509,11 +510,11 @@ class Slicer:
         for raw_line in content.splitlines():
             # Remove semicolon and parenthetical comments before parsing words.
             code = raw_line.split(";", 1)[0]
-            code = re.sub(r"\\([^)]*\\)", "", code).strip().upper()
+            code = re.sub(r"\([^)]*\)", "", code).strip().upper()
             if not code:
                 continue
-            code = re.sub(r"^N\\d+\\s*", "", code)
-            command_match = re.match(r"^(G\\d+|M\\d+|T\\d+)", code)
+            code = re.sub(r"^N\d+\s*", "", code)
+            command_match = re.match(r"^(G\d+|M\d+|T\d+)", code)
             if not command_match:
                 continue
 
@@ -521,7 +522,7 @@ class Slicer:
             arguments = code[command_match.end():]
             words: Dict[str, float] = {}
             for letter, raw_value in re.findall(
-                r"([A-Z])\\s*([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+))",
+                r"([A-Z])\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))",
                 arguments,
             ):
                 try:
@@ -656,15 +657,15 @@ class Slicer:
                         layer_count += 1
                 continue
 
-            code = re.sub(r"^N\\d+\\s*", "", code).strip()
-            if re.match(r"^G28\\b", code):
+            code = re.sub(r"^N\d+\s*", "", code).strip()
+            if re.match(r"^G28\b", code):
                 has_home = True
-            if re.match(r"^M1(0[49]|4[09])\\b", code):
+            if re.match(r"^M1(0[49]|4[09])\b", code):
                 has_temp = True
 
-            if re.match(r"^G[012]\\b", code):
+            if re.match(r"^G[012]\b", code):
                 for axis in ("X", "Y"):
-                    match = re.search(rf"{axis}([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+))", code)
+                    match = re.search(rf"{axis}([+-]?(?:\d+(?:\.\d*)?|\.\d+))", code)
                     if match:
                         value = abs(float(match.group(1)))
                         if axis == "X":
@@ -672,7 +673,7 @@ class Slicer:
                         else:
                             max_y = max(max_y, value)
 
-                z_match = re.search(r"Z([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+))", code)
+                z_match = re.search(r"Z([+-]?(?:\d+(?:\.\d*)?|\.\d+))", code)
                 if z_match and not has_layer_count and not has_layer_markers:
                     z_value = float(z_match.group(1))
                     if last_z is not None and z_value > last_z + z_layer_threshold:
