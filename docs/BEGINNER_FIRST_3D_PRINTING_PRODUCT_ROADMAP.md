@@ -270,7 +270,7 @@ If implementation evidence shows a dependency is wrong, update this document in 
 - Use Railway and Vercel Preview deployments for isolated end-to-end tests. Keep Preview services, tokens, database and storage isolated from Production.
 - Never place secrets in Git, browser code, logs, screenshots, or this plan.
 - Do not apply database migrations to Production or change Production environment variables without explicit approval.
-- Do not merge to `main), delete user projects, or trigger a Production deployment without explicit approval from the product owner.
+- Do not merge to `main`, delete user projects, or trigger a Production deployment without explicit approval from the product owner.
 - Keep the roadmap checkboxes and `WORK_STATUS.md` current as work is completed.
 
 ---
