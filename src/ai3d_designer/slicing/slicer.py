@@ -345,7 +345,16 @@ class Slicer:
         """Build CuraEngine command line."""
         cmd = [self.cura_engine_path, "slice"]
         
-        # Add printer and extruder definitions
+        # CuraEngine needs the inherited base definitions loaded as well as
+        # the project's generic child profiles. Parent definitions must be
+        # available before the children that refer to them by ID.
+        if self._definitions_dir:
+            base_printer = Path(self._definitions_dir) / "fdmprinter.def.json"
+            base_extruder = Path(self._definitions_dir) / "fdmextruder.def.json"
+            for definition in (base_printer, base_extruder):
+                if definition.is_file():
+                    cmd.extend(["-j", str(definition)])
+
         if self._printer_def_path:
             cmd.extend(["-j", self._printer_def_path])
         if self._extruder_def_path:
