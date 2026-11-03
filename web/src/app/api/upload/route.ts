@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { getCurrentUser } from "@/lib/auth/server";
 import { isSameOriginRequest } from "@/lib/security/same-origin";
-import { validateFiles } from "@/lib/upload/validation";
+import { validateFilesWithContent } from "@/lib/upload/validation";
 import { prisma } from "@/lib/prisma";
 import { assertProjectCapacity, createProjectWithCapacity, ProjectCapacityError } from "@/lib/project-retention";
 
@@ -53,7 +53,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "This upload route accepts up to 3 MiB total per batch." }, { status: 413 });
     }
 
-    const { valid, rejected } = validateFiles(files);
+    const { valid, rejected } = await validateFilesWithContent(files);
     if (!valid.length) {
       return NextResponse.json({ error: "No supported files were found.", rejected: rejected.map((item) => ({ name: item.file.name, reason: item.reason })) }, { status: 400 });
     }
