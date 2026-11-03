@@ -93,6 +93,9 @@ def main() -> None:
             f"layers={validation['stats']['layers']} "
             f"print_time_seconds={result.print_time!r} "
             f"filament_length_m={result.filament_length_m!r} "
+            f"filament_length_source={result.filament_length_source!r} "
+            f"extrusion_length_mm={validation['stats']['extrusion_length_mm']!r} "
+            f"deposition_moves={validation['stats']['deposition_moves']} "
             f"filament_grams={result.filament_used!r} "
             f"filament_weight_estimated={result.filament_weight_estimated}"
         )
