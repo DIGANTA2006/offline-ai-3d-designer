@@ -1,6 +1,5 @@
 """Integration tests for authenticated printability FastAPI routes."""
 
-import os
 import sys
 from pathlib import Path
 
@@ -126,7 +125,7 @@ def test_authenticated_printability_check_rejects_malformed_partspec(monkeypatch
 
     response = client.post(
         "/api/v1/printability/check",
-        json={"partSpec": {"name": "missing features"}},
+        json={"partSpec": {"name": "invalid feature", "features": [{"type": "not-a-primitive"}]}},
         headers={"Authorization": "Bearer printability-test-token"},
     )
     assert response.status_code == 422
