@@ -1,4 +1,4 @@
-import Link from "next/link";
+import Link from "next/link";\nimport { BrandLogo } from "@/components/brand-logo";
 import {
   ArrowRight,
   Box,
@@ -45,10 +45,7 @@ export default function DashboardContent({ user, projects, stats }: DashboardPro
     <main className="min-h-screen bg-background">
       <div className="flex min-h-screen">
         <aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-card/50 p-5 lg:flex">
-          <Link href="/" className="flex items-center gap-3 font-semibold tracking-tight">
-            <span className="flex size-10 items-center justify-center rounded-xl bg-primary text-primary-foreground"><Box className="size-5" /></span>
-            <span className="leading-tight">Offline AI<br /><span className="text-muted-foreground">3D Designer</span></span>
-          </Link>
+          <BrandLogo />
           <p className="mb-3 mt-10 px-3 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Workspace</p>
           <nav className="space-y-1">
             <Link href="/dashboard" className="flex items-center gap-3 rounded-xl bg-primary/10 px-3 py-2.5 text-sm font-medium text-primary"><LayoutDashboard className="size-4" /> Overview</Link>
@@ -69,9 +66,12 @@ export default function DashboardContent({ user, projects, stats }: DashboardPro
 
         <section className="min-w-0 flex-1">
           <header className="flex items-center justify-between border-b border-border px-5 py-4 sm:px-8">
-            <div>
-              <p className="text-sm text-muted-foreground">Workspace / Overview</p>
-              <h1 className="mt-1 text-xl font-semibold tracking-tight">Engineering dashboard</h1>
+            <div className="flex min-w-0 items-center gap-3">
+              <BrandLogo className="lg:hidden" showName={false} />
+              <div>
+                <p className="text-sm text-muted-foreground">Workspace / Overview</p>
+                <h1 className="mt-1 text-xl font-semibold tracking-tight">Engineering dashboard</h1>
+              </div>
             </div>
             <div className="flex items-center gap-2">
               <ThemeToggle />
