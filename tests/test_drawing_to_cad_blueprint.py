@@ -649,7 +649,7 @@ def test_visual_measurement_ocr_value_match_requires_kind_unit_and_page():
                 source_view="top",
                 confidence=0.8,
                 verification_status="ocr_value_match",
-                ocr_inventory_id="model-invented-id",
+                ocr_inventory_id="fake-id",
             ),
             VisualMeasurement(
                 dimension_name="Slot length",
