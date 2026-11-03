@@ -713,40 +713,27 @@ def create_default_printer_definition(definitions_dir: Optional[str] = None) -> 
 
 
 def get_slicing_capability() -> Dict[str, Any]:
-    """Check the installed CuraEngine with its supported help command and verify definitions."""
+    """Check if slicing is available and return capability info."""
     try:
-        slicer = Slicer()
-        engine_path = slicer.cura_engine_path
-        if not engine_path:
-            return {
-                "available": False,
-                "engine": None,
-                "reason": "CuraEngine was not found on PATH or in the supported installation locations",
-            }
-
-        # CuraEngine 4.13.0 does not support --version; its supported probe is "help".
+        # Check CuraEngine
         result = subprocess.run(
-            [engine_path, "help"],
+            ["CuraEngine", "--version"],
             capture_output=True,
             text=True,
             timeout=10,
         )
-        help_output = "\n".join(
-            part.strip() for part in (result.stdout, result.stderr) if part and part.strip()
-        )
-        if result.returncode != 0 or "CuraEngine slice" not in help_output:
-            detail = help_output[-1500:] if help_output else "No help output returned."
+        
+        if result.returncode != 0:
             return {
                 "available": False,
-                "engine": "CuraEngine",
-                "reason": f"CuraEngine help probe failed (exit {result.returncode}): {detail}",
+                "engine": None,
+                "reason": f"CuraEngine was not found: {result.stderr.strip()}",
             }
-
-        version = next(
-            (line.strip() for line in help_output.splitlines() if "version" in line.lower()),
-            "CuraEngine (help probe passed)",
-        )
-
+        
+        version = result.stdout.strip() or result.stderr.strip()
+        
+        # Check definitions - use the same logic as Slicer
+        slicer = Slicer()
         if slicer._printer_def_path and slicer._extruder_def_path:
             return {
                 "available": True,
@@ -754,22 +741,22 @@ def get_slicing_capability() -> Dict[str, Any]:
                 "version": version,
                 "reason": None,
             }
-
+        
         return {
             "available": False,
             "engine": "CuraEngine",
-            "reason": "CuraEngine is installed, but compatible printer/extruder definitions were not found",
+            "reason": "Cura definitions not found (checked CURA_PRINTER_DEFINITION env var and bundled definitions)",
         }
-
+        
     except FileNotFoundError:
         return {
             "available": False,
             "engine": None,
-            "reason": "CuraEngine executable was not found",
+            "reason": "CuraEngine was not found",
         }
-    except Exception as exc:
+    except Exception as e:
         return {
             "available": False,
             "engine": None,
-            "reason": f"Slicing capability check failed: {str(exc)}",
+            "reason": f"Slicing capability check failed: {str(e)}",
         }
