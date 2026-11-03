@@ -28,6 +28,21 @@ type BlueprintFeature = {
   x: number;
   y: number;
 };
+type VisualMeasurement = {
+  dimension_name: string;
+  raw_callout: string;
+  value: number | null;
+  unit: string;
+  kind: string;
+  feature?: string | null;
+  source_page: number;
+  source_view: string;
+  confidence: number;
+  region?: { x: number; y: number; width: number; height: number } | null;
+  verification_status: "vision_only" | "ocr_value_match";
+  ocr_inventory_id?: string | null;
+};
+
 type Blueprint = {
   part_name: string;
   primary_body_type: BlueprintBodyType | null;
@@ -44,6 +59,7 @@ type Blueprint = {
     points: number[][] | null;
   };
   features: BlueprintFeature[];
+  visual_measurements?: VisualMeasurement[];
   warnings: string[];
   unsupported_geometry: string[];
   source_pages: number[];
@@ -370,6 +386,40 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
               <div className="rounded-lg bg-muted/40 p-3 text-sm"><span className="font-medium">Tolerances and fits</span><p className="mt-1 text-muted-foreground">{[...(currentResult.tolerances ?? []).map((item) => item.raw ?? ""), ...(currentResult.fits ?? [])].filter(Boolean).join("; ") || "None recognized"}</p></div>
               <div className="rounded-lg bg-muted/40 p-3 text-sm"><span className="font-medium">Threads / material / finish</span><p className="mt-1 text-muted-foreground">{[...(currentResult.threads ?? []), currentResult.material ?? "", currentResult.surfaceFinish ?? ""].filter(Boolean).join("; ") || "None recognized"}</p></div>
             </div>
+            {blueprint?.visual_measurements && blueprint.visual_measurements.length > 0 && (
+              <section className="space-y-3 rounded-xl border border-border p-4">
+                <div>
+                  <h3 className="font-semibold">Measurements read directly from the drawing image</h3>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                    These are image-reading candidates, not approved CAD dimensions. Compare each callout with the original drawing before entering or confirming it in the blueprint. Model confidence is uncalibrated.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  {blueprint.visual_measurements.map((measurement, index) => (
+                    <article key={index} className="rounded-lg border border-border p-3">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <p className="font-medium">{measurement.dimension_name}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">{measurement.raw_callout || "No readable callout text"} · {measurement.kind}</p>
+                        </div>
+                        <span className="rounded-md border px-2 py-1 text-xs">
+                          {measurement.verification_status === "ocr_value_match" ? "Value also found by OCR" : "Vision-only · verify"}
+                        </span>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                        <span><strong>Value:</strong> {measurement.value === null ? "Unreadable" : measurement.value} {measurement.unit === "unknown" ? "" : measurement.unit}</span>
+                        <span><strong>View:</strong> {measurement.source_view}</span>
+                        <span><strong>Page:</strong> {measurement.source_page}</span>
+                        {measurement.feature && <span><strong>Feature:</strong> {measurement.feature}</span>}
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Model confidence estimate: {Math.round(measurement.confidence * 100)}% · Not calibrated or independently verified
+                      </p>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            )}
             {blueprint && (
               <section className="space-y-4 rounded-xl border border-border p-4">
                 <div className="flex flex-wrap items-start justify-between gap-2">
