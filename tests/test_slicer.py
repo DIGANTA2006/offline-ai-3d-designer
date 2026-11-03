@@ -160,25 +160,36 @@ def test_slicer_finds_bundled_definitions(monkeypatch):
     assert "cura_resources" in slicer._definitions_dir
 
 
-def test_slicer_build_command_includes_definitions(monkeypatch):
-    """Test that the CuraEngine command includes printer and extruder definitions."""
+def test_slicer_build_command_includes_base_and_generic_definitions(tmp_path, monkeypatch):
+    """CuraEngine must receive the upstream base profiles and generic child profiles."""
     import ai3d_designer.slicing.slicer as slicer_module
-    
-    def mock_find_definitions_dir(self):
-        return str(Path(__file__).parent.parent / "python-backend" / "cura_resources" / "definitions")
-    
-    monkeypatch.setattr(slicer_module.Slicer, "_find_definitions_dir", mock_find_definitions_dir)
-    
+
+    definitions = tmp_path / "definitions"
+    definitions.mkdir()
+    for name, payload in (
+        ("fdmprinter.def.json", '{"name":"FDM base","settings":{}}'),
+        ("fdmextruder.def.json", '{"name":"Extruder base","settings":{}}'),
+        ("generic_fdm_printer.def.json", '{"name":"Generic printer","inherits":"fdmprinter","settings":{}}'),
+        ("generic_fdm_extruder.def.json", '{"name":"Generic extruder","inherits":"fdmextruder","settings":{}}'),
+    ):
+        (definitions / name).write_text(payload, encoding="utf-8")
+
+    monkeypatch.setattr(
+        slicer_module.Slicer,
+        "_find_definitions_dir",
+        lambda self: str(definitions),
+    )
     slicer = Slicer(cura_engine_path="/fake/CuraEngine")
-    settings = SliceSettings()
-    cmd = slicer._build_command("/fake/input.stl", "/fake/output.gcode", settings)
-    
-    # Check that -j flags are present for printer and extruder
-    assert "-j" in cmd
-    printer_def_idx = cmd.index("-j")
-    assert "generic_fdm_printer.def.json" in cmd[printer_def_idx + 1]
-    # There should be a second -j for extruder
-    assert cmd.count("-j") == 2
+    cmd = slicer._build_command("/fake/input.stl", "/fake/output.gcode", SliceSettings())
+
+    definition_args = [cmd[index + 1] for index, token in enumerate(cmd[:-1]) if token == "-j"]
+    assert [Path(path).name for path in definition_args] == [
+        "fdmprinter.def.json",
+        "fdmextruder.def.json",
+        "generic_fdm_printer.def.json",
+        "generic_fdm_extruder.def.json",
+    ]
+    assert cmd.count("-j") == 4
 
 
 def test_slicer_settings_to_args():
