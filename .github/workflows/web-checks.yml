@@ -9,6 +9,7 @@ on:
     branches:
       - main
       - feat/cad-engine-reliability-upgrade-20261023
+      - feat/dev2-printability-project-workflow-20261103
   pull_request:
     branches:
       - main
@@ -69,6 +70,8 @@ jobs:
         run: npm run test:upload-route
       - name: Subscription entitlement policy tests
         run: npm run test:subscription-policy
+      - name: Project printability API route tests
+        run: npm run test:printability-route
       - name: ESLint
         run: npm run lint
       - name: TypeScript typecheck
