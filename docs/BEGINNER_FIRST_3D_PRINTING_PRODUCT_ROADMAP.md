@@ -76,6 +76,7 @@ The following was observed in the product owner's live test on 3 November 2026:
 4. A Version 2 STEP and STL export was nevertheless saved. This proves only that files were produced; the original drawing and exported mesh have not yet been compared.
 5. The new Printability Checks panel rejected Version 2 with: **“This project version does not contain a supported, saved PartSpec.”**
 6. CuraEngine reported ready and returned a G-code download with 1 h 51 m, 98 layers, 0.000 m filament length, and no filament mass.
+7. The PR #16 CI Docker smoke test also produced a 98-layer, 160,857-byte G-code file but reported 0.000 m filament and no grams. This demonstrates that the old smoke gate and old absolute-E check were insufficient to prove real positive filament deposition. It does not, by itself, prove that the physical G-code contained no E-axis extrusion; the downloaded G-code must be measured.
 
 Additional code-level findings:
 
@@ -286,7 +287,8 @@ If implementation evidence shows a dependency is wrong, update this document in 
 - [ ] Reproduce the saved-PartSpec rejection with a regression test.
 - [ ] Implement and test the explicit drawing-blueprint-to-printability contract.
 - [ ] Add a guard so unresolved/invalid drawings cannot produce a misleading successful export.
-- [ ] Inspect the downloaded G-code and add a regression test for zero/invalid extrusion and filament metadata.
+- [ ] Inspect the downloaded user G-code artifact and compare its actual E-axis moves with Cura metadata.
+- [ ] Validate absolute/relative/volumetric E-axis semantics and make the Docker smoke fail when deposition or filament length is zero (implementation tracked in PR #17).
 - [ ] Only after these correctness gates pass, proceed to the visual-reader provider setup and drawing-understanding benchmark.
 
 **Current release decision:** the application is deployed and its services respond, but the drawing-to-model workflow is **not accepted as production-quality** yet. The 3D accuracy, printability integration, and zero-filament G-code report remain open verification items.
