@@ -97,10 +97,10 @@ def test_gcode_validator_tracks_relative_extrusion_and_e_resets(tmp_path, monkey
 def test_gcode_validator_uses_absolute_e_deltas_not_positive_coordinates(tmp_path):
     gcode_path = tmp_path / "absolute_retraction_then_extrusion.gcode"
     gcode_path.write_text(
-        "G21\\nG90\\nM82\\nM104 S200\\nG28\\n;LAYER_COUNT:1\\n"
-        "G1 X0 Y0 Z0.2 F1200\\nG92 E10\\n"
-        "G1 E9 F1800\\n"
-        "G1 X10 Y0 E9.5 F1200\\n",
+        "G21\nG90\nM82\nM104 S200\nG28\n;LAYER_COUNT:1\n"
+        "G1 X0 Y0 Z0.2 F1200\nG92 E10\n"
+        "G1 E9 F1800\n"
+        "G1 X10 Y0 E9.5 F1200\n",
         encoding="utf-8",
     )
     result = Slicer(cura_engine_path="unused-test-path").validate_gcode(str(gcode_path))
@@ -113,8 +113,8 @@ def test_gcode_validator_uses_absolute_e_deltas_not_positive_coordinates(tmp_pat
 def test_gcode_validator_rejects_positive_absolute_e_coordinate_that_only_retracts(tmp_path):
     gcode_path = tmp_path / "absolute_retraction_only.gcode"
     gcode_path.write_text(
-        "G21\\nG90\\nM82\\nM104 S200\\nG28\\n;LAYER_COUNT:1\\n"
-        "G1 X0 Y0 Z0.2 F1200\\nG92 E10\\nG1 X10 Y0 E9 F1200\\n",
+        "G21\nG90\nM82\nM104 S200\nG28\n;LAYER_COUNT:1\n"
+        "G1 X0 Y0 Z0.2 F1200\nG92 E10\nG1 X10 Y0 E9 F1200\n",
         encoding="utf-8",
     )
     result = Slicer(cura_engine_path="unused-test-path").validate_gcode(str(gcode_path))
@@ -125,9 +125,9 @@ def test_gcode_validator_rejects_positive_absolute_e_coordinate_that_only_retrac
 def test_gcode_validator_measures_relative_extrusion_after_e_reset(tmp_path):
     gcode_path = tmp_path / "relative_extrusion.gcode"
     gcode_path.write_text(
-        "G21\\nG90\\nM83\\nM104 S200\\nG28\\n;LAYER_COUNT:1\\n"
-        "G1 X0 Y0 Z0.2 F1200\\nG1 X10 Y0 E1 F1200\\n"
-        "G92 E0\\nG1 X20 Y0 E0.5 F1200\\n",
+        "G21\nG90\nM83\nM104 S200\nG28\n;LAYER_COUNT:1\n"
+        "G1 X0 Y0 Z0.2 F1200\nG1 X10 Y0 E1 F1200\n"
+        "G92 E0\nG1 X20 Y0 E0.5 F1200\n",
         encoding="utf-8",
     )
     result = Slicer(cura_engine_path="unused-test-path").validate_gcode(str(gcode_path))
@@ -143,8 +143,8 @@ def test_gcode_validator_converts_volumetric_extrusion_to_filament_length(tmp_pa
     area_mm2 = math.pi * (diameter_mm / 2) ** 2
     gcode_path = tmp_path / "volumetric_extrusion.gcode"
     gcode_path.write_text(
-        "G21\\nG90\\nM83\\nM200 D1.75\\nM104 S200\\nG28\\n;LAYER_COUNT:1\\n"
-        "G1 X0 Y0 Z0.2 F1200\\nG1 X10 Y0 E" + str(area_mm2) + " F1200\\n",
+        "G21\nG90\nM83\nM200 D1.75\nM104 S200\nG28\n;LAYER_COUNT:1\n"
+        "G1 X0 Y0 Z0.2 F1200\nG1 X10 Y0 E" + str(area_mm2) + " F1200\n",
         encoding="utf-8",
     )
     result = Slicer(cura_engine_path="unused-test-path").validate_gcode(str(gcode_path))
