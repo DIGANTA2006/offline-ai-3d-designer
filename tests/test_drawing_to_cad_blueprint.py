@@ -14,6 +14,7 @@ from ai3d_designer.drawing_to_cad.blueprint import (
     BaseSketch,
     Blueprint,
     Feature,
+    VisualMeasurement,
     apply_defaults,
     lint,
 )
@@ -26,6 +27,7 @@ from ai3d_designer.drawing_to_cad.extraction import (
     extract_blueprint,
     get_vision_backend,
     ground_blueprint,
+    reconcile_visual_measurements,
 )
 from ai3d_designer.drawing_to_cad.generator import GeometryError, export_blueprint
 
@@ -604,3 +606,143 @@ def test_extract_blueprint_renders_pdf_and_returns_grounded_structured_fields():
     assert result.blueprint.base_sketch.outer_diameter == 100
     assert result.blueprint.features[0].pitch_radius == 40
     assert result.cleared_fields == []
+
+
+def test_visual_only_measurement_is_preserved_but_not_promoted_to_geometry():
+    blueprint = Blueprint(
+        primary_body_type="rotational_flange",
+        base_sketch=BaseSketch(profile="circle", outer_diameter=60, thickness=8),
+        visual_measurements=[
+            VisualMeasurement(
+                dimension_name="Outer diameter",
+                raw_callout="Ø60",
+                value=60,
+                unit="mm",
+                kind="diameter",
+                source_page=1,
+                source_view="top",
+                confidence=0.9,
+            )
+        ],
+    )
+
+    cleared = ground_blueprint(blueprint, [])
+
+    assert blueprint.base_sketch.outer_diameter is None
+    assert blueprint.base_sketch.thickness is None
+    assert blueprint.visual_measurements[0].value == 60
+    assert blueprint.visual_measurements[0].verification_status == "vision_only"
+    assert "base_sketch.outer_diameter=60" in cleared
+
+
+def test_visual_measurement_ocr_value_match_requires_kind_unit_and_page():
+    blueprint = Blueprint(
+        source_pages=[1],
+        visual_measurements=[
+            VisualMeasurement(
+                dimension_name="Hole diameter",
+                raw_callout="4 × Ø8",
+                value=8,
+                unit="mm",
+                kind="diameter",
+                source_page=1,
+                source_view="top",
+                confidence=0.8,
+                verification_status="ocr_value_match",
+                ocr_inventory_id="model-invented-id",
+            ),
+            VisualMeasurement(
+                dimension_name="Slot length",
+                raw_callout="L 20",
+                value=20,
+                unit="unknown",
+                kind="linear",
+                source_page=1,
+                source_view="top",
+                confidence=0.7,
+            ),
+        ],
+    )
+    inventory = [
+        DimensionToken(id="D1", raw="Ø8", value=8, kind="diameter", page=1),
+        DimensionToken(id="D2", raw="20 mm", value=20, kind="linear", page=2),
+    ]
+
+    reconcile_visual_measurements(blueprint, inventory)
+
+    assert blueprint.visual_measurements[0].verification_status == "ocr_value_match"
+    assert blueprint.visual_measurements[0].ocr_inventory_id == "D1"
+    assert blueprint.visual_measurements[1].verification_status == "vision_only"
+    assert blueprint.visual_measurements[1].ocr_inventory_id is None
+
+
+def test_vision_schema_reads_image_callouts_even_when_ocr_inventory_is_empty():
+    class FakeVision:
+        model = "test-vision"
+        timeout = 2.0
+
+        async def chat_json(self, images, system, user, schema):
+            assert images
+            assert "IMAGE PIXELS directly" in system
+            assert "not a whitelist for visual_measurements" in system
+            assert "visual_measurements" in schema.get("properties", {})
+            return {
+                "part_name": "test flange",
+                "primary_body_type": "rotational_flange",
+                "base_sketch": {
+                    "profile": "circle",
+                    "outer_diameter": 60,
+                    "inner_bore_diameter": None,
+                    "width": None,
+                    "length": None,
+                    "thickness": 8,
+                    "wall_thickness": None,
+                    "thickness_is_default": False,
+                    "wall_thickness_is_default": False,
+                    "points": None,
+                },
+                "features": [],
+                "visual_measurements": [{
+                    "dimension_name": "Outer diameter",
+                    "raw_callout": "Ø60",
+                    "value": 60,
+                    "unit": "mm",
+                    "kind": "diameter",
+                    "feature": "outer profile",
+                    "source_page": 1,
+                    "source_view": "top",
+                    "confidence": 0.85,
+                    "region": {"x": 0.2, "y": 0.3, "width": 0.1, "height": 0.1},
+                    "verification_status": "ocr_value_match",
+                    "ocr_inventory_id": "untrusted-model-id",
+                }],
+                "warnings": [],
+                "unsupported_geometry": [],
+                "source_pages": [1],
+                "needs_review": True,
+            }
+
+    image = Image.new("RGB", (320, 240), "white")
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+
+    result = asyncio.run(
+        extract_blueprint(
+            file_bytes=buffer.getvalue(),
+            file_name="test-drawing.png",
+            mime_type="image/png",
+            raw_text="",
+            dimension_data={"dimensions": {}},
+            vision=FakeVision(),
+        )
+    )
+
+    candidate = result.blueprint.visual_measurements[0]
+    assert result.dimension_inventory == []
+    assert result.vision_model == "test-vision"
+    assert result.blueprint.base_sketch.outer_diameter is None
+    assert result.blueprint.base_sketch.thickness == 10
+    assert result.blueprint.base_sketch.thickness_is_default is True
+    assert candidate.value == 60
+    assert candidate.verification_status == "vision_only"
+    assert candidate.ocr_inventory_id is None
