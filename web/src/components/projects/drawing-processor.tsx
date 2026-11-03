@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { AlertTriangle, FileSearch, LoaderCircle, ShieldCheck, WandSparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { isOcrSourceFile } from "@/lib/upload/ocr-source-support";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 type BlueprintBodyType = "rotational_flange" | "prismatic_box" | "sheet_enclosure" | "revolved_profile";
@@ -79,7 +80,7 @@ type OCRSpec = {
   limitations?: string[];
 };
 
-type SourceFile = { index: number; name: string; ocrResult?: OCRSpec };
+type SourceFile = { index: number; name: string; type?: "pdf" | "image" | "dxf" | string; contentType?: string; ocrResult?: OCRSpec };
 type Props = { projectId: string; sourceFiles: SourceFile[] };
 type SketchNumberKey = "outer_diameter" | "inner_bore_diameter" | "width" | "length" | "thickness" | "wall_thickness";
 type FeatureNumberKey = "count" | "pitch_radius" | "start_angle" | "angular_pitch" | "diameter" | "inner_diameter" | "root_radius" | "length" | "width" | "depth" | "radius" | "x" | "y";
@@ -121,7 +122,7 @@ function numericInputValue(raw: string): number | null {
 
 export function DrawingProcessor({ projectId, sourceFiles }: Props) {
   const router = useRouter();
-  const ocrSourceFiles = sourceFiles.filter((file) => /\.(pdf|png|jpe?g|bmp|tiff?|webp)$/i.test(file.name));
+  const ocrSourceFiles = sourceFiles.filter(isOcrSourceFile);
   const [selectedIndex, setSelectedIndex] = useState<number>(ocrSourceFiles[0]?.index ?? -1);
   const [results, setResults] = useState<Record<number, OCRSpec>>(() => Object.fromEntries(
     ocrSourceFiles.flatMap((file) => file.ocrResult ? [[file.index, file.ocrResult]] : []),
