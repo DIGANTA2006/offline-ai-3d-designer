@@ -256,6 +256,79 @@ def test_slicer_validate_gcode_structure(tmp_path):
     assert "layers" in result4["error"].lower()
 
 
+def test_slicing_capability_uses_supported_help_probe(tmp_path, monkeypatch):
+    import ai3d_designer.slicing.slicer as slicer_module
+
+    definitions = tmp_path / "definitions"
+    definitions.mkdir()
+    (definitions / "generic_fdm_printer.def.json").write_text(
+        '{"inherits": "fdmprinter"}', encoding="utf-8"
+    )
+    (definitions / "generic_fdm_extruder.def.json").write_text(
+        '{"inherits": "fdmextruder"}', encoding="utf-8"
+    )
+    monkeypatch.delenv("CURA_PRINTER_DEFINITION", raising=False)
+    monkeypatch.setattr(
+        slicer_module.Slicer,
+        "_find_cura_engine",
+        lambda self: "/fake/CuraEngine",
+    )
+    monkeypatch.setattr(
+        slicer_module.Slicer,
+        "_find_definitions_dir",
+        lambda self: str(definitions),
+    )
+
+    def fake_run(command, **kwargs):
+        assert command == ["/fake/CuraEngine", "help"]
+        assert kwargs["timeout"] == 10
+        return subprocess.CompletedProcess(
+            command, 0, stdout="CuraEngine slice command help", stderr=""
+        )
+
+    monkeypatch.setattr(slicer_module.subprocess, "run", fake_run)
+    capability = slicer_module.get_slicing_capability()
+
+    assert capability["available"] is True
+    assert capability["engine"] == "CuraEngine"
+
+
+def test_slice_rejects_invalid_settings_before_starting_engine(tmp_path):
+    model_path = tmp_path / "input.stl"
+    model_path.write_bytes(b"not-empty")
+    output_path = tmp_path / "output.gcode"
+
+    result = Slicer(cura_engine_path="/fake/CuraEngine").slice(
+        str(model_path),
+        str(output_path),
+        SliceSettings(layer_height=0),
+    )
+
+    assert result.success is False
+    assert any("Invalid slicing settings" in error for error in result.errors)
+    assert not output_path.exists()
+
+
+def test_slice_rejects_gcode_that_fails_structural_validation(tmp_path, monkeypatch):
+    model_path = tmp_path / "input.stl"
+    model_path.write_bytes(b"not-empty")
+    output_path = tmp_path / "output.gcode"
+
+    def fake_run(command, **kwargs):
+        generated_path = command[command.index("-o") + 1]
+        Path(generated_path).write_text("; PREVIEW only; invalid output\n", encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("ai3d_designer.slicing.slicer.subprocess.run", fake_run)
+    result = Slicer(cura_engine_path="/fake/CuraEngine").slice(
+        str(model_path), str(output_path), SliceSettings()
+    )
+
+    assert result.success is False
+    assert any("failed structural validation" in error for error in result.errors)
+    assert not output_path.exists()
+
+
 def test_slicer_parse_gcode_metadata(tmp_path):
     """Test parsing of G-code metadata."""
     slicer = Slicer(cura_engine_path="/fake")
