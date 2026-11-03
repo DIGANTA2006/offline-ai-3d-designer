@@ -80,11 +80,11 @@ The following was observed in the product owner's live test on 3 November 2026:
 
 Additional code-level findings:
 
-- The drawing generator currently returns the drawing `Blueprint` object as `partSpec`. Its shape uses fields such as `part_name`, `primary_body_type`, `base_sketch`, and drawing features.
-- The printability API currently expects the separate canonical `PartSpec` schema, which requires `name` and canonical `features`. The web printability route checks for that canonical shape. This contract mismatch explains why a drawing-generated version can fail in the printability panel.
+- The drawing generator stores a drawing `Blueprint` object in project version data, with fields such as `part_name`, `primary_body_type`, `base_sketch`, and drawing features.
+- Before PR #16, the printability route only accepted the separate canonical `PartSpec` (`name` and canonical `features`). PR #16 adds a dedicated blueprint-native check endpoint and preserves the distinction between the two schemas.
 - The drawing reader supports an optional vision provider, but production's live UI reported none configured. Hosted vision calls are blocked by default unless `DRAWING_VISION_ALLOW_HOSTED=true`; keep that privacy protection.
 - The current project detail page exposes STEP/STL downloads and slicing; it does not yet provide a verified interactive preview of the drawing-generated mesh.
-- The current G-code validation checks structural commands and an extrusion indicator, while the reported filament metadata is zero. The actual G-code file must be inspected before deciding whether this is a metadata-parser issue, a profile issue, or invalid extrusion output.
+- Before PR #17, G-code validation treated a positive absolute E coordinate as an extrusion indicator and trusted Cura filament comments. PR #17 computes E-axis deltas and reports measured filament length when possible. The user's downloaded G-code artifact still needs direct inspection.
 - Upload/OCR extension and format support should be made consistent. The current uploader, stored MIME metadata, and drawing panel's extension filter do not advertise exactly the same set of formats.
 
 **Important:** The 3D source image, generated Version 2 STL/STEP, and downloaded G-code have not yet been independently inspected in this repository review. Do not mark drawing accuracy or physical print-readiness as passed until those artifacts are compared.
@@ -113,17 +113,23 @@ The phases are ordered by dependency. A phase is complete only when its exit gat
 
 **Goal:** Never call an export successful when required geometry is unresolved, and ensure a successfully generated drawing model can be checked by the printability system.
 
-- [ ] Define one versioned, documented boundary between the reviewed drawing blueprint and the canonical CAD `PartSpec`. Implement an explicit, tested adapter or a blueprint-native printability path; do not rename fields or silently discard drawing features.
+- [x] Define a versioned API boundary for the reviewed drawing Blueprint and provide a blueprint-native printability path; PR #16 adds `/api/v1/printability/check-blueprint` rather than relabelling Blueprint fields as the legacy canonical `PartSpec`.
 - [ ] Persist the original reviewed blueprint separately from the normalized canonical geometry specification. Preserve measurement provenance and generation warnings.
 - [ ] Add regression tests for drawing-generated versions passing the printability endpoint, including supported flange, box/enclosure, and hole-feature examples.
 - [ ] Reject unresolved body types, missing required dimensions, unresolved unsupported geometry, and invalid defaults before export. If a default is deliberately allowed, show it as an assumption and require user confirmation.
 - [ ] Verify the generated solid's bounding box and key feature dimensions against the reviewed specification, not only kernel validity and watertightness.
-- [ ] Review the full G-code validation path. Require real positive extrusion movement using the correct absolute/relative extrusion semantics; do not treat a positive absolute E coordinate alone as proof of deposited filament.
-- [ ] Reconcile CuraEngine filament metadata with actual extrusion calculations. A zero-length/zero-extrusion result must be rejected or explicitly reported as invalid, not presented as print-ready.
+- [x] Require real positive extrusion movement using absolute/relative E-axis deltas, G92 resets, tool selection and volumetric E conversion; PR #17 adds regression tests. This is an extrusion validator, not a complete firmware-specific G-code simulator.
+- [x] Reconcile CuraEngine metadata with measured G-code E-axis movement. Zero metadata is not treated as a real estimate; a slice with no positive extrusion on an XYZ print move is rejected. PR #17 strengthens the real Docker smoke test.
 - [ ] Add route/API regression tests for the real drawing-to-CAD → saved version → printability → slice flow.
-- [ ] Preserve existing auth, project ownership, Pro policy, same-origin checks, request-size limits, service tokens, and no-store behavior.
+- [x] Preserve the existing authentication, ownership, Pro policy, same-origin, service-token, request/response limits, and no-store controls on the web route; PR #16 keeps drawing-blueprint checks on the existing authenticated route.
 
-**Exit gate:** supported drawing output has a normalized, stored specification that printability can actually consume; unsupported/unresolved geometry cannot be exported as a successful model; G-code with no genuine extrusion fails validation; automated end-to-end contract tests pass.
+**Exit gate:** still open. PR #16 makes supported saved drawing blueprints consumable by geometry-based printability checks, and PR #17 rejects G-code without genuine extrusion. Broader stored-provenance, export-blocking, bounding-box/feature-dimension, and full drawing-to-print end-to-end coverage remain incomplete.
+
+
+### CI verification for the first corrective PRs (3 November 2026)
+
+- **PR #16 — drawing Blueprint printability contract:** GitHub Python tests (317 passed, 2 warnings), Web Frontend Checks, Docker/CuraEngine image build, both CodeQL language scans, and Vercel Preview status succeeded. The PR remains open for product-owner review.
+- **PR #17 — G-code extrusion validation:** GitHub Python tests (321 passed, 2 warnings), Web Frontend Checks, Docker/CuraEngine image build, both CodeQL language scans, and Vercel Preview status succeeded. The real Docker smoke test sliced a deterministic 10 mm cube and measured 345.410 mm of E-axis filament movement (0.345410 m), with 2,962 positive-extrusion print moves, 98 layers, and a 6,666-second Cura estimate. Filament mass remains unreported. This verifies measurable extrusion in the test cube's G-code, not a full printer-firmware simulation or physical print. The PR remains open for product-owner review.
 
 ### Phase 2 — Multimodal engineering drawing reader
 
@@ -284,11 +290,11 @@ If implementation evidence shows a dependency is wrong, update this document in 
 - [x] Record the first live OCR/CAD/slicing test results.
 - [x] Identify the blueprint-versus-canonical-PartSpec contract mismatch in the printability path.
 - [ ] Obtain the original JPEG, Version 2 STEP/STL, and Version 2 G-code for independent inspection.
-- [ ] Reproduce the saved-PartSpec rejection with a regression test.
-- [ ] Implement and test the explicit drawing-blueprint-to-printability contract.
+- [x] Reproduce the saved-PartSpec rejection and add a regression test for the drawing-blueprint printability route (PR #16).
+- [x] Implement and test the explicit drawing-blueprint-to-printability contract (PR #16; open for owner review).
 - [ ] Add a guard so unresolved/invalid drawings cannot produce a misleading successful export.
 - [ ] Inspect the downloaded user G-code artifact and compare its actual E-axis moves with Cura metadata.
-- [ ] Validate absolute/relative/volumetric E-axis semantics and make the Docker smoke fail when deposition or filament length is zero (implementation tracked in PR #17).
+- [x] Validate absolute/relative/volumetric E-axis semantics and make the Docker smoke fail when deposition or filament length is zero (PR #17; CI passed, open for owner review).
 - [ ] Only after these correctness gates pass, proceed to the visual-reader provider setup and drawing-understanding benchmark.
 
 **Current release decision:** the application is deployed and its services respond, but the drawing-to-model workflow is **not accepted as production-quality** yet. The 3D accuracy, printability integration, and zero-filament G-code report remain open verification items.
