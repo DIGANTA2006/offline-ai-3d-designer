@@ -76,7 +76,7 @@ class VisualMeasurement(StrictModel):
     source_view: Literal["front", "top", "side", "section", "detail", "isometric", "auxiliary", "title_block", "unknown"] = "unknown"
     confidence: float = Field(default=0.0, ge=0, le=1, description="Uncalibrated model self-assessment; not a probability")
     region: DrawingRegion | None = None
-    verification_status: Literal["vision_only", "ocr_corroborated"] = "vision_only"
+    verification_status: Literal["vision_only", "ocr_value_match"] = "vision_only"
     ocr_inventory_id: str | None = Field(default=None, max_length=16)
 
 
