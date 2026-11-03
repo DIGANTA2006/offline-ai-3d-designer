@@ -432,6 +432,7 @@ class Slicer:
             "print_time": None,
             "filament_used": None,
             "filament_length_m": None,
+            "filament_length_source": None,
             "layers": None,
             "filament_weight_estimated": False,
         }
@@ -712,7 +713,7 @@ class Slicer:
             result["error"] = "G-code missing required commands (homing G28)"
             return result
         if not has_extrusion:
-            result["error"] = "G-code has no positive extrusion on a coordinated print move"
+            result["error"] = "G-code has no positive extrusion move on a coordinated print path"
             return result
         if layer_count <= 0:
             result["error"] = "G-code has no layers"
