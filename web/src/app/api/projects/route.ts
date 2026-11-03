@@ -6,6 +6,7 @@ import { isSameOriginRequest } from "@/lib/security/same-origin";
 import { prisma } from "@/lib/prisma";
 import { getCadServiceConfig } from "@/lib/cad-service-config";
 import { assertProjectCapacity, compactStoredJson, createProjectWithCapacity, ProjectCapacityError, pruneProjectVersions } from "@/lib/project-retention";
+import { checkPaidFeatureAccess } from "@/lib/billing/paid-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -153,20 +154,21 @@ export async function POST(request: Request) {
   let outputPathsForCleanup: string[] = [];
   let versionPersisted = false;
   let retentionWarning: string | undefined;
-  let hasCadAccess = user.role === "ADMIN";
-  try {
-    const subscription = await prisma.subscription.findUnique({ where: { userId: user.id } });
-    hasCadAccess = hasCadAccess || (subscription?.tier === "PRO" && subscription.status === "ACTIVE");
-  } catch (error) {
-    console.error("Project API could not load subscription status.", error);
-    return NextResponse.json({ error: "Subscription service is unavailable. Please retry shortly." }, { status: 503 });
-  }
-  if (!hasCadAccess) {
-    return NextResponse.json({
-      error: "An active Pro subscription is required to generate CAD files. Pro costs ₹500 per month.",
-      code: "SUBSCRIPTION_REQUIRED",
-      upgradeUrl: "/dashboard/billing",
-    }, { status: 402 });
+  const paidAccess = await checkPaidFeatureAccess(
+    user,
+    "An active Pro subscription is required to generate CAD files. Pro costs ₹500 per month.",
+  );
+  if (!paidAccess.allowed) {
+    return NextResponse.json(
+      paidAccess.status === 402
+        ? {
+            error: paidAccess.message,
+            code: "SUBSCRIPTION_REQUIRED",
+            upgradeUrl: "/dashboard/billing",
+          }
+        : { error: paidAccess.message },
+      { status: paidAccess.status },
+    );
   }
   const now = new Date();
   const periodStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
