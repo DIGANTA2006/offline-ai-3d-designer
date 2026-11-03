@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { Button } from "@/components/ui/button";
 import { DrawingProcessor } from "@/components/projects/drawing-processor";
 import { SlicePanel } from "@/components/projects/slice-panel";
+import { PrintabilityPanel } from "@/components/projects/printability-panel";
 import { ProjectImportanceToggle, ProjectVersionActions } from "@/components/projects/project-retention-controls";
 import { ProjectDeleteButton } from "@/components/projects/project-delete-button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -118,6 +119,14 @@ export default async function ProjectDetailPage({ params }: Props) {
           <Card className="mt-5 border-destructive/30"><CardHeader><CardTitle className="text-destructive">Generation failed</CardTitle><CardDescription>No successful export was stored. Review the description or check the deployment&apos;s CAD service logs.</CardDescription></CardHeader><CardContent><Button asChild><Link href="/dashboard/projects/new">Try again</Link></Button></CardContent></Card>
         ) : (
           <Card className="mt-5"><CardHeader><CardTitle>Project files</CardTitle><CardDescription>This project has not generated CAD exports yet.</CardDescription></CardHeader><CardContent><div className="flex items-start gap-3 text-sm leading-6 text-muted-foreground"><FileText className="mt-1 size-5 shrink-0" /> Upload a source drawing and use the OCR panel above to extract and review its text. CAD generation remains limited to supported, fully dimensioned descriptions.</div></CardContent></Card>
+        )}
+        {generatedVersions.some((output) => output.stepFilePath || output.stlFilePath) && (
+          <PrintabilityPanel
+            projectId={project.id}
+            versions={generatedVersions
+              .filter((output) => output.stepFilePath || output.stlFilePath)
+              .map((output) => ({ id: output.id, version: output.version }))}
+          />
         )}
         {generatedVersions.some((output) => output.stlFilePath) && (
           <SlicePanel
