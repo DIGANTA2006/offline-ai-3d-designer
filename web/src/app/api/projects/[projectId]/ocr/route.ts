@@ -6,6 +6,7 @@ import { isSameOriginRequest } from "@/lib/security/same-origin";
 import { prisma } from "@/lib/prisma";
 import { getCadServiceConfig } from "@/lib/cad-service-config";
 import { compactStoredJson } from "@/lib/project-retention";
+import { checkPaidFeatureAccess } from "@/lib/billing/paid-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -191,10 +192,11 @@ export async function POST(request: Request, { params }: Context) {
       throw new RouteError("Project or source drawing not found.", 404);
     }
 
-    const subscription = user.role === "ADMIN" ? null : await prisma.subscription.findUnique({ where: { userId: user.id } });
-    if (user.role !== "ADMIN" && !(subscription?.tier === "PRO" && subscription.status === "ACTIVE")) {
-      throw new RouteError("An active Pro subscription is required to analyze engineering drawings.", 402);
-    }
+    const paidAccess = await checkPaidFeatureAccess(
+      user,
+      "An active Pro subscription is required to analyze engineering drawings.",
+    );
+    if (!paidAccess.allowed) throw new RouteError(paidAccess.message, paidAccess.status);
 
     const rawBody = await request.text();
     if (Buffer.byteLength(rawBody, "utf8") > 8 * 1024) throw new RouteError("OCR request is too large.", 413);
