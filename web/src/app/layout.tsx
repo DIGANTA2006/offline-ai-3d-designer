@@ -10,6 +10,10 @@ export const metadata: Metadata = {
   description:
     "A CAD engineering workspace for turning part descriptions and technical drawings into inspectable, exportable 3D models.",
   applicationName: "Offline AI 3D Designer",
+  icons: {
+    icon: [{ url: "/icon.png", type: "image/png" }],
+    apple: [{ url: "/logo.png", type: "image/png" }],
+  },
 };
 
 export default function RootLayout({
