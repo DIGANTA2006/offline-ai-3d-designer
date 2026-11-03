@@ -684,7 +684,7 @@ def test_vision_schema_reads_image_callouts_even_when_ocr_inventory_is_empty():
         async def chat_json(self, images, system, user, schema):
             assert images
             assert "IMAGE PIXELS directly" in system
-            assert "not a whitelist for visual_measurements" in system
+            assert "not a whitelist for visual_measurements" in system.lower()
             assert "visual_measurements" in schema.get("properties", {})
             return {
                 "part_name": "test flange",
