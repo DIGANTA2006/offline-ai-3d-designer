@@ -101,6 +101,36 @@ def test_slicing_capability_reports_missing_cura_engine(monkeypatch):
     assert "CuraEngine was not found" in result["reason"]
 
 
+def test_slicing_capability_uses_cura_help_and_bundled_definitions(monkeypatch, tmp_path):
+    from ai3d_designer.slicing.slicer import get_slicing_capability
+
+    definitions = tmp_path / "definitions"
+    definitions.mkdir()
+    (definitions / "generic_fdm_printer.def.json").write_text("{}", encoding="utf-8")
+    (definitions / "generic_fdm_extruder.def.json").write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(Slicer, "_find_cura_engine", staticmethod(lambda: "/usr/bin/CuraEngine"))
+    monkeypatch.setattr(Slicer, "_find_definitions_dir", staticmethod(lambda: str(definitions)))
+    monkeypatch.delenv("CURA_PRINTER_DEFINITION", raising=False)
+
+    def mock_run(command, **kwargs):
+        assert command == ["/usr/bin/CuraEngine", "help"]
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout="CuraEngine slice [-v] [-p] [-j settings.json]",
+            stderr="Cura_SteamEngine version 4.13.0",
+        )
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+    result = get_slicing_capability()
+
+    assert result["available"] is True
+    assert result["engine"] == "CuraEngine"
+    assert "4.13.0" in result["version"]
+    assert result["reason"] is None
+
+
 def test_cura_engine_filament_summary_reports_length_and_mass_separately():
     output = "Print time: 2m 5s\nFilament: 3.50m 10.50g\n"
 
