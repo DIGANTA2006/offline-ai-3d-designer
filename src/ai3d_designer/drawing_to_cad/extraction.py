@@ -72,7 +72,7 @@ SYSTEM_PROMPT = """You are a cautious mechanical drawing interpreter. Return onl
 Inspect the supplied drawing IMAGE PIXELS directly, not only its OCR text. Identify front, top, side, section, detail and isometric views across all supplied pages.
 The OCR DIMENSION INVENTORY is independent text evidence. It is NOT a whitelist for visual_measurements. Read every clearly visible dimension callout from the image itself, including diameter/radius symbols, linear dimensions, angles, hole counts, thread callouts and tolerances. Put each readable callout in visual_measurements with a short dimension_name, exact raw_callout, numeric value when legible, its printed unit (or unknown), kind, associated feature only when clear, source_page, source_view, normalized image region (x/y/width/height from 0 to 1 when locatable), and an honest low/medium/high self-assessed confidence encoded from 0 to 1. The confidence is not calibrated.
 If a callout is partially unreadable or ambiguous, preserve its legible raw text, set value=null when the number is uncertain, and explain the uncertainty in warnings. Never invent a number, infer scale from pixel size, or derive an unstated dimension.
-Keep visual_measurements separate from CAD geometry. Populate numeric fields in base_sketch/features only with values that are independently corroborated by the OCR DIMENSION INVENTORY and have the correct dimension kind. A value seen only in the image must remain a visual_measurements candidate with verification_status=vision_only; deterministic code will mark a candidate ocr_corroborated only when its value, kind, unit and source page agree with OCR evidence. Never treat model self-confidence as confirmation.
+Keep visual_measurements separate from CAD geometry. Populate numeric fields in base_sketch/features only with values that are independently corroborated by the OCR DIMENSION INVENTORY and have the correct dimension kind. A value seen only in the image must remain a visual_measurements candidate with verification_status=vision_only; deterministic code will mark a candidate ocr_value_match only when its value, kind, unit and source page agree with OCR evidence. Never treat model self-confidence as confirmation.
 All dimensions in CAD geometry are normalized to millimetres. If a drawing's unit is unclear, do not assume mm; set the candidate unit to unknown and add a warning. Do not populate geometry fields from unknown-unit values.
 Select a supported primary_body_type only when the views and text support it. Treat a named PCD/BCD value as a pitch-circle diameter, so pitch_radius is PCD / 2, but keep the original PCD as a named visual measurement. A visual count of repeated holes may be reported as a count candidate; do not invent dimensions.
 Ignore page numbers, logos and watermarks. For a labelled scalloped flange or circular-gullet sprocket, use radial_cutout_pattern only when the outer radius/diameter, gullet radius, root radius (or explicit cutter-centre radius) and repeat count are grounded in OCR evidence. Distinguish the tooth/gullet count from mounting-hole count. This creates circular scallops, not involute gear teeth; clearly say so in warnings. For true involute gears, unspecified/non-circular tooth profiles, sheet-metal bends/flanges, threads, welds, or other unsupported geometry, add a concise unsupported_geometry entry. Never substitute a smooth flange for a toothed sprocket.
@@ -559,12 +559,12 @@ def _inventory_message(
         if vector_geometry else "(no detailed vector candidates)"
     )
     return (
-        f"Drawing has {page_count} page(s). Classify all supplied views together.\\n"
-        f"OCR DIMENSION INVENTORY — these are text-extraction results. Only values independently corroborated here may populate numeric CAD geometry fields:\\n"
-        f"{lines}\\n"
-        f"IMPORTANT: inspect the image pixels independently and list readable callouts missing from this inventory in visual_measurements. Do not omit them just because OCR missed them. Visual-only values are review candidates, never trusted geometry.\\n"
-        f"VECTOR PDF GEOMETRY CANDIDATES — path sizes are PDF points, not millimetres; use as spatial clues only:\\n"
-        f"Summary:\\n{geometry_summary}\\nFirst candidate details:\\n{vector_details}\\n\\n"
+        f"Drawing has {page_count} page(s). Classify all supplied views together.\n"
+        f"OCR DIMENSION INVENTORY — these are text-extraction results. Only values independently corroborated here may populate numeric CAD geometry fields:\n"
+        f"{lines}\n"
+        f"IMPORTANT: inspect the image pixels independently and list readable callouts missing from this inventory in visual_measurements. Do not omit them just because OCR missed them. Visual-only values are review candidates, never trusted geometry.\n"
+        f"VECTOR PDF GEOMETRY CANDIDATES — path sizes are PDF points, not millimetres; use as spatial clues only:\n"
+        f"Summary:\n{geometry_summary}\nFirst candidate details:\n{vector_details}\n\n"
         f"Return Blueprint JSON. Add unsupported_geometry rather than approximating unsupported features."
     )
 
@@ -725,13 +725,13 @@ def reconcile_visual_measurements(bp: Blueprint, inventory: list[DimensionToken]
                 token
                 for token in inventory
                 if token.kind == expected_kind
-                and token.page == candidate.source_page
+                and (token.page == candidate.source_page or (token.page is None and len(bp.source_pages) == 1 and candidate.source_page == 1))
                 and abs(token.value - normalized_value) <= tolerance
             ),
             None,
         )
         if match is not None:
-            candidate.verification_status = "ocr_corroborated"
+            candidate.verification_status = "ocr_value_match"
             candidate.ocr_inventory_id = match.id
 
 
