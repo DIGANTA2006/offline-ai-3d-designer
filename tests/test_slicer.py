@@ -405,7 +405,7 @@ def test_zero_cura_filament_metadata_is_not_reported_as_a_real_estimate(tmp_path
     slicer = Slicer(cura_engine_path="/fake")
     path = tmp_path / "zero-filament.gcode"
     path.write_text(
-        ";TIME:120\\n;LAYER_COUNT:2\\n;Filament used: 0.0mm, 0.0g\\n",
+        ";TIME:120\n;LAYER_COUNT:2\n;Filament used: 0.0mm, 0.0g\n",
         encoding="utf-8",
     )
     metadata = slicer._parse_gcode_metadata(str(path))
@@ -422,10 +422,10 @@ def test_slice_derives_filament_length_from_real_e_axis_moves_when_cura_reports_
     def fake_run(command, **kwargs):
         generated_path = Path(command[command.index("-o") + 1])
         generated_path.write_text(
-            ";TIME:120\\n;LAYER_COUNT:1\\n;Filament used: 0.0mm, 0.0g\\n"
-            "G21\\nG90\\nM82\\nM104 S200\\nG28\\n"
-            "G1 X0 Y0 Z0.2 F1200\\nG1 X10 Y0 E2.5 F1200\\n"
-            "M104 S0\\n",
+            ";TIME:120\n;LAYER_COUNT:1\n;Filament used: 0.0mm, 0.0g\n"
+            "G21\nG90\nM82\nM104 S200\nG28\n"
+            "G1 X0 Y0 Z0.2 F1200\nG1 X10 Y0 E2.5 F1200\n"
+            "M104 S0\n",
             encoding="utf-8",
         )
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
