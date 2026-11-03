@@ -93,11 +93,16 @@ class PrintabilityChecker:
         self.thresholds = {**self.DEFAULT_THRESHOLDS, **(thresholds or {})}
         self.bed_size = bed_size or self.DEFAULT_BED_SIZE
     
-    def check_all(self, spec: PartSpec) -> List[CheckResult]:
-        """Run all 8 printability checks on the specification."""
-        # Build the part once
+    def check_all(self, spec: PartSpec, part_override: Optional[Part] = None) -> List[CheckResult]:
+        """Run all printability checks on a canonical spec or an already-validated solid.
+
+        Drawing blueprints are built by the drawing-to-CAD generator. Passing that
+        exact solid avoids pretending its Blueprint schema is a canonical PartSpec.
+        The lightweight PartSpec supplied by the caller is then used only for
+        optional feature metadata; geometry checks operate on the supplied solid.
+        """
         try:
-            part = create_part_from_spec(spec)
+            part = part_override if part_override is not None else create_part_from_spec(spec)
         except Exception as e:
             return [CheckResult(
                 check_id="build_error",
