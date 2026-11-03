@@ -4,6 +4,7 @@ import { getCurrentUser } from "@/lib/auth/server";
 import { isSameOriginRequest } from "@/lib/security/same-origin";
 import { prisma } from "@/lib/prisma";
 import { getCadServiceConfig } from "@/lib/cad-service-config";
+import { checkPaidFeatureAccess } from "@/lib/billing/paid-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -51,14 +52,11 @@ async function readLimitedStream(stream: ReadableStream<Uint8Array> | null, limi
 }
 
 async function assertSliceAccess(user: { id: string; role: string }): Promise<void> {
-  if (user.role === "ADMIN") return;
-  const subscription = await prisma.subscription.findUnique({ where: { userId: user.id } }).catch((error) => {
-    console.error("Could not check slicing subscription.", error);
-    throw new RouteError("Subscription service is unavailable.", 503);
-  });
-  if (!(subscription?.tier === "PRO" && subscription.status === "ACTIVE")) {
-    throw new RouteError("An active Pro subscription is required to prepare STL files for printing.", 402);
-  }
+  const paidAccess = await checkPaidFeatureAccess(
+    user,
+    "An active Pro subscription is required to prepare STL files for printing.",
+  );
+  if (!paidAccess.allowed) throw new RouteError(paidAccess.message, paidAccess.status);
 }
 
 async function fetchBackendHealth(): Promise<Record<string, unknown>> {
