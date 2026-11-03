@@ -42,11 +42,11 @@ type FixPreview = {
 };
 
 const FIX_LABELS: Record<string, string> = {
-  rotate: "Preview rotation",
-  thicken: "Preview wall thickening",
-  enlarge: "Preview enlargement",
-  split: "Preview split proposal",
-  add_support: "Preview support proposal",
+  rotate: "Check rotated proposal",
+  thicken: "Check wall-thickening proposal",
+  enlarge: "Check enlargement proposal",
+  split: "Review split proposal",
+  add_support: "Review support proposal",
 };
 
 const STATUS_CLASS: Record<CheckStatus, string> = {
@@ -194,7 +194,7 @@ export function PrintabilityPanel({ projectId, versions }: { projectId: string; 
           <CardTitle>Printability checks</CardTitle>
         </div>
         <CardDescription>
-          Run deterministic FDM checks on a saved CAD version. Available actions preview proposed changes and re-run the checks.
+          Run deterministic FDM checks on a saved CAD version. Available actions evaluate a proposed PartSpec change and re-run the checks; they do not render a replacement mesh.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -248,7 +248,7 @@ export function PrintabilityPanel({ projectId, versions }: { projectId: string; 
         {preview && (
           <section className="space-y-3 rounded-xl border border-primary/30 p-4" aria-live="polite">
             <div>
-              <h3 className="font-semibold">Fix preview — {preview.result?.action.replaceAll("_", " ")}</h3>
+              <h3 className="font-semibold">Proposal check results — {preview.result?.action.replaceAll("_", " ")}</h3>
               {previewSummary && (
                 <p className="text-sm text-muted-foreground">
                   {previewSummary.total} checks after proposal · {previewSummary.pass} pass · {previewSummary.fail} fail · {previewSummary.warning} warning
@@ -256,7 +256,7 @@ export function PrintabilityPanel({ projectId, versions }: { projectId: string; 
               )}
             </div>
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
-              This is a review-only preview. The project specification and existing STEP/STL files have not been changed.
+              These results evaluate the proposed PartSpec against the printability checks only. No replacement 3D mesh is rendered, and the saved specification and existing STEP/STL files have not changed.
             </div>
             {preview.notices?.map((notice) => <p key={notice} className="text-sm text-muted-foreground">{notice}</p>)}
             <CheckList checks={previewChecks} />
