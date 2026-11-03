@@ -63,6 +63,8 @@ jobs:
         run: npx prisma generate
       - name: Project retention unit tests
         run: npm run test:retention
+      - name: Subscription entitlement policy tests
+        run: npm run test:subscription-policy
       - name: ESLint
         run: npm run lint
       - name: TypeScript typecheck
