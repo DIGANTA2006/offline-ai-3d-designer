@@ -1,7 +1,9 @@
 """
-Fix actions for printability issues.
+Fix proposals for printability issues.
 
-Each fix modifies the PartSpec and can be re-verified by re-running checks.
+Actions either transform supported PartSpec geometry or record metadata proposals.
+Every action is followed by a fresh check run; metadata proposals do not create
+support geometry or split solids.
 """
 
 from __future__ import annotations
@@ -39,6 +41,21 @@ class FixResult:
     def __post_init__(self):
         if self.new_checks is None:
             self.new_checks = []
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize the proposed spec and the checks rerun after applying the action."""
+        return {
+            "success": self.success,
+            "action": self.action.value,
+            "check_id": self.check_id,
+            "modified_spec": (
+                self.modified_spec.model_dump(mode="json")
+                if self.modified_spec is not None
+                else None
+            ),
+            "new_checks": [check.to_dict() for check in self.new_checks],
+            "error": self.error,
+        }
 
 
 def get_available_fixes(check_id: str) -> List[FixAction]:
