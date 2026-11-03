@@ -65,6 +65,10 @@ RUN python -c "import shutil, subprocess; path = shutil.which('CuraEngine'); ass
 # Validate bundled Cura definitions are present and valid JSON
 RUN python -c "import json, os; p1='/app/python-backend/cura_resources/definitions/generic_fdm_printer.def.json'; p2='/app/python-backend/cura_resources/definitions/generic_fdm_extruder.def.json'; assert os.path.isfile(p1) and os.path.isfile(p2), 'Bundled Cura definitions missing'; json.load(open(p1)); json.load(open(p2)); print('CURA_DEFINITIONS_VALID=true')"
 
+# Run a real STL-to-G-code slice with the installed engine and bundled profiles.
+# This verifies profile loading, CLI arguments, non-empty output, and G-code structure.
+RUN python scripts/smoke_curaengine.py
+
 EXPOSE 8000
 
 # Switch to non-root user
