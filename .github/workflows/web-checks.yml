@@ -72,6 +72,8 @@ jobs:
         run: npm run test:subscription-policy
       - name: Project printability API route tests
         run: npm run test:printability-route
+      - name: Drawing OCR source MIME support tests
+        run: npm run test:ocr-source-support
       - name: ESLint
         run: npm run lint
       - name: TypeScript typecheck
