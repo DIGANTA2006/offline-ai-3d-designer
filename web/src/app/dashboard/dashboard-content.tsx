@@ -1,4 +1,5 @@
-import Link from "next/link";\nimport { BrandLogo } from "@/components/brand-logo";
+import Link from "next/link";
+import { BrandLogo } from "@/components/brand-logo";
 import {
   ArrowRight,
   Box,
