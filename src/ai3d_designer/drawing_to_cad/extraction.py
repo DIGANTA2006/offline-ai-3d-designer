@@ -379,6 +379,8 @@ def _has_callout_label(raw: str, labels: tuple[str, ...]) -> bool:
 def _semantic_callout_key(raw: str) -> str:
     """Keep distinct measurement meanings even when their numeric value and kind match."""
     label_groups = (
+        ("ring_outer_diameter", ("ring outer diameter", "outer ring diameter", "step outer diameter")),
+        ("ring_inner_diameter", ("ring inner diameter", "inner ring diameter", "step inner diameter")),
         ("outer_diameter", ("outer diameter", "outside diameter", "outer dia", "od")),
         ("inner_bore_diameter", ("inner bore diameter", "bore diameter", "bore dia", "bore", "inner diameter", "id")),
         ("pitch_circle_diameter", ("pitch circle diameter", "pitch circle dia", "bolt circle diameter", "pcd", "bcd")),
@@ -387,8 +389,6 @@ def _semantic_callout_key(raw: str) -> str:
         ("root_radius", ("root circle radius", "root radius", "dedendum radius")),
         ("gullet_radius", ("gullet radius", "radial cutout radius", "cutout radius", "notch radius")),
         ("wall_thickness", ("wall thickness", "sheet thickness")),
-        ("ring_outer_diameter", ("ring outer diameter", "outer ring diameter", "step outer diameter")),
-        ("ring_inner_diameter", ("ring inner diameter", "inner ring diameter", "step inner diameter")),
         ("fillet_radius", ("fillet radius", "edge radius")),
         ("pocket_depth", ("pocket depth", "slot depth")),
         ("hole_depth", ("hole depth", "drill depth")),
@@ -661,12 +661,12 @@ def ground_blueprint(bp: Blueprint, inventory: list[DimensionToken]) -> list[str
         "outer_diameter": (
             {"diameter"},
             ("outer diameter", "outside diameter", "outer dia", "od"),
-            (),
+            ("ring outer diameter", "outer ring diameter", "step outer diameter"),
         ),
         "inner_bore_diameter": (
             {"diameter"},
             ("inner bore diameter", "bore diameter", "bore dia", "bore", "inner diameter", "id"),
-            (),
+            ("ring inner diameter", "inner ring diameter", "step inner diameter"),
         ),
         "width": (
             {"linear"},
