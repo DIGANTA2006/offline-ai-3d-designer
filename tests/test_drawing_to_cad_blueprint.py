@@ -137,6 +137,36 @@ def test_root_radius_cannot_be_grounded_from_outer_radius():
     assert "features[0].root_radius=63.4" in cleared
 
 
+def test_ring_step_dimensions_are_not_reused_as_base_body_diameters():
+    inventory = _dimension_inventory(
+        "RING OUTER DIAMETER 90 mm RING INNER DIAMETER 70 mm RECESS DEPTH 5 mm",
+        {"dimensions": {}},
+        1,
+    )
+    blueprint = Blueprint(
+        primary_body_type="rotational_flange",
+        base_sketch=BaseSketch(
+            profile="circle",
+            outer_diameter=90,
+            inner_bore_diameter=70,
+            thickness=10,
+        ),
+        features=[
+            Feature(type="ring_step", diameter=90, inner_diameter=70, depth=5),
+        ],
+    )
+
+    cleared = ground_blueprint(blueprint, inventory)
+
+    assert blueprint.base_sketch.outer_diameter is None
+    assert blueprint.base_sketch.inner_bore_diameter is None
+    assert blueprint.features[0].diameter == 90
+    assert blueprint.features[0].inner_diameter == 70
+    assert blueprint.features[0].depth == 5
+    assert "base_sketch.outer_diameter=90" in cleared
+    assert "base_sketch.inner_bore_diameter=70" in cleared
+
+
 def test_default_height_is_explicitly_flagged_for_review():
     blueprint = Blueprint(
         primary_body_type="rotational_flange",

@@ -545,18 +545,17 @@ def _dimension_inventory(
             (["inner bore diameter", "bore diameter", "bore dia", "inner diameter", "id"], "diameter"),
             (["pitch circle diameter", "pitch circle dia", "pcd", "bcd", "bolt circle diameter"], "diameter"),
             (["hole diameter", "hole dia", "dia of holes"], "diameter"),
-        (["ring outer diameter", "outer ring diameter", "step outer diameter"], "diameter"),
-        (["ring inner diameter", "inner ring diameter", "step inner diameter"], "diameter"),
-        (["fillet radius", "edge radius"], "radius"),
-        (["pocket depth", "slot depth", "hole depth", "drill depth", "ring depth", "recess depth", "step depth"], "linear"),
-        (["pocket length", "slot length"], "linear"),
-        (["pocket width", "slot width"], "linear"),
+            (["ring outer diameter", "outer ring diameter", "step outer diameter"], "diameter"),
+            (["ring inner diameter", "inner ring diameter", "step inner diameter"], "diameter"),
+            (["fillet radius", "edge radius"], "radius"),
+            (["pocket depth", "slot depth", "hole depth", "drill depth", "ring depth", "recess depth", "step depth"], "linear"),
+            (["pocket length", "slot length"], "linear"),
+            (["pocket width", "slot width"], "linear"),
             (["width", "overall width"], "linear"),
             (["length", "overall length"], "linear"),
             (["overall thickness", "plate thickness", "thickness", "thk", "height"], "linear"),
             (["wall thickness", "sheet thickness"], "linear"),
-        )
-        for page_index, page_text in enumerate(page_texts[:MAX_BLUEPRINT_PAGES], start=1):
+        )        for page_index, page_text in enumerate(page_texts[:MAX_BLUEPRINT_PAGES], start=1):
             if not isinstance(page_text, str):
                 continue
             for match in DIMENSION_TOKEN_RE.finditer(page_text[:20_000]):
