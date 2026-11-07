@@ -895,25 +895,40 @@ def _labeled_radius_value(text: str, labels: list[str]) -> float | None:
 
 
 def _labeled_value(text: str, labels: list[str]) -> float | None:
-    """Return a number only when adjacent to a recognized dimension label."""
+    """Return a number only when adjacent to a recognized, semantically scoped label."""
     label_group = "(?:" + "|".join(re.escape(label) for label in labels) + ")"
     pattern = re.compile(
-        rf"(?<![A-Za-z]){label_group}(?![A-Za-z])\s*(?:[:=]|is|of)?\s*[ØøΦ⌀∅]?\s*(\d{{1,7}}(?:[.,]\d{{1,4}})?)\s*(mm|cm|inches?|inch|in)?\b",
+        rf"(?<![A-Za-z])(?P<label>{label_group})(?![A-Za-z])\s*(?:[:=]|is|of)?\s*[ØøΦ⌀∅]?\s*(?P<number>\d{{1,7}}(?:[.,]\d{{1,4}})?)\s*(?P<unit>mm|cm|inches?|inch|in)?\b",
         re.IGNORECASE,
     )
-    match = pattern.search(text[:50_000])
-    if not match:
-        # Also support forms such as 'Ø155 OD'.
-        reverse = re.compile(
-            rf"[ØøΦ⌀∅]\s*(\d{{1,7}}(?:[.,]\d{{1,4}})?)\s*(?:mm\s*)?{label_group}(?![A-Za-z])",
-            re.IGNORECASE,
-        ).search(text[:50_000])
-        if not reverse:
-            return None
-        raw_number, raw_unit = reverse.group(1), "mm"
-    else:
-        raw_number, raw_unit = match.group(1), match.group(2) or "mm"
-    return float(raw_number.replace(",", ".")) * UNIT_MULTIPLIER.get(raw_unit.lower(), 1.0)
+    source = text[:50_000]
+
+    def ring_scoped(match: re.Match[str]) -> bool:
+        # "RING OUTER DIAMETER" is not the parent body's "OUTER DIAMETER".
+        label = match.group("label")
+        preceding = source[:match.start("label")]
+        return not label.lower().startswith("ring ") and bool(
+            re.search(r"\bring\s*$", preceding, re.IGNORECASE)
+        )
+
+    for match in pattern.finditer(source):
+        if ring_scoped(match):
+            continue
+        raw_number = match.group("number")
+        raw_unit = match.group("unit") or "mm"
+        return float(raw_number.replace(",", ".")) * UNIT_MULTIPLIER.get(raw_unit.lower(), 1.0)
+
+    # Also support reverse forms such as "Ø155 OD" while respecting ring scope.
+    reverse = re.compile(
+        rf"[ØøΦ⌀∅]\s*(?P<number>\d{{1,7}}(?:[.,]\d{{1,4}})?)\s*(?:mm\s*)?(?P<label>{label_group})(?![A-Za-z])",
+        re.IGNORECASE,
+    )
+    for match in reverse.finditer(source):
+        if ring_scoped(match):
+            continue
+        return float(match.group("number").replace(",", "."))
+
+    return None
 
 
 def _heuristic_blueprint(raw_text: str, inventory: list[DimensionToken]) -> Blueprint:
