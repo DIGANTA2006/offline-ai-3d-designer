@@ -92,8 +92,8 @@ Requires the current service-token authentication and reviewed=true. The server 
 
 ## Safety and correctness limits
 
-- Named-field grounding requires a matching numeric value, dimension kind, and semantic callout label (for example OD, bore, hole diameter, wall thickness, or PCD). A diameter is halved for a pitch radius only when the OCR callout is explicitly PCD/BCD or an equivalent pitch-circle label. Distinct semantic callouts with the same numeric value are preserved separately.
-- The inventory retains the matched source label, and ring-step callouts are kept separate from base-body dimensions. These deterministic checks still cannot prove that dimension arrows/extension lines point to the correct feature or view. The UI review and a curated drawing golden set remain required.
+- The currently covered base-sketch dimensions and selected feature parameters require a matching numeric value, dimension kind, and semantic callout label (for example OD, bore, hole diameter, wall thickness, ring-step dimensions, or PCD). A diameter is halved for a pitch radius only when the OCR callout is explicitly PCD/BCD or an equivalent pitch-circle label. Distinct semantic callouts with the same numeric value are preserved separately, and the original matched OCR callout is retained.
+- Profile-point coordinates and some feature offsets still use numeric/dimension-kind checks without a fully evidenced spatial association. None of these deterministic label checks proves that dimension arrows/extension lines point to the correct feature or view. Visual-only candidates remain separate from CAD geometry; the UI review and a curated drawing golden set remain required.
 - Visual models can still hallucinate feature associations or omit hidden details. A schema-valid answer is not proof of geometrical correctness.
 - A valid single solid and watertight STL prove kernel/mesh properties, not equivalence to the original engineering drawing, tolerance compliance, material properties or suitability for manufacture.
 - Review every model in a CAD viewer against the original source before use in manufacturing.

@@ -545,12 +545,12 @@ def _dimension_inventory(
             (["inner bore diameter", "bore diameter", "bore dia", "inner diameter", "id"], "diameter"),
             (["pitch circle diameter", "pitch circle dia", "pcd", "bcd", "bolt circle diameter"], "diameter"),
             (["hole diameter", "hole dia", "dia of holes"], "diameter"),
-        (["ring outer diameter", "outer ring diameter", "step outer diameter"], "diameter"),
-        (["ring inner diameter", "inner ring diameter", "step inner diameter"], "diameter"),
-        (["fillet radius", "edge radius"], "radius"),
-        (["pocket depth", "slot depth", "hole depth", "drill depth", "ring depth", "recess depth", "step depth"], "linear"),
-        (["pocket length", "slot length"], "linear"),
-        (["pocket width", "slot width"], "linear"),
+            (["ring outer diameter", "outer ring diameter", "step outer diameter"], "diameter"),
+            (["ring inner diameter", "inner ring diameter", "step inner diameter"], "diameter"),
+            (["fillet radius", "edge radius"], "radius"),
+            (["pocket depth", "slot depth", "hole depth", "drill depth", "ring depth", "recess depth", "step depth"], "linear"),
+            (["pocket length", "slot length"], "linear"),
+            (["pocket width", "slot width"], "linear"),
             (["width", "overall width"], "linear"),
             (["length", "overall length"], "linear"),
             (["overall thickness", "plate thickness", "thickness", "thk", "height"], "linear"),
@@ -825,21 +825,35 @@ def ground_blueprint(bp: Blueprint, inventory: list[DimensionToken]) -> list[str
 
 
 def _labeled_radius_value(text: str, labels: list[str]) -> float | None:
-    """Read an explicitly labelled radius such as 'root radius R63.4'."""
+    """Read an explicitly labelled radius while keeping nested ring labels scoped."""
     label_group = "(?:" + "|".join(re.escape(label) for label in labels) + ")"
-    number = r"(\d{1,7}(?:[.,]\d{1,4})?)"
-    match = re.search(
-        rf"(?<![A-Za-z]){label_group}(?![A-Za-z])\s*(?:[:=]|is|of)?\s*R\s*{number}\b",
-        text[:50_000],
+    number = r"\d{1,7}(?:[.,]\d{1,4})?"
+    source = text[:50_000]
+
+    def ring_scoped(match: re.Match[str]) -> bool:
+        label = match.group("label")
+        preceding = source[:match.start("label")]
+        return not label.lower().startswith("ring ") and bool(
+            re.search(r"\bring\s*$", preceding, re.IGNORECASE)
+        )
+
+    forward = re.compile(
+        rf"(?<![A-Za-z])(?P<label>{label_group})(?![A-Za-z])\s*(?:[:=]|is|of)?\s*R\s*(?P<number>{number})\b",
         re.IGNORECASE,
     )
-    if not match:
-        match = re.search(
-            rf"(?<![A-Za-z])R\s*{number}\s*(?:mm\s*)?{label_group}(?![A-Za-z])",
-            text[:50_000],
-            re.IGNORECASE,
-        )
-    return float(match.group(1).replace(",", ".")) if match else None
+    for match in forward.finditer(source):
+        if not ring_scoped(match):
+            return float(match.group("number").replace(",", "."))
+
+    reverse = re.compile(
+        rf"R\s*(?P<number>{number})\s*(?:mm\s*)?(?P<label>{label_group})(?![A-Za-z])",
+        re.IGNORECASE,
+    )
+    for match in reverse.finditer(source):
+        if not ring_scoped(match):
+            return float(match.group("number").replace(",", "."))
+
+    return None
 
 
 def _labeled_callout(text: str, labels: list[str]) -> tuple[float, str] | None:
