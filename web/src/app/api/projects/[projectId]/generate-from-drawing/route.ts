@@ -210,6 +210,60 @@ export async function POST(request: Request, { params }: Context) {
         422,
       );
     }
+    // Any dimension defaulted during drawing extraction must be acknowledged by field and value.
+    // The client cannot remove the extraction-time default flag to bypass this export gate.
+    const storedBlueprintRecord = storedBlueprint as Record<string, unknown>;
+    const effectiveReviewedBlueprint = reviewedBlueprint ?? storedBlueprintRecord;
+    const storedSketch = storedBlueprintRecord.base_sketch;
+    const reviewedSketch = effectiveReviewedBlueprint.base_sketch;
+    const storedSketchRecord = storedSketch && typeof storedSketch === "object" && !Array.isArray(storedSketch)
+      ? storedSketch as Record<string, unknown>
+      : {};
+    const reviewedSketchRecord = reviewedSketch && typeof reviewedSketch === "object" && !Array.isArray(reviewedSketch)
+      ? reviewedSketch as Record<string, unknown>
+      : {};
+    const reviewedBodyType = effectiveReviewedBlueprint.primary_body_type;
+    const requiredProvisionalDefaults: Array<{ field: string; value: number }> = [];
+
+    if (storedSketchRecord.thickness_is_default === true && reviewedBodyType !== "revolved_profile") {
+      const value = reviewedSketchRecord.thickness;
+      if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+        throw new RouteError("Enter a positive height/depth value before confirming the provisional default.", 409);
+      }
+      requiredProvisionalDefaults.push({ field: "base_sketch.thickness", value });
+    }
+    if (storedSketchRecord.wall_thickness_is_default === true && reviewedBodyType === "sheet_enclosure") {
+      const value = reviewedSketchRecord.wall_thickness;
+      if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+        throw new RouteError("Enter a positive enclosure wall value before confirming the provisional default.", 409);
+      }
+      requiredProvisionalDefaults.push({ field: "base_sketch.wall_thickness", value });
+    }
+
+    const suppliedConfirmations = Array.isArray(input.confirmedDefaultFields)
+      ? input.confirmedDefaultFields.filter((item): item is { field: string; value: number } =>
+          !!item && typeof item === "object" && !Array.isArray(item) &&
+          typeof (item as Record<string, unknown>).field === "string" &&
+          typeof (item as Record<string, unknown>).value === "number" &&
+          Number.isFinite((item as Record<string, unknown>).value as number))
+      : [];
+    for (const required of requiredProvisionalDefaults) {
+      const confirmation = suppliedConfirmations.find((item) => item.field === required.field);
+      if (!confirmation || confirmation.value !== required.value) {
+        throw new RouteError(
+          `Review and explicitly confirm the provisional ${required.field.replace("base_sketch.", "")} value (${required.value} mm) before generating CAD.`,
+          409,
+        );
+      }
+    }
+    const confirmedProvisionalDefaults = requiredProvisionalDefaults.map((item) => ({
+      ...item,
+      unit: "mm",
+      source: "provisional_default",
+      confirmedBy: user.id,
+      confirmedAt: new Date().toISOString(),
+    }));
+
     const rawSources = storedSpec.uploadedFiles;
     const source = Array.isArray(rawSources) ? rawSources[fileIndex] as Partial<StoredSource> | undefined : undefined;
     if (!source || typeof source.name !== "string") throw new RouteError("Source file metadata is invalid.", 422);
@@ -290,6 +344,7 @@ export async function POST(request: Request, { params }: Context) {
       sourceOCR: ocrResult.spec,
       // Provenance: this version was generated from the drawing's saved blueprint, not from free text.
       generationSource: "drawing_blueprint",
+      confirmedProvisionalDefaults,
       reviewedDescription: reviewedDescription || null,
       reviewedBlueprint: reviewedBlueprint ?? storedBlueprint ?? null,
       partSpec: cad.partSpec ?? {},
