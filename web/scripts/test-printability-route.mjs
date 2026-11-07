@@ -166,14 +166,32 @@ try {
   const savedBlueprint = {
     part_name: "Drawing flange",
     primary_body_type: "rotational_flange",
-    base_sketch: { profile: "circle", outer_diameter: 40, thickness: 8 },
+    base_sketch: {
+      profile: "circle",
+      outer_diameter: 40,
+      thickness: 10,
+      thickness_is_default: true,
+      wall_thickness_is_default: false,
+    },
     features: [],
     unsupported_geometry: [],
-    needs_review: false,
+    needs_review: true,
   };
+  const confirmedProvisionalDefaults = [{
+    field: "base_sketch.thickness",
+    value: 10,
+    unit: "mm",
+    source: "provisional_default",
+    confirmedBy: "user-1",
+    confirmedAt: "2026-11-07T15:00:00.000Z",
+  }];
   versionRecord = {
     ...versionRecord,
-    spec: { reviewedBlueprint: savedBlueprint, partSpec: savedBlueprint },
+    spec: {
+      reviewedBlueprint: savedBlueprint,
+      partSpec: savedBlueprint,
+      confirmedProvisionalDefaults,
+    },
   };
   backendBody = {
     success: true,
@@ -189,6 +207,17 @@ try {
   assert.equal(calls.backend.at(-1).url, "https://cad.example.test/api/v1/printability/check-blueprint");
   assert.deepEqual(calls.backend.at(-1).body.blueprint, savedBlueprint);
   assert.equal(calls.backend.at(-1).body.partSpec, undefined);
+  assert.ok(body.notices.some((notice) => notice.includes("remains a provisional default") && notice.includes("explicit confirmation")));
+  assert.ok(body.notices.some((notice) => notice.includes("flagged as needing review")));
+
+  // Older saved versions may contain a provisional default without PR #20 confirmation provenance.
+  // Geometry checks may still run, but the response must not imply that the dimension was approved.
+  versionRecord.spec.confirmedProvisionalDefaults = [];
+  response = await route.GET(getRequest(), params);
+  body = await response.json();
+  assert.equal(response.status, 200);
+  assert.ok(body.notices.some((notice) => notice.includes("no matching user-confirmation record")));
+  assert.ok(body.notices.some((notice) => notice.includes("does not approve this value")));
 
   // Drawing-blueprint fixes must remain disabled until they can safely rebuild the blueprint.
   const beforeBlueprintFix = calls.backend.length;

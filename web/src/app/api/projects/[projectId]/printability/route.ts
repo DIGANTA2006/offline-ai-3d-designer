@@ -75,10 +75,10 @@ async function readLimitedText(response: Response): Promise<string> {
 }
 
 type SavedGeometry =
-  | { kind: "partSpec"; value: Record<string, unknown>; name: string }
-  | { kind: "blueprint"; value: Record<string, unknown>; name: string };
+  | { kind: "partSpec"; value: Record<string, unknown>; name: string; notices: string[] }
+  | { kind: "blueprint"; value: Record<string, unknown>; name: string; notices: string[] };
 
-function getSavedGeometry(value: unknown): SavedGeometry {
+function getSavedGeometry(value: unknown, ownerUserId: string): SavedGeometry {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new RouteError("This project version has no saved CAD specification.", 422);
   }
@@ -94,7 +94,7 @@ function getSavedGeometry(value: unknown): SavedGeometry {
     Array.isArray(candidate.features) &&
     candidate.features.length > 0
   ) {
-    return { kind: "partSpec", value: candidate, name: candidate.name };
+    return { kind: "partSpec", value: candidate, name: candidate.name, notices: [] };
   }
 
   // Drawing-to-CAD projects intentionally persist a distinct Blueprint. Do not
@@ -118,7 +118,49 @@ function getSavedGeometry(value: unknown): SavedGeometry {
         422,
       );
     }
-    return { kind: "blueprint", value: blueprintValue, name: blueprintValue.part_name };
+    const notices: string[] = [];
+    const sketchRecord = sketch as Record<string, unknown>;
+    const rawConfirmations = record.confirmedProvisionalDefaults;
+    const confirmations = Array.isArray(rawConfirmations)
+      ? rawConfirmations.filter((item): item is Record<string, unknown> =>
+          !!item && typeof item === "object" && !Array.isArray(item))
+      : [];
+
+    const hasMatchingConfirmation = (field: string, value: number) =>
+      confirmations.some((item) =>
+        item.field === field &&
+        item.value === value &&
+        item.unit === "mm" &&
+        item.source === "provisional_default" &&
+        item.confirmedBy === ownerUserId &&
+        typeof item.confirmedAt === "string" &&
+        Number.isFinite(Date.parse(item.confirmedAt)),
+      );
+
+    const provisionalFields = [
+      { flag: "thickness_is_default", valueKey: "thickness", field: "base_sketch.thickness", label: "Height/depth" },
+      { flag: "wall_thickness_is_default", valueKey: "wall_thickness", field: "base_sketch.wall_thickness", label: "Enclosure wall thickness" },
+    ];
+
+    for (const item of provisionalFields) {
+      if (sketchRecord[item.flag] !== true) continue;
+      const value = sketchRecord[item.valueKey];
+      if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+        notices.push(item.label + " is flagged as a provisional default, but its saved value is missing or invalid. Resolve it before manufacturing.");
+        continue;
+      }
+      if (hasMatchingConfirmation(item.field, value)) {
+        notices.push(item.label + " " + value + " mm remains a provisional default, not a drawing-derived measurement; this saved version records an explicit confirmation of that exact value.");
+      } else {
+        notices.push(item.label + " " + value + " mm is flagged as a provisional default, but this saved version has no matching user-confirmation record. A passing printability check does not approve this value; review it before manufacturing.");
+      }
+    }
+
+    if (blueprintValue.needs_review === true) {
+      notices.push("This drawing blueprint is flagged as needing review. Passing printability checks do not constitute approval of its dimensions or interpretation.");
+    }
+
+    return { kind: "blueprint", value: blueprintValue, name: blueprintValue.part_name, notices };
   }
 
   throw new RouteError(
@@ -157,7 +199,7 @@ async function loadOwnedVersion(
   return {
     id: version.id,
     version: version.version,
-    geometry: getSavedGeometry(version.spec),
+    geometry: getSavedGeometry(version.spec, userId),
   };
 }
 
@@ -283,8 +325,12 @@ export async function GET(request: Request, { params }: Context) {
     const result = version.geometry.kind === "blueprint"
       ? await callCadService("checkBlueprint", { blueprint: version.geometry.value })
       : await callCadService("check", { partSpec: version.geometry.value });
+    const backendNotices = Array.isArray(result.notices)
+      ? result.notices.filter((notice): notice is string => typeof notice === "string")
+      : [];
     return NextResponse.json({
       ...result,
+      notices: Array.from(new Set([...backendNotices, ...version.geometry.notices])).slice(0, 16),
       versionId: version.id,
       versionNumber: version.version,
       partSpecName: version.geometry.name,
