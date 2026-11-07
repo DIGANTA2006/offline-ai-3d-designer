@@ -318,6 +318,8 @@ export async function POST(request: Request, { params }: Context) {
       "x-slice-filament-grams",
       "x-slice-filament-meters",
       "x-slice-filament-grams-estimated",
+      "x-slice-filament-length-source",
+      "x-slice-deposition-moves",
       "x-slice-layers",
     ]) {
       const value = upstream.headers.get(name);
