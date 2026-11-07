@@ -508,9 +508,10 @@ def _dimension_inventory(
                 if value is not None:
                     add(value, f"{single_label} R{value:g}", kind)
             continue
-        value = _labeled_value(raw_text, labels)
-        if value is not None:
-            add(value, f"{labels[0]} {value:g} mm", kind)
+        callout = _labeled_callout(raw_text, labels)
+        if callout is not None:
+            value, raw_callout = callout
+            add(value, raw_callout, kind)
 
     # Add explicitly marked Ø/R/angle/unit-bearing values from native text and OCR.
     # Bare title-block numbers are deliberately not treated as dimensions.
@@ -577,9 +578,10 @@ def _dimension_inventory(
                         if value is not None:
                             add(value, f"{single_label} R{value:g}", kind, page=page_index)
                     continue
-                value = _labeled_value(page_text, list(field_labels))
-                if value is not None:
-                    add(value, f"{field_labels[0]} {value:g} mm", kind, page=page_index)
+                callout = _labeled_callout(page_text, list(field_labels))
+                if callout is not None:
+                    value, raw_callout = callout
+                    add(value, raw_callout, kind, page=page_index)
 
     return found[:200]
 
@@ -894,8 +896,8 @@ def _labeled_radius_value(text: str, labels: list[str]) -> float | None:
     return float(match.group(1).replace(",", ".")) if match else None
 
 
-def _labeled_value(text: str, labels: list[str]) -> float | None:
-    """Return a number only when adjacent to a recognized, semantically scoped label."""
+def _labeled_callout(text: str, labels: list[str]) -> tuple[float, str] | None:
+    """Return the normalized value and the actual matched source callout label."""
     label_group = "(?:" + "|".join(re.escape(label) for label in labels) + ")"
     pattern = re.compile(
         rf"(?<![A-Za-z])(?P<label>{label_group})(?![A-Za-z])\s*(?:[:=]|is|of)?\s*[ØøΦ⌀∅]?\s*(?P<number>\d{{1,7}}(?:[.,]\d{{1,4}})?)\s*(?P<unit>mm|cm|inches?|inch|in)?\b",
@@ -916,7 +918,8 @@ def _labeled_value(text: str, labels: list[str]) -> float | None:
             continue
         raw_number = match.group("number")
         raw_unit = match.group("unit") or "mm"
-        return float(raw_number.replace(",", ".")) * UNIT_MULTIPLIER.get(raw_unit.lower(), 1.0)
+        value = float(raw_number.replace(",", ".")) * UNIT_MULTIPLIER.get(raw_unit.lower(), 1.0)
+        return value, match.group(0).strip()
 
     # Also support reverse forms such as "Ø155 OD" while respecting ring scope.
     reverse = re.compile(
@@ -926,9 +929,16 @@ def _labeled_value(text: str, labels: list[str]) -> float | None:
     for match in reverse.finditer(source):
         if ring_scoped(match):
             continue
-        return float(match.group("number").replace(",", "."))
+        value = float(match.group("number").replace(",", "."))
+        return value, match.group(0).strip()
 
     return None
+
+
+def _labeled_value(text: str, labels: list[str]) -> float | None:
+    """Compatibility wrapper for callers that need only the normalized numeric value."""
+    callout = _labeled_callout(text, labels)
+    return callout[0] if callout is not None else None
 
 
 def _heuristic_blueprint(raw_text: str, inventory: list[DimensionToken]) -> Blueprint:
