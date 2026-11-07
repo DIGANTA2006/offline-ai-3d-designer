@@ -9,7 +9,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const routePath = resolve(here, "../src/app/api/projects/[projectId]/generate-from-drawing/route.ts");
 
 const calls = { usageReservations: 0, cadFetches: 0 };
-const project = {
+let project = {
   id: "project-test",
   versions: [{
     id: "source-version",
@@ -114,7 +114,49 @@ try {
   assert.equal(calls.usageReservations, 0, "rejection must happen before generation usage is reserved");
   assert.equal(calls.cadFetches, 0, "rejection must happen before the CAD service is called");
 
-  console.log("PASS: drawing generation rejects missing saved blueprints before usage reservation, storage, or CAD service calls");
+  // A saved blueprint that contains a provisional thickness must also be explicitly confirmed.
+  const savedBlueprint = {
+    part_name: "Test flange",
+    primary_body_type: "rotational_flange",
+    base_sketch: {
+      profile: "circle",
+      outer_diameter: 40,
+      inner_bore_diameter: null,
+      width: null,
+      length: null,
+      thickness: 10,
+      wall_thickness: null,
+      thickness_is_default: true,
+      wall_thickness_is_default: false,
+      points: null,
+    },
+    features: [],
+    warnings: [],
+    unsupported_geometry: [],
+    source_pages: [1],
+    needs_review: true,
+  };
+  project.versions[0].spec.ocrResults[0].spec.blueprint = savedBlueprint;
+  const defaultRequest = new Request("http://localhost/api/projects/project-test/generate-from-drawing", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: "http://localhost" },
+    body: JSON.stringify({
+      fileIndex: 0,
+      reviewed: true,
+      reviewedDescription: "",
+      reviewedBlueprint: savedBlueprint,
+      confirmedDefaultFields: [],
+    }),
+  });
+  const defaultResponse = await POST(defaultRequest, { params: Promise.resolve({ projectId: "project-test" }) });
+  const defaultPayload = await defaultResponse.json();
+
+  assert.equal(defaultResponse.status, 409, "a provisional default must not be exported without explicit confirmation");
+  assert.match(defaultPayload.error, /confirm the provisional thickness value \(10 mm\)/i);
+  assert.equal(calls.usageReservations, 0, "unconfirmed defaults must be rejected before generation usage is reserved");
+  assert.equal(calls.cadFetches, 0, "unconfirmed defaults must be rejected before the CAD service is called");
+
+  console.log("PASS: drawing generation rejects missing blueprints and unconfirmed provisional defaults before usage reservation or CAD service calls");
 } finally {
   globalThis.fetch = originalFetch;
   if (previousBlobToken === undefined) delete process.env.PRIVATE_BLOB_READ_WRITE_TOKEN;
