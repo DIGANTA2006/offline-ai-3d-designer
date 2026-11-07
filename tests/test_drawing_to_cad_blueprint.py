@@ -604,3 +604,32 @@ def test_extract_blueprint_renders_pdf_and_returns_grounded_structured_fields():
     assert result.blueprint.base_sketch.outer_diameter == 100
     assert result.blueprint.features[0].pitch_radius == 40
     assert result.cleared_fields == []
+
+
+def test_exported_part_spec_records_applied_defaults():
+    """The stored spec must describe the exported geometry, including provisional defaults.
+
+    Regression: export_blueprint previously returned the pre-default blueprint as partSpec,
+    so a 10 mm height that was actually modelled was stored as thickness=None.
+    """
+    flange = Blueprint(
+        primary_body_type="rotational_flange",
+        base_sketch=BaseSketch(profile="circle", outer_diameter=100),
+    )
+    result = export_blueprint(flange)
+    sketch = result["partSpec"]["base_sketch"]
+    assert sketch["thickness"] == 10
+    assert sketch["thickness_is_default"] is True
+    assert any("10 mm" in warning for warning in result["warnings"])
+
+    enclosure = Blueprint(
+        primary_body_type="sheet_enclosure",
+        base_sketch=BaseSketch(profile="rectangle", length=80, width=50),
+    )
+    result = export_blueprint(enclosure)
+    sketch = result["partSpec"]["base_sketch"]
+    assert sketch["thickness"] == 10 and sketch["thickness_is_default"] is True
+    assert sketch["wall_thickness"] == 2.5 and sketch["wall_thickness_is_default"] is True
+    # The caller's object is not mutated by export.
+    assert enclosure.base_sketch.thickness is None
+
