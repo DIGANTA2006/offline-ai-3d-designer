@@ -14,7 +14,8 @@
     "test:printability-route": "node scripts/test-printability-route.mjs",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:deploy": "prisma migrate deploy"
+    "prisma:deploy": "prisma migrate deploy",
+    "test:drawing-generation-guard": "node scripts/test-drawing-generation-guard.mjs"
   },
   "allowScripts": {
     "@firebase/util": true,

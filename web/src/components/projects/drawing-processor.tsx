@@ -83,6 +83,7 @@ type SourceFile = { index: number; name: string; ocrResult?: OCRSpec };
 type Props = { projectId: string; sourceFiles: SourceFile[] };
 type SketchNumberKey = "outer_diameter" | "inner_bore_diameter" | "width" | "length" | "thickness" | "wall_thickness";
 type FeatureNumberKey = "count" | "pitch_radius" | "start_angle" | "angular_pitch" | "diameter" | "inner_diameter" | "root_radius" | "length" | "width" | "depth" | "radius" | "x" | "y";
+type DefaultFieldKey = "base_sketch.thickness" | "base_sketch.wall_thickness";
 
 const blueprintSketchFields: Array<{ key: SketchNumberKey; label: string; defaultFlag?: "thickness_is_default" | "wall_thickness_is_default" }> = [
   { key: "outer_diameter", label: "Outer diameter (mm)" },
@@ -119,6 +120,31 @@ function numericInputValue(raw: string): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
+function getProvisionalDefaultFields(blueprint: Blueprint | null): Array<{ field: DefaultFieldKey; label: string; value: number | null }> {
+  if (!blueprint) return [];
+  const fields: Array<{ field: DefaultFieldKey; label: string; value: number | null }> = [];
+  if (blueprint.primary_body_type !== "revolved_profile" && blueprint.base_sketch.thickness_is_default) {
+    fields.push({
+      field: "base_sketch.thickness",
+      label: "height / depth",
+      value: typeof blueprint.base_sketch.thickness === "number" && Number.isFinite(blueprint.base_sketch.thickness) && blueprint.base_sketch.thickness > 0
+        ? blueprint.base_sketch.thickness
+        : null,
+    });
+  }
+  if (blueprint.primary_body_type === "sheet_enclosure" && blueprint.base_sketch.wall_thickness_is_default) {
+    fields.push({
+      field: "base_sketch.wall_thickness",
+      label: "enclosure wall thickness",
+      value: typeof blueprint.base_sketch.wall_thickness === "number" && Number.isFinite(blueprint.base_sketch.wall_thickness) && blueprint.base_sketch.wall_thickness > 0
+        ? blueprint.base_sketch.wall_thickness
+        : null,
+    });
+  }
+  return fields;
+}
+
+
 export function DrawingProcessor({ projectId, sourceFiles }: Props) {
   const router = useRouter();
   const ocrSourceFiles = sourceFiles.filter((file) => /\.(pdf|png|jpe?g|bmp|tiff?|webp)$/i.test(file.name));
@@ -131,11 +157,17 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
   );
   const [analyzing, setAnalyzing] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [confirmedDefaultFields, setConfirmedDefaultFields] = useState<Record<number, DefaultFieldKey[]>>({});
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const selected = useMemo(() => ocrSourceFiles.find((file) => file.index === selectedIndex), [ocrSourceFiles, selectedIndex]);
   const currentResult = results[selectedIndex] ?? null;
   const blueprint = currentResult?.blueprint ?? null;
+  const provisionalDefaultFields = getProvisionalDefaultFields(blueprint);
+  const confirmedDefaultsForSelected = confirmedDefaultFields[selectedIndex] ?? [];
+  const defaultConfirmationsComplete = provisionalDefaultFields.every(
+    (item) => item.value !== null && confirmedDefaultsForSelected.includes(item.field),
+  );
 
   function updateCurrentResult(updater: (result: OCRSpec) => OCRSpec) {
     setResults((previous) => {
@@ -146,6 +178,16 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
   }
 
   function updateBlueprintSketch(key: SketchNumberKey, raw: string) {
+    const confirmationField: DefaultFieldKey | null =
+      key === "thickness" ? "base_sketch.thickness"
+      : key === "wall_thickness" ? "base_sketch.wall_thickness"
+      : null;
+    if (confirmationField) {
+      setConfirmedDefaultFields((previous) => ({
+        ...previous,
+        [selectedIndex]: (previous[selectedIndex] ?? []).filter((field) => field !== confirmationField),
+      }));
+    }
     updateCurrentResult((result) => {
       if (!result.blueprint) return result;
       return {
@@ -156,6 +198,15 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
           needs_review: true,
         },
       };
+    });
+  }
+
+  function toggleDefaultConfirmation(field: DefaultFieldKey, checked: boolean) {
+    setConfirmedDefaultFields((previous) => {
+      const fields = new Set(previous[selectedIndex] ?? []);
+      if (checked) fields.add(field);
+      else fields.delete(field);
+      return { ...previous, [selectedIndex]: Array.from(fields) };
     });
   }
 
@@ -289,6 +340,13 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
       setError("This drawing contains unsupported geometry. The generator will not substitute a simpler part; resolve those features before export.");
       return;
     }
+    const missingDefaultConfirmations = getProvisionalDefaultFields(blueprint).filter(
+      (item) => item.value === null || !(confirmedDefaultFields[selectedIndex] ?? []).includes(item.field),
+    );
+    if (missingDefaultConfirmations.length > 0) {
+      setError("Review and confirm every highlighted provisional dimension before generating CAD.");
+      return;
+    }
     setGenerating(true);
     setError("");
     setNotice("");
@@ -301,6 +359,9 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
           fileIndex: selected.index,
           reviewed: true,
           reviewedDescription: reviewedDescription.trim(),
+          confirmedDefaultFields: getProvisionalDefaultFields(blueprint)
+            .filter((item) => item.value !== null && (confirmedDefaultFields[selectedIndex] ?? []).includes(item.field))
+            .map((item) => ({ field: item.field, value: item.value })),
           ...(blueprint ? { reviewedBlueprint: blueprint } : {}),
         }),
       });
@@ -348,7 +409,9 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
               onClick={generate}
               disabled={
                 !currentResult || analyzing || generating ||
-                (blueprint ? (!blueprint.primary_body_type || blueprint.unsupported_geometry.length > 0) : reviewedDescription.trim().length < 5)
+                (blueprint
+                  ? (!blueprint.primary_body_type || blueprint.unsupported_geometry.length > 0 || !defaultConfirmationsComplete)
+                  : reviewedDescription.trim().length < 5)
               }
             >
               {generating ? <><LoaderCircle className="size-4 animate-spin" /> Generating CAD…</> : <><WandSparkles className="size-4" /> Generate reviewed STEP + STL</>}
@@ -438,6 +501,30 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
                       );
                     })}
                   </div>
+                  {provisionalDefaultFields.length > 0 && (
+                    <fieldset className="mt-4 space-y-2 rounded-lg border border-amber-400 bg-amber-50/60 p-3 text-sm">
+                      <legend className="px-1 font-semibold text-amber-950">Confirm provisional dimensions before export</legend>
+                      <p className="text-xs leading-5 text-amber-950">
+                        These fields were initially filled by the CAD system because the drawing did not provide them. You may adjust a value, but it remains unverified until you confirm the exact current value below. It is not a drawing-derived measurement.
+                      </p>
+                      {provisionalDefaultFields.map((item) => (
+                        <label key={item.field} className="flex items-start gap-2 text-amber-950">
+                          <input
+                            type="checkbox"
+                            className="mt-1"
+                            checked={confirmedDefaultsForSelected.includes(item.field)}
+                            disabled={item.value === null || generating || analyzing}
+                            onChange={(event) => toggleDefaultConfirmation(item.field, event.target.checked)}
+                          />
+                          <span>
+                            I have reviewed and approve the current provisional / manually adjusted {item.label} value of{" "}
+                            <strong>{item.value === null ? "missing / invalid" : item.value + " mm"}</strong>{" "}
+                            for this model.
+                          </span>
+                        </label>
+                      ))}
+                    </fieldset>
+                  )}
                   {blueprint.base_sketch.points && (
                     <p className="mt-2 text-xs text-muted-foreground">
                       {blueprint.base_sketch.points.length} profile points extracted. Point-by-point editing is not available in this UI pass; inspect those coordinates before export.
