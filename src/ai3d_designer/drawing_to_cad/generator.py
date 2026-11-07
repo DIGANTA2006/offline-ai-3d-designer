@@ -158,6 +158,16 @@ def _apply_features(part: Any, blueprint: Blueprint, height: float) -> None:
 
 def build_part(blueprint: Blueprint) -> tuple[Part, list[str]]:
     """Build and validate the blueprint using build123d/OpenCASCADE."""
+    solid, warnings, _effective = build_part_with_effective_blueprint(blueprint)
+    return solid, warnings
+
+
+def build_part_with_effective_blueprint(blueprint: Blueprint) -> tuple[Part, list[str], Blueprint]:
+    """Build the blueprint and return the effective copy with defaults applied.
+
+    Stored provenance must come from the effective copy: it describes the geometry
+    that was exported, including provisional defaults that were not in the drawing.
+    """
     blueprint = Blueprint.model_validate(blueprint.model_dump(mode="python"))
     defaults = apply_defaults(blueprint)
     errors, warnings = lint(blueprint)
@@ -195,7 +205,7 @@ def build_part(blueprint: Blueprint) -> tuple[Part, list[str]]:
     if not math.isfinite(solid.volume) or solid.volume <= 0:
         raise GeometryError("Generated solid has non-positive or non-finite volume")
 
-    return solid, list(dict.fromkeys(defaults + warnings))
+    return solid, list(dict.fromkeys(defaults + warnings)), blueprint
 
 
 def validate_solid(solid: Part, blueprint: Blueprint) -> dict[str, Any]:
@@ -235,8 +245,8 @@ def validate_solid(solid: Part, blueprint: Blueprint) -> dict[str, Any]:
 
 def export_blueprint(blueprint: Blueprint) -> dict[str, Any]:
     """Return validated STEP/STL exports as Base64 for the authenticated web API."""
-    solid, warnings = build_part(blueprint)
-    metrics = validate_solid(solid, blueprint)
+    solid, warnings, effective = build_part_with_effective_blueprint(blueprint)
+    metrics = validate_solid(solid, effective)
     with tempfile.TemporaryDirectory(prefix="drawing-to-cad-") as temporary:
         root = Path(temporary)
         step_path = root / "model.step"
@@ -255,7 +265,7 @@ def export_blueprint(blueprint: Blueprint) -> dict[str, Any]:
         return {
             "stepBase64": base64.b64encode(step_path.read_bytes()).decode("ascii"),
             "stlBase64": base64.b64encode(stl_path.read_bytes()).decode("ascii"),
-            "partSpec": blueprint.model_dump(mode="json"),
+            "partSpec": effective.model_dump(mode="json"),
             "fitReport": (
                 "The deterministic blueprint generator produced one kernel-valid solid and a watertight STL. "
                 "This does not certify that the drawing was interpreted correctly, that hidden features were found, "
