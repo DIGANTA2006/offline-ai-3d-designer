@@ -30,6 +30,139 @@ from ai3d_designer.drawing_to_cad.extraction import (
 from ai3d_designer.drawing_to_cad.generator import GeometryError, export_blueprint
 
 
+
+def test_inventory_preserves_different_semantic_callouts_with_the_same_value():
+    inventory = _dimension_inventory("OD 80 mm PCD 80 mm", {"dimensions": {}}, 1)
+
+    assert any(token.kind == "diameter" and "od" in token.raw.lower() for token in inventory)
+    assert any(token.kind == "diameter" and "pcd" in token.raw.lower() for token in inventory)
+
+
+def test_outer_diameter_cannot_be_grounded_from_an_unrelated_hole_diameter():
+    blueprint = Blueprint(
+        primary_body_type="rotational_flange",
+        base_sketch=BaseSketch(profile="circle", outer_diameter=8, thickness=10),
+    )
+    inventory = [
+        DimensionToken(id="D1", raw="HOLE DIA 8", value=8, kind="diameter", page=1),
+        DimensionToken(id="D2", raw="THICKNESS 10", value=10, kind="linear", page=1),
+    ]
+
+    cleared = ground_blueprint(blueprint, inventory)
+
+    assert blueprint.base_sketch.outer_diameter is None
+    assert "base_sketch.outer_diameter=8" in cleared
+    assert blueprint.base_sketch.thickness == 10
+
+
+def test_pitch_radius_half_diameter_requires_pcd_or_bcd_evidence():
+    blueprint = Blueprint(
+        primary_body_type="rotational_flange",
+        base_sketch=BaseSketch(profile="circle", outer_diameter=100, thickness=10),
+        features=[Feature(type="hole_pattern", count=6, pitch_radius=4, diameter=8)],
+    )
+    inventory = [
+        DimensionToken(id="D1", raw="HOLE DIA 8", value=8, kind="diameter", page=1),
+        DimensionToken(id="D2", raw="OUTER DIAMETER 100", value=100, kind="diameter", page=1),
+        DimensionToken(id="D3", raw="THICKNESS 10", value=10, kind="linear", page=1),
+    ]
+
+    cleared = ground_blueprint(blueprint, inventory)
+
+    assert blueprint.features[0].diameter == 8
+    assert blueprint.features[0].pitch_radius is None
+    assert "features[0].pitch_radius=4" in cleared
+
+
+def test_hole_diameter_cannot_be_grounded_from_a_pcd_callout():
+    blueprint = Blueprint(
+        primary_body_type="rotational_flange",
+        base_sketch=BaseSketch(profile="circle", outer_diameter=120, thickness=10),
+        features=[Feature(type="hole_pattern", count=6, pitch_radius=40, diameter=80)],
+    )
+    inventory = [
+        DimensionToken(id="D1", raw="PCD 80", value=80, kind="diameter", page=1),
+        DimensionToken(id="D2", raw="OUTER DIAMETER 120", value=120, kind="diameter", page=1),
+        DimensionToken(id="D3", raw="THICKNESS 10", value=10, kind="linear", page=1),
+    ]
+
+    cleared = ground_blueprint(blueprint, inventory)
+
+    assert blueprint.features[0].pitch_radius == 40
+    assert blueprint.features[0].diameter is None
+    assert "features[0].diameter=80" in cleared
+
+
+def test_wall_thickness_cannot_be_reused_as_solid_height():
+    blueprint = Blueprint(
+        primary_body_type="sheet_enclosure",
+        base_sketch=BaseSketch(
+            profile="rectangle",
+            length=100,
+            width=80,
+            thickness=2.5,
+            wall_thickness=2.5,
+        ),
+    )
+    inventory = [
+        DimensionToken(id="D1", raw="WALL THICKNESS 2.5", value=2.5, kind="linear", page=1),
+    ]
+
+    cleared = ground_blueprint(blueprint, inventory)
+
+    assert blueprint.base_sketch.thickness is None
+    assert blueprint.base_sketch.wall_thickness == 2.5
+    assert "base_sketch.thickness=2.5" in cleared
+
+
+def test_root_radius_cannot_be_grounded_from_outer_radius():
+    blueprint = Blueprint(
+        primary_body_type="rotational_flange",
+        base_sketch=BaseSketch(profile="circle", outer_diameter=134, thickness=10),
+        features=[Feature(type="radial_cutout_pattern", count=10, radius=15.5, root_radius=63.4)],
+    )
+    inventory = [
+        DimensionToken(id="D1", raw="OUTER RADIUS R63.4", value=63.4, kind="radius", page=1),
+        DimensionToken(id="D2", raw="GULLET RADIUS R15.5", value=15.5, kind="radius", page=1),
+        DimensionToken(id="D3", raw="OUTER DIAMETER 134", value=134, kind="diameter", page=1),
+        DimensionToken(id="D4", raw="THICKNESS 10", value=10, kind="linear", page=1),
+    ]
+
+    cleared = ground_blueprint(blueprint, inventory)
+
+    assert blueprint.features[0].root_radius is None
+    assert blueprint.features[0].radius == 15.5
+    assert "features[0].root_radius=63.4" in cleared
+
+
+def test_ring_step_callouts_do_not_populate_base_body_diameters():
+    inventory = _dimension_inventory(
+        "RING OUTER DIAMETER 90 mm RING INNER DIAMETER 70 mm RECESS DEPTH 5 mm",
+        {"dimensions": {}},
+        1,
+    )
+    blueprint = Blueprint(
+        primary_body_type="rotational_flange",
+        base_sketch=BaseSketch(
+            profile="circle",
+            outer_diameter=90,
+            inner_bore_diameter=70,
+            thickness=10,
+        ),
+        features=[Feature(type="ring_step", diameter=90, inner_diameter=70, depth=5)],
+    )
+
+    cleared = ground_blueprint(blueprint, inventory)
+
+    assert blueprint.base_sketch.outer_diameter is None
+    assert blueprint.base_sketch.inner_bore_diameter is None
+    assert blueprint.features[0].diameter == 90
+    assert blueprint.features[0].inner_diameter == 70
+    assert blueprint.features[0].depth == 5
+    assert "base_sketch.outer_diameter=90" in cleared
+    assert "base_sketch.inner_bore_diameter=70" in cleared
+
+
 def test_default_height_is_explicitly_flagged_for_review():
     blueprint = Blueprint(
         primary_body_type="rotational_flange",

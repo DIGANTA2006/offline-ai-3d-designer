@@ -363,12 +363,52 @@ def _render_drawing(data: bytes, file_name: str, mime_type: str) -> RenderedDraw
     return RenderedDrawing([png], "raster", [""], [])
 
 
+
+def _has_callout_label(raw: str, labels: tuple[str, ...]) -> bool:
+    """Return true only when a normalized raw callout contains a whole semantic label."""
+    normalized = re.sub(r"\s+", " ", str(raw or "")).strip()
+    for label in labels:
+        escaped = re.escape(label.strip()).replace(r"\ ", r"\s+")
+        if re.search(r"(?<![A-Za-z0-9])" + escaped + r"(?![A-Za-z0-9])", normalized, re.IGNORECASE):
+            return True
+    return False
+
+
+def _semantic_callout_key(raw: str) -> str:
+    """Keep distinct measurement meanings even when their numeric value and kind match."""
+    label_groups = (
+        ("ring_outer_diameter", ("ring outer diameter", "outer ring diameter", "step outer diameter")),
+        ("ring_inner_diameter", ("ring inner diameter", "inner ring diameter", "step inner diameter")),
+        ("outer_diameter", ("outer diameter", "outside diameter", "outer dia", "od")),
+        ("inner_bore_diameter", ("inner bore diameter", "bore diameter", "bore dia", "bore", "inner diameter", "id")),
+        ("pitch_circle_diameter", ("pitch circle diameter", "pitch circle dia", "bolt circle diameter", "pcd", "bcd")),
+        ("hole_diameter", ("hole diameter", "hole dia", "dia of holes", "hole")),
+        ("outer_radius", ("outer radius", "outside radius")),
+        ("root_radius", ("root circle radius", "root radius", "dedendum radius")),
+        ("gullet_radius", ("gullet radius", "radial cutout radius", "cutout radius", "notch radius")),
+        ("wall_thickness", ("wall thickness", "sheet thickness")),
+        ("fillet_radius", ("fillet radius", "edge radius")),
+        ("pocket_depth", ("pocket depth", "slot depth")),
+        ("hole_depth", ("hole depth", "drill depth")),
+        ("ring_depth", ("ring depth", "recess depth", "step depth")),
+        ("pocket_length", ("pocket length", "slot length")),
+        ("pocket_width", ("pocket width", "slot width")),
+        ("width", ("overall width", "width")),
+        ("length", ("overall length", "length")),
+        ("thickness", ("overall thickness", "plate thickness", "thickness", "thk", "height")),
+    )
+    for key, labels in label_groups:
+        if _has_callout_label(raw, labels):
+            return key
+    return re.sub(r"\s+", " ", str(raw or "")).strip().casefold()
+
+
 def _dimension_inventory(
     raw_text: str, dimension_data: dict[str, Any], page_count: int
 ) -> list[DimensionToken]:
     """Build a millimetre inventory from the existing parser's explicit annotations."""
     found: list[DimensionToken] = []
-    keys: dict[tuple[str, float], DimensionToken] = {}
+    keys: dict[tuple[str, float, str, int | None], DimensionToken] = {}
 
     def add(
         value: Any,
@@ -385,7 +425,9 @@ def _dimension_inventory(
         if not (0 < numeric <= 1_000_000):
             return
         normalized_kind = kind.lower()
-        key = (normalized_kind, round(numeric, 4))
+        semantic_key = _semantic_callout_key(raw)
+        normalized_page = max(1, min(page, MAX_BLUEPRINT_PAGES)) if page is not None else None
+        key = (normalized_kind, round(numeric, 4), semantic_key, normalized_page)
         if key in keys:
             existing = keys[key]
             if len(raw) > len(existing.raw):
@@ -447,6 +489,12 @@ def _dimension_inventory(
         (["inner bore diameter", "bore diameter", "bore dia", "inner diameter", "id"], "diameter"),
         (["pitch circle diameter", "pitch circle dia", "pcd", "bcd", "bolt circle diameter"], "diameter"),
         (["hole diameter", "hole dia", "dia of holes"], "diameter"),
+        (["ring outer diameter", "outer ring diameter", "step outer diameter"], "diameter"),
+        (["ring inner diameter", "inner ring diameter", "step inner diameter"], "diameter"),
+        (["fillet radius", "edge radius"], "radius"),
+        (["pocket depth", "slot depth", "hole depth", "drill depth", "ring depth", "recess depth", "step depth"], "linear"),
+        (["pocket length", "slot length"], "linear"),
+        (["pocket width", "slot width"], "linear"),
         (["width", "overall width"], "linear"),
         (["length", "overall length"], "linear"),
         (["overall thickness", "plate thickness", "thickness", "thk", "height"], "linear"),
@@ -458,9 +506,10 @@ def _dimension_inventory(
                 if value is not None:
                     add(value, f"{single_label} R{value:g}", kind)
             continue
-        value = _labeled_value(raw_text, labels)
-        if value is not None:
-            add(value, f"{labels[0]} {value:g} mm", kind)
+        callout = _labeled_callout(raw_text, labels)
+        if callout is not None:
+            value, raw_callout = callout
+            add(value, raw_callout, kind)
 
     # Add explicitly marked Ø/R/angle/unit-bearing values from native text and OCR.
     # Bare title-block numbers are deliberately not treated as dimensions.
@@ -495,6 +544,12 @@ def _dimension_inventory(
             (["inner bore diameter", "bore diameter", "bore dia", "inner diameter", "id"], "diameter"),
             (["pitch circle diameter", "pitch circle dia", "pcd", "bcd", "bolt circle diameter"], "diameter"),
             (["hole diameter", "hole dia", "dia of holes"], "diameter"),
+        (["ring outer diameter", "outer ring diameter", "step outer diameter"], "diameter"),
+        (["ring inner diameter", "inner ring diameter", "step inner diameter"], "diameter"),
+        (["fillet radius", "edge radius"], "radius"),
+        (["pocket depth", "slot depth", "hole depth", "drill depth", "ring depth", "recess depth", "step depth"], "linear"),
+        (["pocket length", "slot length"], "linear"),
+        (["pocket width", "slot width"], "linear"),
             (["width", "overall width"], "linear"),
             (["length", "overall length"], "linear"),
             (["overall thickness", "plate thickness", "thickness", "thk", "height"], "linear"),
@@ -521,9 +576,10 @@ def _dimension_inventory(
                         if value is not None:
                             add(value, f"{single_label} R{value:g}", kind, page=page_index)
                     continue
-                value = _labeled_value(page_text, list(field_labels))
-                if value is not None:
-                    add(value, f"{field_labels[0]} {value:g} mm", kind, page=page_index)
+                callout = _labeled_callout(page_text, list(field_labels))
+                if callout is not None:
+                    value, raw_callout = callout
+                    add(value, raw_callout, kind, page=page_index)
 
     return found[:200]
 
@@ -571,12 +627,19 @@ def _is_grounded(
     inventory: list[DimensionToken],
     allowed_kinds: set[str] | None = None,
     allow_half_diameter: bool = False,
+    required_labels: tuple[str, ...] = (),
+    excluded_labels: tuple[str, ...] = (),
 ) -> bool:
+    """Match a value, dimension kind and (for named fields) its semantic drawing callout."""
     if value is None:
         return True
     if abs(value) < 1e-6:
         return True
     for token in inventory:
+        if required_labels and not _has_callout_label(token.raw, required_labels):
+            continue
+        if excluded_labels and _has_callout_label(token.raw, excluded_labels):
+            continue
         kind_matches = allowed_kinds is None or token.kind in allowed_kinds
         if kind_matches and abs(value - token.value) <= max(0.02, abs(token.value) * 0.001):
             return True
@@ -588,27 +651,58 @@ def _is_grounded(
             return True
     return False
 
+
 def ground_blueprint(bp: Blueprint, inventory: list[DimensionToken]) -> list[str]:
-    """Clear numeric blueprint fields that cannot be tied to the correct dimension type."""
+    """Clear fields lacking matching value, dimension kind and semantic callout evidence."""
     cleared: list[str] = []
     sketch = bp.base_sketch
-    sketch_kinds = {
-        "outer_diameter": {"diameter"},
-        "inner_bore_diameter": {"diameter"},
-        "width": {"linear"},
-        "length": {"linear"},
-        "thickness": {"linear"},
-        "wall_thickness": {"linear"},
+    sketch_rules: dict[str, tuple[set[str], tuple[str, ...], tuple[str, ...]]] = {
+        "outer_diameter": (
+            {"diameter"},
+            ("outer diameter", "outside diameter", "outer dia", "od"),
+            ("ring outer diameter", "outer ring diameter", "step outer diameter"),
+        ),
+        "inner_bore_diameter": (
+            {"diameter"},
+            ("inner bore diameter", "bore diameter", "bore dia", "bore", "inner diameter", "id"),
+            ("ring inner diameter", "inner ring diameter", "step inner diameter"),
+        ),
+        "width": (
+            {"linear"},
+            ("overall width", "width"),
+            ("slot width", "pocket width", "hole width"),
+        ),
+        "length": (
+            {"linear"},
+            ("overall length", "length"),
+            ("slot length", "pocket length", "hole length", "hole spacing", "bolt spacing"),
+        ),
+        "thickness": (
+            {"linear"},
+            ("overall thickness", "plate thickness", "thickness", "thk", "height"),
+            ("wall thickness", "sheet thickness", "rib thickness", "web thickness", "pocket depth", "hole depth"),
+        ),
+        "wall_thickness": (
+            {"linear"},
+            ("wall thickness", "sheet thickness"),
+            (),
+        ),
     }
-    for name, allowed_kinds in sketch_kinds.items():
+    for name, (allowed_kinds, required_labels, excluded_labels) in sketch_rules.items():
         value = getattr(sketch, name)
-        grounded = _is_grounded(value, inventory, allowed_kinds=allowed_kinds)
+        grounded = _is_grounded(
+            value,
+            inventory,
+            allowed_kinds=allowed_kinds,
+            required_labels=required_labels,
+            excluded_labels=excluded_labels,
+        )
         if name == "outer_diameter" and value is not None and not grounded:
-            grounded = any(
-                token.kind == "radius"
-                and re.search(r"\b(?:outer|outside)\s+radius\b", token.raw, re.IGNORECASE)
-                and abs(value - 2 * token.value) <= max(0.02, abs(token.value * 2) * 0.001)
-                for token in inventory
+            grounded = _is_grounded(
+                value / 2,
+                inventory,
+                allowed_kinds={"radius"},
+                required_labels=("outer radius", "outside radius"),
             )
         if not grounded:
             setattr(sketch, name, None)
@@ -655,17 +749,66 @@ def ground_blueprint(bp: Blueprint, inventory: list[DimensionToken]) -> list[str
     for index, feature in enumerate(bp.features):
         for name, allowed_kinds in feature_kinds.items():
             value = getattr(feature, name)
-            if not _is_grounded(value, inventory, allowed_kinds=allowed_kinds):
-                setattr(feature, name, None)
-                cleared.append(f"features[{index}].{name}={value:g}")
+            required_labels: tuple[str, ...] = ()
+            excluded_labels: tuple[str, ...] = ()
+            if name == "diameter" and feature.type in {"through_hole", "hole_pattern", "circular_pattern_cut"}:
+                required_labels = ("hole diameter", "hole dia", "dia of holes", "hole")
+            elif name == "diameter" and feature.type == "ring_step":
+                required_labels = ("ring outer diameter", "outer ring diameter", "step outer diameter")
+            elif name == "inner_diameter" and feature.type == "ring_step":
+                required_labels = ("ring inner diameter", "inner ring diameter", "step inner diameter")
+            elif name == "root_radius":
+                required_labels = ("root radius", "root circle radius", "dedendum radius")
+            elif name == "radius" and feature.type == "radial_cutout_pattern":
+                required_labels = ("gullet radius", "radial cutout radius", "cutout radius", "notch radius")
+            elif name == "radius" and feature.type == "fillet":
+                required_labels = ("fillet radius", "edge radius")
+            elif name == "length" and feature.type == "pocket":
+                required_labels = ("pocket length", "slot length")
+            elif name == "width" and feature.type == "pocket":
+                required_labels = ("pocket width", "slot width")
+            elif name == "depth" and feature.type == "pocket":
+                required_labels = ("pocket depth", "slot depth")
+            elif name == "depth" and feature.type in {"through_hole", "hole_pattern", "circular_pattern_cut"}:
+                required_labels = ("hole depth", "drill depth")
+            elif name == "depth" and feature.type == "ring_step":
+                required_labels = ("ring depth", "recess depth", "step depth")
+            if not _is_grounded(
+                value,
+                inventory,
+                allowed_kinds=allowed_kinds,
+                required_labels=required_labels,
+                excluded_labels=excluded_labels,
+            ):
+                if value is not None:
+                    setattr(feature, name, None)
+                    cleared.append(f"features[{index}].{name}={value:g}")
         value = feature.pitch_radius
-        if not _is_grounded(value, inventory, allowed_kinds={"radius"}, allow_half_diameter=True):
-            feature.pitch_radius = None
-            cleared.append(f"features[{index}].pitch_radius={value:g}")
+        if not _is_grounded(
+            value,
+            inventory,
+            allowed_kinds={"radius"},
+            allow_half_diameter=True,
+            required_labels=(
+                "pitch circle diameter",
+                "pitch circle dia",
+                "pcd",
+                "bcd",
+                "bolt circle diameter",
+                "pitch circle radius",
+                "bolt circle radius",
+                "pitch radius",
+            ),
+        ):
+            if value is not None:
+                feature.pitch_radius = None
+                cleared.append(f"features[{index}].pitch_radius={value:g}")
         if feature.angular_pitch is not None and not _is_grounded(feature.angular_pitch, inventory, allowed_kinds={"angle"}):
+            value = feature.angular_pitch
             feature.angular_pitch = None
             cleared.append(f"features[{index}].angular_pitch={value:g}")
         if feature.start_angle and not _is_grounded(feature.start_angle, inventory, allowed_kinds={"angle"}):
+            value = feature.start_angle
             feature.start_angle = 0.0
             cleared.append(f"features[{index}].start_angle={value:g}")
         x_value = feature.x
@@ -698,26 +841,48 @@ def _labeled_radius_value(text: str, labels: list[str]) -> float | None:
     return float(match.group(1).replace(",", ".")) if match else None
 
 
-def _labeled_value(text: str, labels: list[str]) -> float | None:
-    """Return a number only when adjacent to a recognized dimension label."""
+def _labeled_callout(text: str, labels: list[str]) -> tuple[float, str] | None:
+    """Return the normalized value and the actual matched source callout label."""
     label_group = "(?:" + "|".join(re.escape(label) for label in labels) + ")"
     pattern = re.compile(
-        rf"(?<![A-Za-z]){label_group}(?![A-Za-z])\s*(?:[:=]|is|of)?\s*[ØøΦ⌀∅]?\s*(\d{{1,7}}(?:[.,]\d{{1,4}})?)\s*(mm|cm|inches?|inch|in)?\b",
+        rf"(?<![A-Za-z])(?P<label>{label_group})(?![A-Za-z])\s*(?:[:=]|is|of)?\s*[ØøΦ⌀∅]?\s*(?P<number>\d{{1,7}}(?:[.,]\d{{1,4}})?)\s*(?P<unit>mm|cm|inches?|inch|in)?\b",
         re.IGNORECASE,
     )
-    match = pattern.search(text[:50_000])
-    if not match:
-        # Also support forms such as 'Ø155 OD'.
-        reverse = re.compile(
-            rf"[ØøΦ⌀∅]\s*(\d{{1,7}}(?:[.,]\d{{1,4}})?)\s*(?:mm\s*)?{label_group}(?![A-Za-z])",
-            re.IGNORECASE,
-        ).search(text[:50_000])
-        if not reverse:
-            return None
-        raw_number, raw_unit = reverse.group(1), "mm"
-    else:
-        raw_number, raw_unit = match.group(1), match.group(2) or "mm"
-    return float(raw_number.replace(",", ".")) * UNIT_MULTIPLIER.get(raw_unit.lower(), 1.0)
+    source = text[:50_000]
+
+    def ring_scoped(match: re.Match[str]) -> bool:
+        label = match.group("label")
+        preceding = source[:match.start("label")]
+        return not label.lower().startswith("ring ") and bool(
+            re.search(r"\bring\s*$", preceding, re.IGNORECASE)
+        )
+
+    for match in pattern.finditer(source):
+        if ring_scoped(match):
+            continue
+        raw_unit = match.group("unit") or "mm"
+        value = float(match.group("number").replace(",", ".")) * UNIT_MULTIPLIER.get(raw_unit.lower(), 1.0)
+        return value, match.group(0).strip()
+
+    reverse = re.compile(
+        rf"[ØøΦ⌀∅]\s*(?P<number>\d{{1,7}}(?:[.,]\d{{1,4}})?)\s*(?:mm\s*)?(?P<label>{label_group})(?![A-Za-z])",
+        re.IGNORECASE,
+    )
+    for match in reverse.finditer(source):
+        if ring_scoped(match):
+            continue
+        value = float(match.group("number").replace(",", "."))
+        return value, match.group(0).strip()
+
+    return None
+
+
+def _labeled_value(text: str, labels: list[str]) -> float | None:
+    """Compatibility wrapper for callers that need only the normalized numeric value."""
+    callout = _labeled_callout(text, labels)
+    return callout[0] if callout is not None else None
+
+
 
 
 def _heuristic_blueprint(raw_text: str, inventory: list[DimensionToken]) -> Blueprint:
