@@ -555,7 +555,8 @@ def _dimension_inventory(
             (["length", "overall length"], "linear"),
             (["overall thickness", "plate thickness", "thickness", "thk", "height"], "linear"),
             (["wall thickness", "sheet thickness"], "linear"),
-        )        for page_index, page_text in enumerate(page_texts[:MAX_BLUEPRINT_PAGES], start=1):
+        )
+        for page_index, page_text in enumerate(page_texts[:MAX_BLUEPRINT_PAGES], start=1):
             if not isinstance(page_text, str):
                 continue
             for match in DIMENSION_TOKEN_RE.finditer(page_text[:20_000]):
