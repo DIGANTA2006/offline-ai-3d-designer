@@ -59,6 +59,8 @@ export default async function ProjectDetailPage({ params }: Props) {
         return [{
           index,
           name,
+          type: typeof record.type === "string" ? record.type : undefined,
+          contentType: typeof record.contentType === "string" ? record.contentType : undefined,
           ocrResult: saved?.spec ? saved.spec as {
             rawText?: string;
             confidence?: number;
