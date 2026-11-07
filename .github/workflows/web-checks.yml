@@ -72,6 +72,8 @@ jobs:
         run: npm run test:subscription-policy
       - name: Project printability API route tests
         run: npm run test:printability-route
+      - name: Drawing generation saved-blueprint guard
+        run: npm run test:drawing-generation-guard
       - name: ESLint
         run: npm run lint
       - name: TypeScript typecheck
