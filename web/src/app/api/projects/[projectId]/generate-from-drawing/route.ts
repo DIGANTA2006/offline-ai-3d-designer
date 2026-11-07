@@ -188,6 +188,15 @@ export async function POST(request: Request, { params }: Context) {
     if (reviewedBlueprint && (!storedBlueprint || typeof storedBlueprint !== "object" || Array.isArray(storedBlueprint))) {
       throw new RouteError("This drawing has no saved structured blueprint. Click Analyze again before editing blueprint fields.", 409);
     }
+    // Drawing-derived CAD must come from the drawing's saved structured blueprint. Without one, the Python
+    // service would parse the typed description instead, silently ignoring the drawing while the version
+    // stays labelled as drawing-derived. Text-only parts belong on the text-to-CAD route.
+    if (!storedBlueprint || typeof storedBlueprint !== "object" || Array.isArray(storedBlueprint)) {
+      throw new RouteError(
+        "This drawing has no saved structured blueprint, so CAD cannot be generated from it. Analyze the drawing and review its extracted fields first.",
+        409,
+      );
+    }
     // Do not let a client silently erase an extraction-time unsupported-geometry flag.
     if (
       storedBlueprint &&
@@ -279,6 +288,8 @@ export async function POST(request: Request, { params }: Context) {
       rejected: storedSpec.rejected ?? [],
       ocrResults: Array.isArray(storedSpec.ocrResults) ? storedSpec.ocrResults : [],
       sourceOCR: ocrResult.spec,
+      // Provenance: this version was generated from the drawing's saved blueprint, not from free text.
+      generationSource: "drawing_blueprint",
       reviewedDescription: reviewedDescription || null,
       reviewedBlueprint: reviewedBlueprint ?? storedBlueprint ?? null,
       partSpec: cad.partSpec ?? {},
