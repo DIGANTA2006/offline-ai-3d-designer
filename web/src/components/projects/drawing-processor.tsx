@@ -123,7 +123,7 @@ function numericInputValue(raw: string): number | null {
 function getProvisionalDefaultFields(blueprint: Blueprint | null): Array<{ field: DefaultFieldKey; label: string; value: number | null }> {
   if (!blueprint) return [];
   const fields: Array<{ field: DefaultFieldKey; label: string; value: number | null }> = [];
-  if (blueprint.base_sketch.thickness_is_default) {
+  if (blueprint.primary_body_type !== "revolved_profile" && blueprint.base_sketch.thickness_is_default) {
     fields.push({
       field: "base_sketch.thickness",
       label: "height / depth",
@@ -132,7 +132,7 @@ function getProvisionalDefaultFields(blueprint: Blueprint | null): Array<{ field
         : null,
     });
   }
-  if (blueprint.base_sketch.wall_thickness_is_default) {
+  if (blueprint.primary_body_type === "sheet_enclosure" && blueprint.base_sketch.wall_thickness_is_default) {
     fields.push({
       field: "base_sketch.wall_thickness",
       label: "enclosure wall thickness",
@@ -505,7 +505,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
                     <fieldset className="mt-4 space-y-2 rounded-lg border border-amber-400 bg-amber-50/60 p-3 text-sm">
                       <legend className="px-1 font-semibold text-amber-950">Confirm provisional dimensions before export</legend>
                       <p className="text-xs leading-5 text-amber-950">
-                        These values were supplied by the CAD system because the drawing did not provide them. They are not drawing-derived measurements. Review the value and confirm each one before it can affect the exported model.
+                        These fields were initially filled by the CAD system because the drawing did not provide them. You may adjust a value, but it remains unverified until you confirm the exact current value below. It is not a drawing-derived measurement.
                       </p>
                       {provisionalDefaultFields.map((item) => (
                         <label key={item.field} className="flex items-start gap-2 text-amber-950">
@@ -517,7 +517,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
                             onChange={(event) => toggleDefaultConfirmation(item.field, event.target.checked)}
                           />
                           <span>
-                            I have reviewed and approve the provisional {item.label} value of{" "}
+                            I have reviewed and approve the current provisional / manually adjusted {item.label} value of{" "}
                             <strong>{item.value === null ? "missing / invalid" : item.value + " mm"}</strong>{" "}
                             for this model.
                           </span>
