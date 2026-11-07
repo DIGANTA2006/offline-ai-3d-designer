@@ -135,6 +135,21 @@ def test_root_radius_cannot_be_grounded_from_outer_radius():
     assert "features[0].root_radius=63.4" in cleared
 
 
+def test_explicit_pitch_radius_callout_is_not_lost_by_half_diameter_guard():
+    inventory = _dimension_inventory("PITCH RADIUS R40", {"dimensions": {}}, 1)
+    blueprint = Blueprint(
+        primary_body_type="rotational_flange",
+        base_sketch=BaseSketch(profile="circle"),
+        features=[Feature(type="hole_pattern", count=6, pitch_radius=40)],
+    )
+
+    cleared = ground_blueprint(blueprint, inventory)
+
+    assert any(token.kind == "radius" and "pitch radius" in token.raw.lower() for token in inventory)
+    assert blueprint.features[0].pitch_radius == 40
+    assert "features[0].pitch_radius=40" not in cleared
+
+
 def test_ring_step_callouts_do_not_populate_base_body_diameters():
     inventory = _dimension_inventory(
         "RING OUTER DIAMETER 90 mm RING INNER DIAMETER 70 mm RECESS DEPTH 5 mm",
