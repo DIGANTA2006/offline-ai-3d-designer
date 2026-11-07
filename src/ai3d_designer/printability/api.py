@@ -142,7 +142,7 @@ def check_drawing_blueprint(request: BlueprintPrintabilityCheckRequest):
     spec_metadata = PartSpec(name=request.blueprint.part_name)
     bed_size = tuple(request.bedSize) if request.bedSize and len(request.bedSize) == 3 else None
     checker = PrintabilityChecker(thresholds=request.thresholds, bed_size=bed_size)
-    results = checker.check_all(spec_metadata, part_override=solid)
+    results = checker.check_all(spec_metadata, part_override=solid, blueprint_override=request.blueprint)
     summary = {
         "total": len(results),
         "pass": sum(1 for result in results if result.status == CheckStatus.PASS),
@@ -160,6 +160,8 @@ def check_drawing_blueprint(request: BlueprintPrintabilityCheckRequest):
 
     notices = [
         "Checks ran against the solid built from the saved drawing blueprint.",
+        "Hole-size checks use explicit saved blueprint cut features; outer cylindrical walls are not treated as holes.",
+        "Hole-to-edge clearance is evaluated only for circular flanges and rectangular prismatic boxes; unsupported profiles are reported as skipped.",
         "Affected feature IDs and one-click fixes are not available for drawing blueprints yet.",
         "These checks are guidance and do not prove that the drawing was interpreted correctly.",
         *build_warnings,

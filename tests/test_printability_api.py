@@ -174,6 +174,59 @@ def test_drawing_blueprint_printability_checks_the_generated_solid_without_fakin
     assert all(check["available_fixes"] == [] for check in payload["checks"])
 
 
+def test_blueprint_printability_skips_hole_checks_when_no_holes_are_declared():
+    from ai3d_designer.drawing_to_cad.blueprint import Blueprint, BaseSketch
+    from ai3d_designer.drawing_to_cad.generator import build_part
+    from ai3d_designer.printability.checks import PrintabilityChecker, CheckStatus
+
+    blueprint = Blueprint(
+        part_name="Solid round blank",
+        primary_body_type="rotational_flange",
+        base_sketch=BaseSketch(profile="circle", outer_diameter=40, thickness=8),
+        features=[],
+        needs_review=False,
+    )
+    solid, _ = build_part(blueprint)
+    checker = PrintabilityChecker()
+    results = checker.check_all(
+        PartSpec(name=blueprint.part_name),
+        part_override=solid,
+        blueprint_override=blueprint,
+    )
+    by_id = {result.check_id: result for result in results}
+
+    # The outside cylindrical wall is not a hole and must not be reported as one.
+    assert by_id["hole_size"].status == CheckStatus.SKIPPED
+    assert by_id["hole_edge_distance"].status == CheckStatus.SKIPPED
+
+
+def test_blueprint_hole_to_edge_uses_saved_feature_position_and_outer_diameter():
+    from ai3d_designer.drawing_to_cad.blueprint import Blueprint, BaseSketch, Feature
+    from ai3d_designer.drawing_to_cad.generator import build_part
+    from ai3d_designer.printability.checks import PrintabilityChecker, CheckStatus
+
+    blueprint = Blueprint(
+        part_name="Edge clearance test flange",
+        primary_body_type="rotational_flange",
+        base_sketch=BaseSketch(profile="circle", outer_diameter=40, thickness=8),
+        features=[Feature(type="through_hole", diameter=4, x=17.5, y=0)],
+        needs_review=False,
+    )
+    solid, _ = build_part(blueprint)
+    checker = PrintabilityChecker()
+    results = checker.check_all(
+        PartSpec(name=blueprint.part_name),
+        part_override=solid,
+        blueprint_override=blueprint,
+    )
+    by_id = {result.check_id: result for result in results}
+
+    assert by_id["hole_size"].status == CheckStatus.PASS
+    assert by_id["hole_size"].value == 4
+    assert by_id["hole_edge_distance"].status == CheckStatus.FAIL
+    assert by_id["hole_edge_distance"].value == 0.5
+
+
 def test_drawing_blueprint_printability_rejects_unresolved_body(monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("CAD_SERVICE_TOKEN", "printability-test-token")

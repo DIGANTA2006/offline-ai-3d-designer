@@ -26,6 +26,7 @@ from OCP.BRepBuilderAPI import BRepBuilderAPI_Copy
 
 from ai3d_designer.core.geometry.engine import create_part_from_spec
 from ai3d_designer.core.spec.models import PartSpec, UnitSystem, PrimitiveType, OperationType
+from ai3d_designer.drawing_to_cad.blueprint import Blueprint
 
 
 class CheckStatus(str, Enum):
@@ -93,7 +94,12 @@ class PrintabilityChecker:
         self.thresholds = {**self.DEFAULT_THRESHOLDS, **(thresholds or {})}
         self.bed_size = bed_size or self.DEFAULT_BED_SIZE
     
-    def check_all(self, spec: PartSpec, part_override: Optional[Part] = None) -> List[CheckResult]:
+    def check_all(
+        self,
+        spec: PartSpec,
+        part_override: Optional[Part] = None,
+        blueprint_override: Optional[Blueprint] = None,
+    ) -> List[CheckResult]:
         """Run all printability checks on a canonical spec or an already-validated solid.
 
         Drawing blueprints are built by the drawing-to-CAD generator. Passing that
@@ -116,8 +122,13 @@ class PrintabilityChecker:
         # Check 1: Minimum wall thickness
         results.append(self._check_min_wall_thickness(part, spec))
         
-        # Check 2: Hole size
-        results.append(self._check_hole_size(part, spec))
+        # Check 2: Hole size. Drawing blueprints carry their own explicit cut-feature fields;
+        # do not infer holes from every cylindrical face (which also includes outer walls).
+        results.append(
+            self._check_blueprint_hole_size(blueprint_override)
+            if blueprint_override is not None
+            else self._check_hole_size(part, spec)
+        )
         
         # Check 3: Overhang angle
         results.append(self._check_overhang_angle(part, spec))
@@ -131,8 +142,13 @@ class PrintabilityChecker:
         # Check 6: Base contact area
         results.append(self._check_base_contact(part, spec))
         
-        # Check 7: Hole-to-edge distance
-        results.append(self._check_hole_edge_distance(part, spec))
+        # Check 7: Hole-to-edge distance. Use the same saved blueprint fields that built
+        # the solid; unsupported profile types are explicitly skipped rather than guessed.
+        results.append(
+            self._check_blueprint_hole_edge_distance(blueprint_override)
+            if blueprint_override is not None
+            else self._check_hole_edge_distance(part, spec)
+        )
         
         # Check 8: Flatness
         results.append(self._check_flatness(part, spec))
@@ -200,6 +216,132 @@ class PrintabilityChecker:
             affected_features=affected,
         )
     
+    @staticmethod
+    def _blueprint_holes(blueprint: Blueprint) -> List[Tuple[float, float, float]]:
+        """Expand supported drawing-blueprint hole features into (diameter, x, y) mm tuples."""
+        holes: List[Tuple[float, float, float]] = []
+        for feature in blueprint.features:
+            if feature.type in {"through_hole", "pocket"} and feature.diameter is not None:
+                holes.append((float(feature.diameter), float(feature.x), float(feature.y)))
+                continue
+            if feature.type in {"hole_pattern", "circular_pattern_cut"}:
+                if feature.diameter is None or feature.pitch_radius is None or feature.count < 2:
+                    continue
+                step = 360.0 / feature.count
+                for number in range(feature.count):
+                    angle = (feature.start_angle + number * step) * pi / 180.0
+                    x = feature.x + feature.pitch_radius * cos(angle)
+                    y = feature.y + feature.pitch_radius * sin(angle)
+                    holes.append((float(feature.diameter), x, y))
+        return holes
+
+    def _check_blueprint_hole_size(self, blueprint: Blueprint) -> CheckResult:
+        """Check only explicitly modelled circular cuts in the saved drawing blueprint."""
+        holes = self._blueprint_holes(blueprint)
+        threshold = self.thresholds["min_hole_diameter"]
+        if not holes:
+            return CheckResult(
+                check_id="hole_size",
+                name="Minimum Hole Diameter",
+                status=CheckStatus.SKIPPED,
+                threshold=threshold,
+                unit="mm",
+                details="No explicitly modelled circular hole or pocket features were found in the saved drawing blueprint.",
+                affected_features=[],
+            )
+
+        min_hole = min(item[0] for item in holes)
+        status = CheckStatus.PASS if min_hole >= threshold else CheckStatus.FAIL
+        return CheckResult(
+            check_id="hole_size",
+            name="Minimum Hole Diameter",
+            status=status,
+            value=round(min_hole, 3),
+            threshold=threshold,
+            unit="mm",
+            details=f"Smallest explicitly modelled circular cut: {min_hole:.3f} mm across {len(holes)} position(s) (minimum: {threshold} mm)",
+            affected_features=[],
+        )
+
+    def _check_blueprint_hole_edge_distance(self, blueprint: Blueprint) -> CheckResult:
+        """Measure circular-cut clearance against supported base-sketch perimeters."""
+        holes = self._blueprint_holes(blueprint)
+        threshold = self.thresholds["min_hole_edge_distance"]
+        if not holes:
+            return CheckResult(
+                check_id="hole_edge_distance",
+                name="Hole-to-Edge Distance",
+                status=CheckStatus.SKIPPED,
+                threshold=threshold,
+                unit="mm",
+                details="No explicitly modelled circular hole or pocket features were found in the saved drawing blueprint.",
+                affected_features=[],
+            )
+
+        sketch = blueprint.base_sketch
+        clearances: List[float] = []
+        if blueprint.primary_body_type == "rotational_flange" and sketch.profile == "circle" and sketch.outer_diameter:
+            outer_radius = sketch.outer_diameter / 2.0
+            bore_radius = (sketch.inner_bore_diameter or 0.0) / 2.0
+            for _diameter, x, y in holes:
+                hole_radius = _diameter / 2.0
+                centre_radius = sqrt(x * x + y * y)
+                clearances.append(outer_radius - centre_radius - hole_radius)
+                if bore_radius > 0:
+                    clearances.append(centre_radius - bore_radius - hole_radius)
+        elif (
+            blueprint.primary_body_type == "prismatic_box"
+            and sketch.profile == "rectangle"
+            and sketch.length
+            and sketch.width
+        ):
+            half_length = sketch.length / 2.0
+            half_width = sketch.width / 2.0
+            for _diameter, x, y in holes:
+                hole_radius = _diameter / 2.0
+                clearances.append(half_length - abs(x) - hole_radius)
+                clearances.append(half_width - abs(y) - hole_radius)
+        else:
+            return CheckResult(
+                check_id="hole_edge_distance",
+                name="Hole-to-Edge Distance",
+                status=CheckStatus.SKIPPED,
+                threshold=threshold,
+                unit="mm",
+                details=(
+                    "Hole-to-edge clearance is not inferred for this body/profile type yet. "
+                    "Supported blueprint perimeter checks are circular rotational flanges and rectangular prismatic boxes."
+                ),
+                affected_features=[],
+            )
+
+        if not clearances:
+            return CheckResult(
+                check_id="hole_edge_distance",
+                name="Hole-to-Edge Distance",
+                status=CheckStatus.SKIPPED,
+                threshold=threshold,
+                unit="mm",
+                details="The saved blueprint did not provide enough perimeter dimensions to evaluate hole clearance.",
+                affected_features=[],
+            )
+
+        min_distance = min(clearances)
+        status = CheckStatus.PASS if min_distance >= threshold else CheckStatus.FAIL
+        return CheckResult(
+            check_id="hole_edge_distance",
+            name="Hole-to-Edge Distance",
+            status=status,
+            value=round(min_distance, 3),
+            threshold=threshold,
+            unit="mm",
+            details=(
+                f"Minimum circular-cut clearance to the supported base perimeter: {min_distance:.3f} mm "
+                f"across {len(holes)} cut position(s) (minimum: {threshold} mm)"
+            ),
+            affected_features=[],
+        )
+
     def _check_hole_size(self, part: Part, spec: PartSpec) -> CheckResult:
         """
         Check minimum hole diameter by analyzing cylindrical faces
