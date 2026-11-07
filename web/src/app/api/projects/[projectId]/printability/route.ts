@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 type Context = { params: Promise<{ projectId: string }> };
-type Operation = "check" | "fix";
+type Operation = "check" | "fix" | "checkBlueprint";
 
 const MAX_REQUEST_BYTES = 8 * 1024;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
@@ -74,7 +74,11 @@ async function readLimitedText(response: Response): Promise<string> {
   }
 }
 
-function getPartSpec(value: unknown): Record<string, unknown> {
+type SavedGeometry =
+  | { kind: "partSpec"; value: Record<string, unknown>; name: string }
+  | { kind: "blueprint"; value: Record<string, unknown>; name: string };
+
+function getSavedGeometry(value: unknown): SavedGeometry {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new RouteError("This project version has no saved CAD specification.", 422);
   }
@@ -84,24 +88,50 @@ function getPartSpec(value: unknown): Record<string, unknown> {
     ? record.partSpec as Record<string, unknown>
     : record;
 
+  // Legacy text-to-CAD projects use the canonical PartSpec contract.
   if (
-    typeof candidate.name !== "string" ||
-    !Array.isArray(candidate.features) ||
-    candidate.features.length === 0
+    typeof candidate.name === "string" &&
+    Array.isArray(candidate.features) &&
+    candidate.features.length > 0
   ) {
-    throw new RouteError(
-      "This project version does not contain a supported, saved PartSpec. Generate CAD before running printability checks.",
-      422,
-    );
+    return { kind: "partSpec", value: candidate, name: candidate.name };
   }
-  return candidate;
+
+  // Drawing-to-CAD projects intentionally persist a distinct Blueprint. Do not
+  // relabel it as a PartSpec; send it to the blueprint-native geometry checker.
+  const blueprintValue = record.reviewedBlueprint && typeof record.reviewedBlueprint === "object" && !Array.isArray(record.reviewedBlueprint)
+    ? record.reviewedBlueprint as Record<string, unknown>
+    : candidate;
+  const allowedBodies = ["rotational_flange", "prismatic_box", "sheet_enclosure", "revolved_profile"];
+  const sketch = blueprintValue.base_sketch;
+  if (
+    typeof blueprintValue.part_name === "string" &&
+    typeof blueprintValue.primary_body_type === "string" &&
+    allowedBodies.includes(blueprintValue.primary_body_type) &&
+    !!sketch && typeof sketch === "object" && !Array.isArray(sketch) &&
+    Array.isArray(blueprintValue.features)
+  ) {
+    const unsupported = blueprintValue.unsupported_geometry;
+    if (Array.isArray(unsupported) && unsupported.length > 0) {
+      throw new RouteError(
+        "This drawing contains unsupported geometry. It cannot be treated as a printable model.",
+        422,
+      );
+    }
+    return { kind: "blueprint", value: blueprintValue, name: blueprintValue.part_name };
+  }
+
+  throw new RouteError(
+    "This project version does not contain a supported saved CAD specification or resolved drawing blueprint.",
+    422,
+  );
 }
 
 async function loadOwnedVersion(
   projectId: string,
   userId: string,
   versionId?: string,
-): Promise<{ id: string; version: number; spec: Record<string, unknown> }> {
+): Promise<{ id: string; version: number; geometry: SavedGeometry }> {
   const project = await prisma.project.findFirst({
     where: { id: projectId, userId },
     select: { id: true },
@@ -127,7 +157,7 @@ async function loadOwnedVersion(
   return {
     id: version.id,
     version: version.version,
-    spec: getPartSpec(version.spec),
+    geometry: getSavedGeometry(version.spec),
   };
 }
 
@@ -162,7 +192,11 @@ async function callCadService(operation: Operation, payload: Record<string, unkn
     throw new RouteError("CAD service token is not configured on the web deployment.", 503);
   }
 
-  const path = operation === "check" ? "/api/v1/printability/check" : "/api/v1/printability/fix";
+  const path = operation === "check"
+    ? "/api/v1/printability/check"
+    : operation === "checkBlueprint"
+      ? "/api/v1/printability/check-blueprint"
+      : "/api/v1/printability/fix";
   const endpoint = new URL(path, config.baseUrl);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), BACKEND_TIMEOUT_MS);
@@ -246,12 +280,15 @@ export async function GET(request: Request, { params }: Context) {
     if (versionId && versionId.length > 128) throw new RouteError("Invalid project version.", 400);
 
     const version = await loadOwnedVersion(projectId, user.id, versionId);
-    const result = await callCadService("check", { partSpec: version.spec });
+    const result = version.geometry.kind === "blueprint"
+      ? await callCadService("checkBlueprint", { blueprint: version.geometry.value })
+      : await callCadService("check", { partSpec: version.geometry.value });
     return NextResponse.json({
       ...result,
       versionId: version.id,
       versionNumber: version.version,
-      partSpecName: version.spec.name,
+      partSpecName: version.geometry.name,
+      sourceGeometryType: version.geometry.kind,
       limitations: [
         "The current default bed size is 220 × 220 × 250 mm unless a printer-specific bed size is supplied.",
         "These deterministic FDM checks are guidance, not printer/material certification or a guarantee of a successful physical print.",
@@ -293,8 +330,14 @@ export async function POST(request: Request, { params }: Context) {
     }
 
     const version = await loadOwnedVersion(projectId, user.id, versionId);
+    if (version.geometry.kind === "blueprint") {
+      throw new RouteError(
+        "One-click fixes for drawing blueprints are not enabled yet. Review the checks and edit the blueprint before generating a new version.",
+        409,
+      );
+    }
     const result = await callCadService("fix", {
-      partSpec: version.spec,
+      partSpec: version.geometry.value,
       action: body.action,
       checkId: body.checkId,
       ...(body.parameters ? { parameters: body.parameters } : {}),

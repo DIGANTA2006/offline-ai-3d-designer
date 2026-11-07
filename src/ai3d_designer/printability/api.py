@@ -8,6 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from ai3d_designer.core.spec.models import PartSpec
+from ai3d_designer.drawing_to_cad.blueprint import Blueprint
+from ai3d_designer.drawing_to_cad.generator import GeometryError, build_part
 from ai3d_designer.printability.checks import (
     PrintabilityChecker,
     CheckResult,
@@ -41,6 +43,13 @@ class PrintabilityCheckResponse(BaseModel):
     checks: List[Dict[str, Any]]
     summary: Dict[str, int]
     error: Optional[str] = None
+    notices: List[str] = Field(default_factory=list)
+
+
+class BlueprintPrintabilityCheckRequest(BaseModel):
+    blueprint: Blueprint
+    thresholds: Optional[Dict[str, float]] = None
+    bedSize: Optional[List[float]] = None
 
 
 class FixRequest(BaseModel):
@@ -110,6 +119,56 @@ def check_printability(request: PrintabilityCheckRequest):
         success=True,
         checks=checks_with_explanations,
         summary=summary,
+    )
+
+
+@router.post("/check-blueprint", response_model=PrintabilityCheckResponse)
+def check_drawing_blueprint(request: BlueprintPrintabilityCheckRequest):
+    """Run geometry-based printability checks on the exact drawing-generated solid.
+
+    Blueprint feature proposals are not converted to or mislabeled as the legacy
+    canonical PartSpec. This route is read-only; blueprint fix proposals are not
+    offered until they can be applied and rebuilt safely.
+    """
+    try:
+        solid, build_warnings = build_part(request.blueprint)
+    except GeometryError as exc:
+        raise HTTPException(status_code=422, detail=f"Drawing blueprint cannot be checked: {exc}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="Drawing blueprint could not be built for printability checks") from exc
+
+    # Reuse geometry-based checks against the already-built drawing solid. There
+    # is deliberately no fake feature mapping to the legacy PartSpec schema.
+    spec_metadata = PartSpec(name=request.blueprint.part_name)
+    bed_size = tuple(request.bedSize) if request.bedSize and len(request.bedSize) == 3 else None
+    checker = PrintabilityChecker(thresholds=request.thresholds, bed_size=bed_size)
+    results = checker.check_all(spec_metadata, part_override=solid)
+    summary = {
+        "total": len(results),
+        "pass": sum(1 for result in results if result.status == CheckStatus.PASS),
+        "fail": sum(1 for result in results if result.status == CheckStatus.FAIL),
+        "warning": sum(1 for result in results if result.status == CheckStatus.WARNING),
+        "skipped": sum(1 for result in results if result.status == CheckStatus.SKIPPED),
+    }
+    checks_with_explanations = []
+    for result in results:
+        check_dict = result.to_dict()
+        check_dict["explanation"] = get_explanation(result.check_id)
+        # Drawing-blueprint mutations need their own validated geometry workflow.
+        check_dict["available_fixes"] = []
+        checks_with_explanations.append(check_dict)
+
+    notices = [
+        "Checks ran against the solid built from the saved drawing blueprint.",
+        "Affected feature IDs and one-click fixes are not available for drawing blueprints yet.",
+        "These checks are guidance and do not prove that the drawing was interpreted correctly.",
+        *build_warnings,
+    ]
+    return PrintabilityCheckResponse(
+        success=True,
+        checks=checks_with_explanations,
+        summary=summary,
+        notices=list(dict.fromkeys(notices))[:20],
     )
 
 

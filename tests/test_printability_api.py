@@ -42,10 +42,35 @@ def _box_spec() -> dict:
     return spec.model_dump(mode="json")
 
 
+def _flange_blueprint() -> dict:
+    return {
+        "part_name": "API test flange",
+        "primary_body_type": "rotational_flange",
+        "base_sketch": {
+            "profile": "circle",
+            "outer_diameter": 40.0,
+            "inner_bore_diameter": 6.0,
+            "thickness": 8.0,
+        },
+        "features": [
+            {
+                "type": "through_hole",
+                "count": 1,
+                "diameter": 4.0,
+                "x": 12.0,
+                "y": 0.0,
+            }
+        ],
+        "unsupported_geometry": [],
+        "needs_review": False,
+    }
+
+
 def _request_cases():
     spec = _box_spec()
     return [
         ("POST", "/api/v1/printability/check", {"partSpec": spec}),
+        ("POST", "/api/v1/printability/check-blueprint", {"blueprint": _flange_blueprint()}),
         (
             "POST",
             "/api/v1/printability/fix",
@@ -129,3 +154,36 @@ def test_authenticated_printability_check_rejects_malformed_partspec(monkeypatch
         headers={"Authorization": "Bearer printability-test-token"},
     )
     assert response.status_code == 422
+
+
+def test_drawing_blueprint_printability_checks_the_generated_solid_without_faking_a_partspec(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("CAD_SERVICE_TOKEN", "printability-test-token")
+    client = TestClient(cad_service.app)
+
+    response = client.post(
+        "/api/v1/printability/check-blueprint",
+        json={"blueprint": _flange_blueprint()},
+        headers={"Authorization": "Bearer printability-test-token"},
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["success"] is True
+    assert payload["summary"]["total"] >= 8
+    assert payload["notices"]
+    assert all(check["available_fixes"] == [] for check in payload["checks"])
+
+
+def test_drawing_blueprint_printability_rejects_unresolved_body(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("CAD_SERVICE_TOKEN", "printability-test-token")
+    client = TestClient(cad_service.app)
+
+    blueprint = _flange_blueprint()
+    blueprint["primary_body_type"] = None
+    response = client.post(
+        "/api/v1/printability/check-blueprint",
+        json={"blueprint": blueprint},
+        headers={"Authorization": "Bearer printability-test-token"},
+    )
+    assert response.status_code == 422, response.text
