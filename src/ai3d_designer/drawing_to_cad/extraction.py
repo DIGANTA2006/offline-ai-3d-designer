@@ -387,9 +387,6 @@ def _semantic_callout_key(raw: str) -> str:
         ("root_radius", ("root circle radius", "root radius", "dedendum radius")),
         ("gullet_radius", ("gullet radius", "radial cutout radius", "cutout radius", "notch radius")),
         ("wall_thickness", ("wall thickness", "sheet thickness")),
-        ("width", ("overall width", "width")),
-        ("length", ("overall length", "length")),
-        ("thickness", ("overall thickness", "plate thickness", "thickness", "thk", "height")),
         ("ring_outer_diameter", ("ring outer diameter", "outer ring diameter", "step outer diameter")),
         ("ring_inner_diameter", ("ring inner diameter", "inner ring diameter", "step inner diameter")),
         ("fillet_radius", ("fillet radius", "edge radius")),
@@ -398,6 +395,9 @@ def _semantic_callout_key(raw: str) -> str:
         ("ring_depth", ("ring depth", "recess depth", "step depth")),
         ("pocket_length", ("pocket length", "slot length")),
         ("pocket_width", ("pocket width", "slot width")),
+        ("width", ("overall width", "width")),
+        ("length", ("overall length", "length")),
+        ("thickness", ("overall thickness", "plate thickness", "thickness", "thk", "height")),
     )
     for key, labels in label_groups:
         if _has_callout_label(raw, labels):
@@ -491,6 +491,12 @@ def _dimension_inventory(
         (["inner bore diameter", "bore diameter", "bore dia", "inner diameter", "id"], "diameter"),
         (["pitch circle diameter", "pitch circle dia", "pcd", "bcd", "bolt circle diameter"], "diameter"),
         (["hole diameter", "hole dia", "dia of holes"], "diameter"),
+        (["ring outer diameter", "outer ring diameter", "step outer diameter"], "diameter"),
+        (["ring inner diameter", "inner ring diameter", "step inner diameter"], "diameter"),
+        (["fillet radius", "edge radius"], "radius"),
+        (["pocket depth", "slot depth", "hole depth", "drill depth", "ring depth", "recess depth", "step depth"], "linear"),
+        (["pocket length", "slot length"], "linear"),
+        (["pocket width", "slot width"], "linear"),
         (["width", "overall width"], "linear"),
         (["length", "overall length"], "linear"),
         (["overall thickness", "plate thickness", "thickness", "thk", "height"], "linear"),
@@ -539,6 +545,12 @@ def _dimension_inventory(
             (["inner bore diameter", "bore diameter", "bore dia", "inner diameter", "id"], "diameter"),
             (["pitch circle diameter", "pitch circle dia", "pcd", "bcd", "bolt circle diameter"], "diameter"),
             (["hole diameter", "hole dia", "dia of holes"], "diameter"),
+        (["ring outer diameter", "outer ring diameter", "step outer diameter"], "diameter"),
+        (["ring inner diameter", "inner ring diameter", "step inner diameter"], "diameter"),
+        (["fillet radius", "edge radius"], "radius"),
+        (["pocket depth", "slot depth", "hole depth", "drill depth", "ring depth", "recess depth", "step depth"], "linear"),
+        (["pocket length", "slot length"], "linear"),
+        (["pocket width", "slot width"], "linear"),
             (["width", "overall width"], "linear"),
             (["length", "overall length"], "linear"),
             (["overall thickness", "plate thickness", "thickness", "thk", "height"], "linear"),
@@ -792,32 +804,20 @@ def ground_blueprint(bp: Blueprint, inventory: list[DimensionToken]) -> list[str
             if value is not None:
                 feature.pitch_radius = None
                 cleared.append(f"features[{index}].pitch_radius={value:g}")
-        if feature.angular_pitch is not None and not _is_grounded(
-            feature.angular_pitch, inventory, allowed_kinds={"angle"},
-            required_labels=("angular pitch", "hole spacing angle", "pattern angle"),
-        ):
+        if feature.angular_pitch is not None and not _is_grounded(feature.angular_pitch, inventory, allowed_kinds={"angle"}):
             value = feature.angular_pitch
             feature.angular_pitch = None
             cleared.append(f"features[{index}].angular_pitch={value:g}")
-        if feature.start_angle and not _is_grounded(
-            feature.start_angle, inventory, allowed_kinds={"angle"},
-            required_labels=("start angle", "clocking angle"),
-        ):
+        if feature.start_angle and not _is_grounded(feature.start_angle, inventory, allowed_kinds={"angle"}):
             value = feature.start_angle
             feature.start_angle = 0.0
             cleared.append(f"features[{index}].start_angle={value:g}")
         x_value = feature.x
-        if x_value and not _is_grounded(
-            x_value, inventory, allowed_kinds={"linear"},
-            required_labels=("x offset", "horizontal offset", "x position"),
-        ):
+        if x_value and not _is_grounded(x_value, inventory, allowed_kinds={"linear"}):
             feature.x = 0.0
             cleared.append(f"features[{index}].x={x_value:g}")
         y_value = feature.y
-        if y_value and not _is_grounded(
-            y_value, inventory, allowed_kinds={"linear"},
-            required_labels=("y offset", "vertical offset", "y position"),
-        ):
+        if y_value and not _is_grounded(y_value, inventory, allowed_kinds={"linear"}):
             feature.y = 0.0
             cleared.append(f"features[{index}].y={y_value:g}")
 
