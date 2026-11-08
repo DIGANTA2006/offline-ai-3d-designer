@@ -308,6 +308,9 @@ function attachSavedMeasurementReviews(spec: OCRSpec, reviews: StoredMeasurement
       ...spec.blueprint,
       visual_measurements: spec.blueprint.visual_measurements.map((measurement, index) => {
         const saved = byIndex.get(index);
+        const savedBinding = saved?.targetBinding ?? null;
+        const bindingIsStillValid = !savedBinding || getMeasurementBindingOptions(spec.blueprint!, measurement.kind)
+          .some((option) => option.value === bindingValue(savedBinding));
         return {
           ...measurement,
           reviewStatus: saved?.decision === "confirmed_reading" ? "confirmed"
@@ -316,8 +319,8 @@ function attachSavedMeasurementReviews(spec: OCRSpec, reviews: StoredMeasurement
           reviewedUnit: saved?.unit ?? measurement.unit,
           reviewedFeature: saved?.featureDescription ?? measurement.feature ?? "",
           reviewNote: saved?.note ?? "",
-          targetBinding: saved?.targetBinding ?? null,
-          reviewPersisted: Boolean(saved),
+          targetBinding: bindingIsStillValid ? savedBinding : null,
+          reviewPersisted: Boolean(saved && bindingIsStillValid),
         };
       }),
     },
