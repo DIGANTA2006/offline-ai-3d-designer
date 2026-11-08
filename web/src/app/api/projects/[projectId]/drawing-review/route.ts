@@ -56,6 +56,14 @@ function optionalText(value: unknown, label: string, maxLength: number): string 
   return cleaned || null;
 }
 
+function hasSupportedBlueprintBodyProfile(bodyType: string | null, profile: string | null): boolean {
+  if (bodyType === "rotational_flange") return profile === "circle";
+  if (bodyType === "prismatic_box" || bodyType === "sheet_enclosure") {
+    return ["rectangle", "polygon", "complex_path"].includes(profile ?? "");
+  }
+  return false;
+}
+
 function validateTargetBinding(
   raw: unknown,
   candidateKind: unknown,
@@ -77,6 +85,9 @@ function validateTargetBinding(
   const profile = typeof baseSketch?.profile === "string" ? baseSketch.profile : null;
 
   if (raw.scope === "base_sketch") {
+    if (!hasSupportedBlueprintBodyProfile(bodyType, profile)) {
+      throw new RouteError("Base-sketch bindings require a supported body type and matching sketch profile.", 422);
+    }
     if (Object.keys(raw).some((key) => !["scope", "field"].includes(key))) {
       throw new RouteError("Base-sketch association contains unsupported properties.", 400);
     }
@@ -122,8 +133,8 @@ function validateTargetBinding(
     if (!isRecord(feature) || typeof feature.type !== "string") {
       throw new RouteError("The selected Blueprint feature is invalid.", 422);
     }
-    if (!bodyType || bodyType === "revolved_profile") {
-      throw new RouteError("Feature bindings require a resolved, supported Blueprint body type.", 422);
+    if (!hasSupportedBlueprintBodyProfile(bodyType, profile)) {
+      throw new RouteError("Feature bindings require a supported body type and matching sketch profile.", 422);
     }
     if (
       ["hole_pattern", "radial_cutout_pattern", "ring_step"].includes(feature.type)
