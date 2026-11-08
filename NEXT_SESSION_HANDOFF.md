@@ -28,9 +28,9 @@ AI proposes; deterministic code validates. Uncertain or unsupported geometry is 
 - **#24:** positive E-axis extrusion/deposition validation; recorded 10 mm test cube measured 0.345410 m and 2,962 deposition moves; 322 Python tests, web and CodeQL passed.
 - **#25:** OCR source selection from validated MIME/type; 316 Python tests and web/Docker/CodeQL passed.
 - **#26:** documentation-only T73 wording change to guided UX / advanced engineering mode; CI passed.
-- **#27:** combined image-read candidates, semantic grounding and MIME-aware drawing review; latest head \`f35d69d...\` is undergoing a fresh CI run after two test corrections.
+- **#29:** combined Phase 2 visual candidates plus the first persisted Phase 3 review ledger; head ee77ff2... passed 327 Python tests, web lint/typecheck/build, Docker/CAD-OCR smoke and both CodeQL scans. Docker smoke still reports 0.000 m filament; integrate #24 before treating its filament estimate as valid.
 
-PR #18 is the stale predecessor to #27. PRs #16/#17/#19 and #21 are closed as superseded. PR #20 is merged.
+PRs #18 and #27 are closed as superseded by #29. PRs #16/#17/#19 and #21 are closed as superseded. PR #20 is merged. PRs #22–#26 and #29 remain unmerged drafts.
 
 ## Actual architecture
 
@@ -50,7 +50,7 @@ PR #18 is the stale predecessor to #27. PRs #16/#17/#19 and #21 are closed as su
 - The broader PartSpec feature engine is not proof that every operation is exposed in each drawing/web path.
 - The dedicated sprocket builder uses circular seat cuts; it is not an ISO 606 involute chain-sprocket profile.
 - OCR value matches and visual candidates do not prove dimension-arrow/feature association.
-- Full measurement ledger, image-region highlighting, candidate confirmation and provenance-preserving edit workflow remain incomplete.
+- PR #29 adds a persisted reading-confirmation/rejection sidecar with reviewer/time provenance and immutable OCR evidence. Manual entries, dimension-to-CAD-field mapping, image-region highlighting and the complete geometry-linked measurement editor remain incomplete.
 - No interactive browser 3D viewer was found in the current main component tree.
 - Printer-specific profiles, layer preview and physical print evidence remain open.
 - Hardware fit-check is axis-aligned; it does not certify arbitrary 3D interference, thermal or structural performance.

@@ -21,22 +21,24 @@ See [Project Architecture, Status and Delivery — 8 November 2026](docs/PROJECT
 | PR | Scope | Evidence / state |
 |---|---|---|
 | #15 | Accessible 3D-printing product roadmap | Open; documentation-only |
-| #18 | Initial visual-dimension candidates | Open, stale/non-mergeable; successor #27 |
-| #22 | Semantic drawing dimension evidence | Draft; recorded head passed 324 Python tests, web checks, Docker smoke and CodeQL |
-| #23 | Blueprint-native printability | Draft; 320 Python tests, web and CodeQL passed; Docker smoke still reported 0.000 m filament on its old mainline slicer |
-| #24 | Positive G-code extrusion validation | Draft; 322 Python tests; a 10 mm test cube measured 0.345410 m E-axis filament and 2,962 deposition moves; web and CodeQL passed |
-| #25 | OCR source selection using validated MIME metadata | Draft; 316 Python tests; OCR helper test, web, Docker and CodeQL passed |
+| #18 | Initial visual-dimension candidates | Closed as stale; implementation successor is #29 |
+| #22 | Semantic drawing dimension evidence | Draft; recorded head passed 324 Python tests, web, Docker and CodeQL |
+| #23 | Blueprint-native printability | Draft; 320 Python tests, web and CodeQL passed; its old Docker smoke reported 0.000 m filament |
+| #24 | Positive G-code extrusion validation | Draft; 322 Python tests; test cube measured 0.345410 m E-axis filament and 2,962 deposition moves; web and CodeQL passed |
+| #25 | OCR source selection using validated MIME metadata | Draft; 316 Python tests; OCR helper, web, Docker and CodeQL passed |
 | #26 | Guided UX wording / advanced engineering mode | Draft, documentation-only; CI passed |
-| #27 | Combined visual-dimension candidate and grounded-review work | Draft; latest head \`f35d69d...\`; fresh CI is running after two regression-test corrections |
+| #27 | Combined visual-dimension candidate work | Closed as superseded by #29 |
+| #29 | Combined Phase 2 visual candidates plus persisted Phase 3 measurement-review ledger | Draft; head ee77ff2...; 327 Python tests, web, Docker/CAD-OCR and both CodeQL scans passed. Docker smoke still reports 0.000 m filament pending #24 integration |
 
-PR #16, #17 and #19 were closed as superseded by #23, #24 and #25. PR #21 was closed as superseded by #22. PR #20 is merged. No PR #22–#27 change is claimed as merged or deployed.
+PR #16, #17 and #19 were closed as superseded by #23, #24 and #25. PR #18 and #27 were closed as superseded by #29. PR #21 was closed as superseded by #22. PR #20 is merged. No PR #22–#26 or #29 change is claimed as merged or deployed. Issue #11 was closed as completed after verifying the authenticated printability-router mount; issue #8 remains open for extrusion, endpoint/upload verification and printer acceptance.
 
 ## Immediate priorities
 
-1. Product-owner review of #26's guided/advanced wording and the latest-head checks for #22–#27.
-2. Integrate the reviewed semantic grounding, saved-Blueprint printability, real G-code extrusion validation and MIME-aware upload selection; rerun combined CI after rebasing.
-3. Finish the visual-candidate workflow without promoting vision-only values into CAD geometry.
-4. Implement the full provenance-aware measurement editor and a real interactive viewer from the exact validated geometry.
+1. Product-owner review of #15's refreshed roadmap, #26's guided/advanced wording, and #28's architecture/status document.
+2. Review/merge smaller corrective PRs #22–#25 in the dependency order agreed with the owner; rerun combined CI after rebasing.
+3. Review #29 (Phase 2 plus the first persisted Phase 3 ledger). A confirmed reading is a transcription decision only, not a CAD parameter or arrow-to-feature association.
+4. Continue Phase 3 with manual measurement entry, explicit dimension-to-feature/CAD-field association, image-region highlighting and confirmation invalidation for geometry edits.
+5. Implement a real interactive viewer from the exact validated geometry.
 5. Establish the owner-approved golden drawing set and compare model dimensions/bounds against references.
 6. Select printer/material profiles and inspect slicer previews before physical tests.
 7. Resolve C-DAC scope, ISO 606 sprocket expectations, hosted-vision data rules, IP/licence and printer acceptance requirements.
@@ -45,7 +47,7 @@ PR #16, #17 and #19 were closed as superseded by #23, #24 and #25. PR #21 was cl
 
 - CI proves only the checks run on the recorded commit.
 - No fresh full Production sign-in/database/private-Blob/payment/CAD-service journey was run in this documentation audit.
-- No CATIA opening test, drawing-to-mesh accuracy benchmark, customer G-code inspection or physical print is claimed.
+- No CATIA opening test, drawing-to-mesh accuracy benchmark, customer G-code inspection or physical print is claimed. PR #29's Docker smoke is a real CuraEngine slice but still reports 0.000 m filament; PR #24 remains required before trusting filament estimates.
 - The current npm vulnerability count, IP/licence terms and branch-protection settings need a separate fresh review; old counts must not be presented as current.
 
 
