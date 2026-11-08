@@ -88,6 +88,15 @@ const sourceBlueprint = {
       targetBinding: { scope: "feature", featureIndex: 0, field: "count" },
     },
     {
+      kind: "linear",
+      unit: "mm",
+      reviewedValue: 8,
+      reviewedUnit: "mm",
+      reviewStatus: "confirmed",
+      reviewPersisted: true,
+      targetBinding: { scope: "base_sketch", field: "thickness" },
+    },
+    {
       kind: "angle",
       unit: "deg",
       reviewedValue: 45,
@@ -135,6 +144,8 @@ assert.notEqual(applied, sourceBlueprint, "generation must receive a copied Blue
 assert.notEqual(applied.base_sketch, sourceBlueprint.base_sketch, "base sketch must be copied");
 assert.notEqual(applied.features, sourceBlueprint.features, "feature list must be copied");
 assert.equal(applied.base_sketch.outer_diameter, 80, "8 cm must be normalized to 80 mm");
+assert.equal(applied.base_sketch.thickness, 8, "saved thickness must replace the provisional default");
+assert.equal(applied.base_sketch.thickness_is_default, false, "replaced provisional defaults must be marked confirmed");
 assert.equal(applied.features[0].count, 6, "saved count must update its selected feature");
 assert.equal(applied.features[0].start_angle, 45, "saved angle must update its selected feature");
 assert.equal(applied.features[0].diameter, 5, "unsaved mappings must never reach geometry");
@@ -144,6 +155,7 @@ assert.equal(applied.needs_review, true, "applied measurements must keep the Blu
 
 // Source drawing evidence and stored Blueprint geometry must remain byte-for-byte unchanged.
 assert.equal(sourceBlueprint.base_sketch.outer_diameter, 90);
+assert.equal(sourceBlueprint.base_sketch.thickness, 10, "source default height must remain unchanged");
 assert.equal(sourceBlueprint.features[0].count, 4);
 assert.equal(sourceBlueprint.features[0].start_angle, 0);
 assert.equal(sourceBlueprint.visual_measurements[0].reviewedValue, 8);
