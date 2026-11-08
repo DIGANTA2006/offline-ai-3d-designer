@@ -28,6 +28,12 @@ class RouteError extends Error {
   }
 }
 
+function json(body: unknown, init: ResponseInit = {}) {
+  const headers = new Headers(init.headers);
+  headers.set("Cache-Control", "no-store");
+  return json(body, { ...init, headers });
+}
+
 const MAX_BODY_BYTES = 32 * 1024;
 const MAX_REVIEWS = 200;
 const MAX_MEASUREMENT_VALUE = 1_000_000;
@@ -108,7 +114,7 @@ function validateReview(
 
 export async function POST(request: Request, { params }: Context) {
   if (!isSameOriginRequest(request)) {
-    return NextResponse.json({ error: "Request origin could not be verified." }, { status: 403 });
+    return json({ error: "Request origin could not be verified." }, { status: 403 });
   }
 
   let user;
@@ -116,9 +122,9 @@ export async function POST(request: Request, { params }: Context) {
     user = await getCurrentUser();
   } catch (error) {
     console.error("Drawing measurement review could not resolve the current user.", error);
-    return NextResponse.json({ error: "Authentication or database service is unavailable." }, { status: 503 });
+    return json({ error: "Authentication or database service is unavailable." }, { status: 503 });
   }
-  if (!user) return NextResponse.json({ error: "Sign in before reviewing drawing measurements." }, { status: 401 });
+  if (!user) return json({ error: "Sign in before reviewing drawing measurements." }, { status: 401 });
 
   try {
     const { projectId } = await params;
@@ -209,7 +215,7 @@ export async function POST(request: Request, { params }: Context) {
       console.error("Measurement review saved but audit logging failed.", error);
     }
 
-    return NextResponse.json({
+    return json({
       ok: true,
       fileIndex,
       reviewCount: savedReviews.length,
@@ -219,7 +225,7 @@ export async function POST(request: Request, { params }: Context) {
     });
   } catch (error) {
     console.error("Drawing measurement review failed.", error);
-    if (error instanceof RouteError) return NextResponse.json({ error: error.message }, { status: error.status });
-    return NextResponse.json({ error: "Could not save measurement reviews. Check the project database and service logs." }, { status: 500 });
+    if (error instanceof RouteError) return json({ error: error.message }, { status: error.status });
+    return json({ error: "Could not save measurement reviews. Check the project database and service logs." }, { status: 500 });
   }
 }

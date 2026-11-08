@@ -126,6 +126,7 @@ try {
   });
   const goodPayload = await good.json();
   assert.equal(good.status, 200);
+  assert.equal(good.headers.get("cache-control"), "no-store", "review responses must not be cached");
   assert.equal(goodPayload.confirmedCount, 3);
   assert.equal(goodPayload.rejectedCount, 0);
   assert.equal(calls.updates, 1);
