@@ -49,34 +49,61 @@ class SliceSettings:
             self.machine_nozzle_size = self.nozzle_diameter
 
     def validate(self) -> List[str]:
-        """Validate slice settings and return list of errors."""
-        errors = []
-        if self.layer_height <= 0:
-            errors.append("layer_height must be positive")
-        if self.infill_density < 0 or self.infill_density > 100:
-            errors.append("infill_density must be between 0 and 100")
-        if self.machine_nozzle_size <= 0 or not isinstance(self.machine_nozzle_size, (int, float)) or self.machine_nozzle_size != self.machine_nozzle_size:  # NaN check
-            errors.append("nozzle_diameter must be a positive finite number")
-        if self.wall_thickness <= 0:
-            errors.append("wall_thickness must be positive")
-        if self.print_speed <= 0:
-            errors.append("print_speed must be positive")
-        if self.travel_speed <= 0:
-            errors.append("travel_speed must be positive")
-        if self.initial_layer_height <= 0:
-            errors.append("initial_layer_height must be positive")
-        if self.initial_layer_speed <= 0:
-            errors.append("initial_layer_speed must be positive")
-        if self.retraction_distance < 0:
-            errors.append("retraction_distance must be non-negative")
-        if self.retraction_speed <= 0:
-            errors.append("retraction_speed must be positive")
-        if self.support_angle < 0 or self.support_angle > 90:
-            errors.append("support_angle must be between 0 and 90")
-        if self.machine_width <= 0 or self.machine_depth <= 0 or self.machine_height <= 0:
-            errors.append("machine dimensions must be positive")
-        if self.material_diameter <= 0:
-            errors.append("material_diameter must be positive")
+        """Validate numeric slicer settings before they reach CuraEngine.
+
+        Dataclass annotations are not runtime validation: callers may still pass
+        strings, booleans, NaN, or infinity. Reject those values explicitly so
+        malformed settings fail closed instead of being serialized into a Cura
+        command line.
+        """
+        errors: List[str] = []
+
+        def is_finite_number(value: Any) -> bool:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return False
+            try:
+                return math.isfinite(value)
+            except (OverflowError, TypeError, ValueError):
+                return False
+
+        positive_fields = (
+            ("layer_height", "layer_height"),
+            ("wall_thickness", "wall_thickness"),
+            ("print_speed", "print_speed"),
+            ("travel_speed", "travel_speed"),
+            ("initial_layer_height", "initial_layer_height"),
+            ("initial_layer_speed", "initial_layer_speed"),
+            ("retraction_speed", "retraction_speed"),
+            ("machine_width", "machine width"),
+            ("machine_depth", "machine depth"),
+            ("machine_height", "machine height"),
+            ("machine_nozzle_size", "nozzle_diameter"),
+            ("material_diameter", "material_diameter"),
+        )
+        for field_name, label in positive_fields:
+            value = getattr(self, field_name)
+            if not is_finite_number(value) or value <= 0:
+                if label in {"machine width", "machine depth", "machine height"}:
+                    errors.append("machine dimensions must be positive finite numbers")
+                else:
+                    errors.append(f"{label} must be a positive finite number")
+
+        non_negative_fields = (
+            ("retraction_distance", "retraction_distance"),
+            ("nozzle_temp", "nozzle_temp"),
+            ("bed_temp", "bed_temp"),
+        )
+        for field_name, label in non_negative_fields:
+            value = getattr(self, field_name)
+            if not is_finite_number(value) or value < 0:
+                errors.append(f"{label} must be a non-negative finite number")
+
+        if not is_finite_number(self.infill_density) or not 0 <= self.infill_density <= 100:
+            errors.append("infill_density must be a finite number between 0 and 100")
+
+        if not is_finite_number(self.support_angle) or not 0 <= self.support_angle <= 90:
+            errors.append("support_angle must be a finite number between 0 and 90")
+
         return errors
 
     def validation_errors(self) -> List[str]:

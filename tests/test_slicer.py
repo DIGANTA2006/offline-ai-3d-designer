@@ -5,6 +5,8 @@ import tempfile
 import os
 from pathlib import Path
 
+import pytest
+
 import trimesh
 
 from ai3d_designer.slicing.slicer import SliceSettings, Slicer
@@ -17,6 +19,82 @@ def test_slice_settings_reject_invalid_quality_and_percentages():
     assert any("layer_height" in error for error in errors)
     assert any("infill_density" in error for error in errors)
     assert any("nozzle_diameter" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "layer_height",
+        "wall_thickness",
+        "print_speed",
+        "travel_speed",
+        "initial_layer_height",
+        "initial_layer_speed",
+        "retraction_speed",
+        "machine_width",
+        "machine_depth",
+        "machine_height",
+        "machine_nozzle_size",
+        "nozzle_diameter",
+        "material_diameter",
+        "retraction_distance",
+        "nozzle_temp",
+        "bed_temp",
+        "infill_density",
+        "support_angle",
+    ],
+)
+@pytest.mark.parametrize("invalid_value", [float("nan"), float("inf"), float("-inf")])
+def test_slice_settings_reject_non_finite_numeric_values(field_name, invalid_value):
+    settings = SliceSettings(**{field_name: invalid_value})
+
+    errors = settings.validate()
+
+    assert errors, f"{field_name}={invalid_value!r} must not reach CuraEngine"
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "layer_height",
+        "wall_thickness",
+        "print_speed",
+        "travel_speed",
+        "initial_layer_height",
+        "initial_layer_speed",
+        "retraction_speed",
+        "machine_width",
+        "machine_depth",
+        "machine_height",
+        "machine_nozzle_size",
+        "nozzle_diameter",
+        "material_diameter",
+        "retraction_distance",
+        "nozzle_temp",
+        "bed_temp",
+        "infill_density",
+        "support_angle",
+    ],
+)
+@pytest.mark.parametrize("invalid_value", [True, "not-a-number"])
+def test_slice_settings_reject_boolean_and_non_numeric_values(field_name, invalid_value):
+    settings = SliceSettings(**{field_name: invalid_value})
+
+    errors = settings.validate()
+
+    assert errors, f"{field_name}={invalid_value!r} must be rejected"
+
+
+def test_slice_settings_accept_valid_numeric_boundaries():
+    settings = SliceSettings(
+        infill_density=0,
+        support_angle=90,
+        retraction_distance=0,
+        nozzle_temp=0,
+        bed_temp=0,
+    )
+
+    assert settings.validate() == []
 
 
 def test_missing_cura_engine_never_writes_placeholder_gcode(tmp_path):
