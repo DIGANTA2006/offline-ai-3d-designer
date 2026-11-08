@@ -12,10 +12,12 @@
     "test:upload-route": "node scripts/test-upload-route.mjs",
     "test:subscription-policy": "node scripts/test-subscription-policy.mjs",
     "test:printability-route": "node scripts/test-printability-route.mjs",
+    "test:ocr-source-support": "node scripts/test-ocr-source-support.mjs",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
-    "test:drawing-generation-guard": "node scripts/test-drawing-generation-guard.mjs"
+    "test:drawing-generation-guard": "node scripts/test-drawing-generation-guard.mjs",
+    "test:drawing-measurement-review": "node scripts/test-drawing-measurement-review.mjs"
   },
   "allowScripts": {
     "@firebase/util": true,

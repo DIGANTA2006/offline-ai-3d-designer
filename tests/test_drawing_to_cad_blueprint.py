@@ -14,6 +14,7 @@ from ai3d_designer.drawing_to_cad.blueprint import (
     BaseSketch,
     Blueprint,
     Feature,
+    VisualMeasurement,
     apply_defaults,
     lint,
 )
@@ -26,6 +27,7 @@ from ai3d_designer.drawing_to_cad.extraction import (
     extract_blueprint,
     get_vision_backend,
     ground_blueprint,
+    reconcile_visual_measurements,
 )
 from ai3d_designer.drawing_to_cad.generator import GeometryError, export_blueprint
 
@@ -633,3 +635,294 @@ def test_exported_part_spec_records_applied_defaults():
     # The caller's object is not mutated by export.
     assert enclosure.base_sketch.thickness is None
 
+
+
+def test_inventory_preserves_different_semantic_callouts_with_the_same_value():
+    inventory = _dimension_inventory("OD 80 mm PCD 80 mm", {"dimensions": {}}, 1)
+
+    # Keep the OCR source wording intact; semantic classification is separate
+    # from the raw evidence and must not fabricate a replacement callout.
+    assert any(token.kind == "diameter" and token.raw.lower().startswith("od 80") for token in inventory)
+    assert any(token.kind == "diameter" and token.raw.lower().startswith("pcd 80") for token in inventory)
+
+
+def test_outer_diameter_cannot_be_grounded_from_an_unrelated_hole_diameter():
+    blueprint = Blueprint(
+        primary_body_type="rotational_flange",
+        base_sketch=BaseSketch(profile="circle", outer_diameter=8, thickness=10),
+    )
+    inventory = [
+        DimensionToken(id="D1", raw="HOLE DIA 8", value=8, kind="diameter", page=1),
+        DimensionToken(id="D2", raw="THICKNESS 10", value=10, kind="linear", page=1),
+    ]
+
+    cleared = ground_blueprint(blueprint, inventory)
+
+    assert blueprint.base_sketch.outer_diameter is None
+    assert "base_sketch.outer_diameter=8" in cleared
+    assert blueprint.base_sketch.thickness == 10
+
+
+def test_pitch_radius_half_diameter_requires_pcd_or_bcd_evidence():
+    blueprint = Blueprint(
+        primary_body_type="rotational_flange",
+        base_sketch=BaseSketch(profile="circle", outer_diameter=100, thickness=10),
+        features=[Feature(type="hole_pattern", count=6, pitch_radius=4, diameter=8)],
+    )
+    inventory = [
+        DimensionToken(id="D1", raw="HOLE DIA 8", value=8, kind="diameter", page=1),
+        DimensionToken(id="D2", raw="OUTER DIAMETER 100", value=100, kind="diameter", page=1),
+        DimensionToken(id="D3", raw="THICKNESS 10", value=10, kind="linear", page=1),
+    ]
+
+    cleared = ground_blueprint(blueprint, inventory)
+
+    assert blueprint.features[0].diameter == 8
+    assert blueprint.features[0].pitch_radius is None
+    assert "features[0].pitch_radius=4" in cleared
+
+
+def test_hole_diameter_cannot_be_grounded_from_a_pcd_callout():
+    blueprint = Blueprint(
+        primary_body_type="rotational_flange",
+        base_sketch=BaseSketch(profile="circle", outer_diameter=120, thickness=10),
+        features=[Feature(type="hole_pattern", count=6, pitch_radius=40, diameter=80)],
+    )
+    inventory = [
+        DimensionToken(id="D1", raw="PCD 80", value=80, kind="diameter", page=1),
+        DimensionToken(id="D2", raw="OUTER DIAMETER 120", value=120, kind="diameter", page=1),
+        DimensionToken(id="D3", raw="THICKNESS 10", value=10, kind="linear", page=1),
+    ]
+
+    cleared = ground_blueprint(blueprint, inventory)
+
+    assert blueprint.features[0].pitch_radius == 40
+    assert blueprint.features[0].diameter is None
+    assert "features[0].diameter=80" in cleared
+
+
+def test_wall_thickness_cannot_be_reused_as_solid_height():
+    blueprint = Blueprint(
+        primary_body_type="sheet_enclosure",
+        base_sketch=BaseSketch(
+            profile="rectangle",
+            length=100,
+            width=80,
+            thickness=2.5,
+            wall_thickness=2.5,
+        ),
+    )
+    inventory = [
+        DimensionToken(id="D1", raw="WALL THICKNESS 2.5", value=2.5, kind="linear", page=1),
+    ]
+
+    cleared = ground_blueprint(blueprint, inventory)
+
+    assert blueprint.base_sketch.thickness is None
+    assert blueprint.base_sketch.wall_thickness == 2.5
+    assert "base_sketch.thickness=2.5" in cleared
+
+
+def test_root_radius_cannot_be_grounded_from_outer_radius():
+    blueprint = Blueprint(
+        primary_body_type="rotational_flange",
+        base_sketch=BaseSketch(profile="circle", outer_diameter=134, thickness=10),
+        features=[Feature(type="radial_cutout_pattern", count=10, radius=15.5, root_radius=63.4)],
+    )
+    inventory = [
+        DimensionToken(id="D1", raw="OUTER RADIUS R63.4", value=63.4, kind="radius", page=1),
+        DimensionToken(id="D2", raw="GULLET RADIUS R15.5", value=15.5, kind="radius", page=1),
+        DimensionToken(id="D3", raw="OUTER DIAMETER 134", value=134, kind="diameter", page=1),
+        DimensionToken(id="D4", raw="THICKNESS 10", value=10, kind="linear", page=1),
+    ]
+
+    cleared = ground_blueprint(blueprint, inventory)
+
+    assert blueprint.features[0].root_radius is None
+    assert blueprint.features[0].radius == 15.5
+    assert "features[0].root_radius=63.4" in cleared
+
+
+def test_ring_step_dimensions_are_not_reused_as_base_body_diameters():
+    inventory = _dimension_inventory(
+        "RING OUTER DIAMETER 90 mm RING INNER DIAMETER 70 mm RECESS DEPTH 5 mm",
+        {"dimensions": {}},
+        1,
+    )
+    blueprint = Blueprint(
+        primary_body_type="rotational_flange",
+        base_sketch=BaseSketch(
+            profile="circle",
+            outer_diameter=90,
+            inner_bore_diameter=70,
+            thickness=10,
+        ),
+        features=[
+            Feature(type="ring_step", diameter=90, inner_diameter=70, depth=5),
+        ],
+    )
+
+    cleared = ground_blueprint(blueprint, inventory)
+
+    assert blueprint.base_sketch.outer_diameter is None
+    assert blueprint.base_sketch.inner_bore_diameter is None
+    assert blueprint.features[0].diameter == 90
+    assert blueprint.features[0].inner_diameter == 70
+    assert blueprint.features[0].depth == 5
+    assert "base_sketch.outer_diameter=90" in cleared
+    assert "base_sketch.inner_bore_diameter=70" in cleared
+
+
+def test_visual_only_measurement_is_preserved_but_not_promoted_to_geometry():
+    blueprint = Blueprint(
+        primary_body_type="rotational_flange",
+        base_sketch=BaseSketch(profile="circle", outer_diameter=60, thickness=8),
+        visual_measurements=[
+            VisualMeasurement(
+                dimension_name="Outer diameter",
+                raw_callout="Ø60",
+                value=60,
+                unit="mm",
+                kind="diameter",
+                source_page=1,
+                source_view="top",
+                confidence=0.9,
+            )
+        ],
+    )
+
+    cleared = ground_blueprint(blueprint, [])
+
+    assert blueprint.base_sketch.outer_diameter is None
+    assert blueprint.base_sketch.thickness is None
+    assert blueprint.visual_measurements[0].value == 60
+    assert blueprint.visual_measurements[0].verification_status == "vision_only"
+    assert "base_sketch.outer_diameter=60" in cleared
+
+
+def test_visual_measurement_ocr_value_match_requires_kind_unit_and_page():
+    blueprint = Blueprint(
+        source_pages=[1],
+        visual_measurements=[
+            VisualMeasurement(
+                dimension_name="Hole diameter",
+                raw_callout="4 × Ø8",
+                value=8,
+                unit="mm",
+                kind="diameter",
+                source_page=1,
+                source_view="top",
+                confidence=0.8,
+                verification_status="ocr_value_match",
+                ocr_inventory_id="fake-id",
+            ),
+            VisualMeasurement(
+                dimension_name="Slot length",
+                raw_callout="L 20",
+                value=20,
+                unit="unknown",
+                kind="linear",
+                source_page=1,
+                source_view="top",
+                confidence=0.7,
+            ),
+        ],
+    )
+    inventory = [
+        DimensionToken(id="D1", raw="Ø8", value=8, kind="diameter", page=1),
+        DimensionToken(id="D2", raw="20 mm", value=20, kind="linear", page=2),
+    ]
+
+    reconcile_visual_measurements(blueprint, inventory)
+
+    assert blueprint.visual_measurements[0].verification_status == "ocr_value_match"
+    assert blueprint.visual_measurements[0].ocr_inventory_id == "D1"
+    assert blueprint.visual_measurements[1].verification_status == "vision_only"
+    assert blueprint.visual_measurements[1].ocr_inventory_id is None
+
+
+def test_vision_schema_reads_image_callouts_even_when_ocr_inventory_is_empty():
+    class FakeVision:
+        model = "test-vision"
+        timeout = 2.0
+
+        async def chat_json(self, images, system, user, schema):
+            assert images
+            assert "IMAGE PIXELS directly" in system
+            assert "not a whitelist for visual_measurements" in system.lower()
+            assert "visual_measurements" in schema.get("properties", {})
+            return {
+                "part_name": "test flange",
+                "primary_body_type": "rotational_flange",
+                "base_sketch": {
+                    "profile": "circle",
+                    "outer_diameter": 60,
+                    "inner_bore_diameter": None,
+                    "width": None,
+                    "length": None,
+                    "thickness": 8,
+                    "wall_thickness": None,
+                    "thickness_is_default": False,
+                    "wall_thickness_is_default": False,
+                    "points": None,
+                },
+                "features": [],
+                "visual_measurements": [{
+                    "dimension_name": "Outer diameter",
+                    "raw_callout": "Ø60",
+                    "value": 60,
+                    "unit": "mm",
+                    "kind": "diameter",
+                    "feature": "outer profile",
+                    "source_page": 1,
+                    "source_view": "top",
+                    "confidence": 0.85,
+                    "region": {"x": 0.2, "y": 0.3, "width": 0.1, "height": 0.1},
+                    "verification_status": "ocr_value_match",
+                    "ocr_inventory_id": "fake-id",
+                }],
+                "warnings": [],
+                "unsupported_geometry": [],
+                "source_pages": [1],
+                "needs_review": True,
+            }
+
+    image = Image.new("RGB", (320, 240), "white")
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+
+    result = asyncio.run(
+        extract_blueprint(
+            file_bytes=buffer.getvalue(),
+            file_name="test-drawing.png",
+            mime_type="image/png",
+            raw_text="",
+            dimension_data={"dimensions": {}},
+            vision=FakeVision(),
+        )
+    )
+
+    candidate = result.blueprint.visual_measurements[0]
+    assert result.dimension_inventory == []
+    assert result.vision_model == "test-vision"
+    assert result.blueprint.base_sketch.outer_diameter is None
+    assert result.blueprint.base_sketch.thickness == 10
+    assert result.blueprint.base_sketch.thickness_is_default is True
+    assert candidate.value == 60
+    assert candidate.verification_status == "vision_only"
+    assert candidate.ocr_inventory_id is None
+
+
+def test_explicit_pitch_radius_callout_is_not_lost_by_half_diameter_guard():
+    inventory = _dimension_inventory("PITCH RADIUS R40", {"dimensions": {}}, 1)
+    blueprint = Blueprint(
+        primary_body_type="rotational_flange",
+        base_sketch=BaseSketch(profile="circle"),
+        features=[Feature(type="hole_pattern", count=6, pitch_radius=40)],
+    )
+
+    cleared = ground_blueprint(blueprint, inventory)
+
+    assert any(token.kind == "radius" and "pitch radius" in token.raw.lower() for token in inventory)
+    assert blueprint.features[0].pitch_radius == 40
+    assert "features[0].pitch_radius=40" not in cleared

@@ -59,6 +59,8 @@ export default async function ProjectDetailPage({ params }: Props) {
         return [{
           index,
           name,
+          type: typeof record.type === "string" ? record.type : undefined,
+          contentType: typeof record.contentType === "string" ? record.contentType : undefined,
           ocrResult: saved?.spec ? saved.spec as {
             rawText?: string;
             confidence?: number;
@@ -75,6 +77,16 @@ export default async function ProjectDetailPage({ params }: Props) {
             needsReview?: boolean;
             limitations?: string[];
           } : undefined,
+          measurementReviews: Array.isArray(saved?.visualMeasurementReviews)
+            ? saved.visualMeasurementReviews as Array<{
+                measurementIndex: number;
+                decision: "confirmed_reading" | "rejected";
+                value?: number | null;
+                unit?: string | null;
+                featureDescription?: string | null;
+                note?: string | null;
+              }>
+            : [],
         }];
       })
     : [];

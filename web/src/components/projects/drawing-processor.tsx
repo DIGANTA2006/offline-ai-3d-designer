@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { AlertTriangle, FileSearch, LoaderCircle, ShieldCheck, WandSparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { isOcrSourceFile } from "@/lib/upload/ocr-source-support";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 type BlueprintBodyType = "rotational_flange" | "prismatic_box" | "sheet_enclosure" | "revolved_profile";
@@ -28,6 +29,35 @@ type BlueprintFeature = {
   x: number;
   y: number;
 };
+type VisualMeasurement = {
+  dimension_name: string;
+  raw_callout: string;
+  value: number | null;
+  unit: string;
+  kind: string;
+  feature?: string | null;
+  source_page: number;
+  source_view: string;
+  confidence: number;
+  region?: { x: number; y: number; width: number; height: number } | null;
+  verification_status: "vision_only" | "ocr_value_match";
+  ocr_inventory_id?: string | null;
+  reviewStatus?: "pending" | "confirmed" | "rejected";
+  reviewedValue?: number | null;
+  reviewedUnit?: string;
+  reviewedFeature?: string | null;
+  reviewNote?: string;
+};
+
+type StoredMeasurementReview = {
+  measurementIndex: number;
+  decision: "confirmed_reading" | "rejected";
+  value?: number | null;
+  unit?: string | null;
+  featureDescription?: string | null;
+  note?: string | null;
+};
+
 type Blueprint = {
   part_name: string;
   primary_body_type: BlueprintBodyType | null;
@@ -44,6 +74,7 @@ type Blueprint = {
     points: number[][] | null;
   };
   features: BlueprintFeature[];
+  visual_measurements?: VisualMeasurement[];
   warnings: string[];
   unsupported_geometry: string[];
   source_pages: number[];
@@ -79,7 +110,14 @@ type OCRSpec = {
   limitations?: string[];
 };
 
-type SourceFile = { index: number; name: string; ocrResult?: OCRSpec };
+type SourceFile = {
+  index: number;
+  name: string;
+  type?: "pdf" | "image" | "dxf" | string;
+  contentType?: string;
+  ocrResult?: OCRSpec;
+  measurementReviews?: StoredMeasurementReview[];
+};
 type Props = { projectId: string; sourceFiles: SourceFile[] };
 type SketchNumberKey = "outer_diameter" | "inner_bore_diameter" | "width" | "length" | "thickness" | "wall_thickness";
 type FeatureNumberKey = "count" | "pitch_radius" | "start_angle" | "angular_pitch" | "diameter" | "inner_diameter" | "root_radius" | "length" | "width" | "depth" | "radius" | "x" | "y";
@@ -120,6 +158,58 @@ function numericInputValue(raw: string): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
+function attachSavedMeasurementReviews(spec: OCRSpec, reviews: StoredMeasurementReview[] = []): OCRSpec {
+  if (!spec.blueprint?.visual_measurements?.length) return spec;
+  const byIndex = new Map(reviews.map((review) => [review.measurementIndex, review]));
+  return {
+    ...spec,
+    blueprint: {
+      ...spec.blueprint,
+      visual_measurements: spec.blueprint.visual_measurements.map((measurement, index) => {
+        const saved = byIndex.get(index);
+        return {
+          ...measurement,
+          reviewStatus: saved?.decision === "confirmed_reading" ? "confirmed"
+            : saved?.decision === "rejected" ? "rejected" : "pending",
+          reviewedValue: saved && Object.hasOwn(saved, "value") ? saved.value ?? null : measurement.value,
+          reviewedUnit: saved?.unit ?? measurement.unit,
+          reviewedFeature: saved?.featureDescription ?? measurement.feature ?? "",
+          reviewNote: saved?.note ?? "",
+        };
+      }),
+    },
+  };
+}
+
+function canConfirmMeasurementReading(measurement: VisualMeasurement): boolean {
+  const value = measurement.reviewedValue;
+  const unit = measurement.reviewedUnit ?? "unknown";
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1_000_000) return false;
+  if (measurement.kind === "linear" || measurement.kind === "diameter" || measurement.kind === "radius") {
+    return value > 0 && ["mm", "cm", "m", "in", "inch"].includes(unit);
+  }
+  if (measurement.kind === "angle") return ["deg", "°"].includes(unit);
+  if (measurement.kind === "count") return Number.isInteger(value) && value >= 1 && unit === "count";
+  return false;
+}
+
+function getCanonicalBlueprintForGeneration(blueprint: Blueprint): Blueprint {
+  return {
+    ...blueprint,
+    visual_measurements: (blueprint.visual_measurements ?? []).map((measurement) => {
+      const {
+        reviewStatus: _reviewStatus,
+        reviewedValue: _reviewedValue,
+        reviewedUnit: _reviewedUnit,
+        reviewedFeature: _reviewedFeature,
+        reviewNote: _reviewNote,
+        ...candidate
+      } = measurement;
+      return candidate;
+    }),
+  };
+}
+
 function getProvisionalDefaultFields(blueprint: Blueprint | null): Array<{ field: DefaultFieldKey; label: string; value: number | null }> {
   if (!blueprint) return [];
   const fields: Array<{ field: DefaultFieldKey; label: string; value: number | null }> = [];
@@ -147,16 +237,17 @@ function getProvisionalDefaultFields(blueprint: Blueprint | null): Array<{ field
 
 export function DrawingProcessor({ projectId, sourceFiles }: Props) {
   const router = useRouter();
-  const ocrSourceFiles = sourceFiles.filter((file) => /\.(pdf|png|jpe?g|bmp|tiff?|webp)$/i.test(file.name));
+  const ocrSourceFiles = sourceFiles.filter(isOcrSourceFile);
   const [selectedIndex, setSelectedIndex] = useState<number>(ocrSourceFiles[0]?.index ?? -1);
   const [results, setResults] = useState<Record<number, OCRSpec>>(() => Object.fromEntries(
-    ocrSourceFiles.flatMap((file) => file.ocrResult ? [[file.index, file.ocrResult]] : []),
+    ocrSourceFiles.flatMap((file) => file.ocrResult ? [[file.index, attachSavedMeasurementReviews(file.ocrResult, file.measurementReviews)]] : []),
   ));
   const [reviewedDescription, setReviewedDescription] = useState(
     (ocrSourceFiles[0]?.ocrResult?.rawText ?? "").slice(0, 4000),
   );
   const [analyzing, setAnalyzing] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [savingMeasurementReviews, setSavingMeasurementReviews] = useState(false);
   const [confirmedDefaultFields, setConfirmedDefaultFields] = useState<Record<number, DefaultFieldKey[]>>({});
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -199,6 +290,80 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
         },
       };
     });
+  }
+
+  function updateVisualMeasurement(index: number, patch: Partial<Pick<VisualMeasurement, "reviewedValue" | "reviewedUnit" | "reviewedFeature" | "reviewNote">>) {
+    updateCurrentResult((result) => {
+      if (!result.blueprint?.visual_measurements) return result;
+      return {
+        ...result,
+        blueprint: {
+          ...result.blueprint,
+          visual_measurements: result.blueprint.visual_measurements.map((measurement, itemIndex) => itemIndex === index
+            ? { ...measurement, ...patch, reviewStatus: "pending" }
+            : measurement),
+        },
+      };
+    });
+  }
+
+  function setVisualMeasurementDecision(index: number, decision: "confirmed" | "rejected") {
+    updateCurrentResult((result) => {
+      if (!result.blueprint?.visual_measurements) return result;
+      const measurement = result.blueprint.visual_measurements[index];
+      if (!measurement) return result;
+      if (decision === "confirmed" && !canConfirmMeasurementReading(measurement)) return result;
+      return {
+        ...result,
+        blueprint: {
+          ...result.blueprint,
+          visual_measurements: result.blueprint.visual_measurements.map((item, itemIndex) => itemIndex === index
+            ? { ...item, reviewStatus: decision }
+            : item),
+        },
+      };
+    });
+  }
+
+  async function saveMeasurementReviews() {
+    if (!selected || !blueprint) return;
+    const reviews = (blueprint.visual_measurements ?? []).flatMap((measurement, measurementIndex) => {
+      if (measurement.reviewStatus !== "confirmed" && measurement.reviewStatus !== "rejected") return [];
+      return [{
+        measurementIndex,
+        decision: measurement.reviewStatus === "confirmed" ? "confirmed_reading" as const : "rejected" as const,
+        ...(measurement.reviewStatus === "confirmed" ? {
+          value: measurement.reviewedValue,
+          unit: measurement.reviewedUnit ?? measurement.unit,
+          featureDescription: measurement.reviewedFeature ?? null,
+        } : {}),
+        note: measurement.reviewNote ?? null,
+      }];
+    });
+    setSavingMeasurementReviews(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/drawing-review`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileIndex: selected.index, reviews }),
+      });
+      const payload = await response.json().catch(() => ({})) as { error?: string; ok?: boolean; confirmedCount?: number; rejectedCount?: number };
+      if (response.status === 401) {
+        router.replace("/login");
+        return;
+      }
+      if (response.status === 402) throw new Error("Saving measurement reviews requires an active Pro subscription or administrator access.");
+      if (!response.ok || !payload.ok) throw new Error(payload.error ?? `Saving measurement reviews failed (HTTP ${response.status}).`);
+      setNotice(`Saved ${payload.confirmedCount ?? 0} confirmed reading(s) and ${payload.rejectedCount ?? 0} rejected candidate(s). These decisions are stored separately from CAD geometry.`);
+      router.refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save measurement reviews.");
+    } finally {
+      setSavingMeasurementReviews(false);
+    }
   }
 
   function toggleDefaultConfirmation(field: DefaultFieldKey, checked: boolean) {
@@ -311,7 +476,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
         throw new Error("Drawing OCR requires an active Pro subscription or administrator access.");
       }
       if (!response.ok || !payload.spec) throw new Error(payload.error ?? `Drawing OCR failed (HTTP ${response.status}).`);
-      setResults((previous) => ({ ...previous, [selected.index]: payload.spec! }));
+      setResults((previous) => ({ ...previous, [selected.index]: attachSavedMeasurementReviews(payload.spec!, []) }));
       setReviewedDescription((payload.spec.rawText ?? "").slice(0, 4000));
       setNotice(
         payload.spec.blueprint
@@ -362,7 +527,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
           confirmedDefaultFields: getProvisionalDefaultFields(blueprint)
             .filter((item) => item.value !== null && (confirmedDefaultFields[selectedIndex] ?? []).includes(item.field))
             .map((item) => ({ field: item.field, value: item.value })),
-          ...(blueprint ? { reviewedBlueprint: blueprint } : {}),
+          ...(blueprint ? { reviewedBlueprint: getCanonicalBlueprintForGeneration(blueprint) } : {}),
         }),
       });
       const payload = await response.json().catch(() => ({})) as { error?: string; ok?: boolean; version?: number; message?: string };
@@ -433,6 +598,110 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
               <div className="rounded-lg bg-muted/40 p-3 text-sm"><span className="font-medium">Tolerances and fits</span><p className="mt-1 text-muted-foreground">{[...(currentResult.tolerances ?? []).map((item) => item.raw ?? ""), ...(currentResult.fits ?? [])].filter(Boolean).join("; ") || "None recognized"}</p></div>
               <div className="rounded-lg bg-muted/40 p-3 text-sm"><span className="font-medium">Threads / material / finish</span><p className="mt-1 text-muted-foreground">{[...(currentResult.threads ?? []), currentResult.material ?? "", currentResult.surfaceFinish ?? ""].filter(Boolean).join("; ") || "None recognized"}</p></div>
             </div>
+            {blueprint?.visual_measurements && blueprint.visual_measurements.length > 0 && (
+              <section className="space-y-3 rounded-xl border border-border p-4">
+                <div>
+                  <h3 className="font-semibold">Drawing measurement review ledger</h3>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                    Compare each candidate with the original drawing. Confirming a reading records your transcription decision only; it does not assign the value to a CAD feature or change the model geometry.
+                  </p>
+                </div>
+                <div className="space-y-3">
+                  {blueprint.visual_measurements.map((measurement, index) => (
+                    <article key={index} className="space-y-3 rounded-lg border border-border p-3">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <p className="font-medium">{measurement.dimension_name}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">{measurement.raw_callout || "No readable callout text"} · {measurement.kind}</p>
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          <span className="rounded-md border px-2 py-1 text-xs">
+                            {measurement.verification_status === "ocr_value_match" ? "Value also found by OCR" : "Vision-only · verify"}
+                          </span>
+                          <span className={`rounded-md border px-2 py-1 text-xs ${measurement.reviewStatus === "confirmed" ? "border-emerald-600 text-emerald-700" : measurement.reviewStatus === "rejected" ? "border-destructive text-destructive" : "text-muted-foreground"}`}>
+                            {measurement.reviewStatus === "confirmed" ? "Reading confirmed by you" : measurement.reviewStatus === "rejected" ? "Candidate rejected" : "Pending your review"}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                        <span><strong>AI proposal:</strong> {measurement.value === null ? "Unreadable" : measurement.value} {measurement.unit === "unknown" ? "" : measurement.unit}</span>
+                        <span><strong>View:</strong> {measurement.source_view}</span>
+                        <span><strong>Page:</strong> {measurement.source_page}</span>
+                        {measurement.feature && <span><strong>AI feature hint:</strong> {measurement.feature}</span>}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Model confidence estimate: {Math.round(measurement.confidence * 100)}% · Uncalibrated and not an accuracy probability
+                      </p>
+                      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_160px]">
+                        <label className="text-sm font-medium">Value you read from the drawing
+                          <input
+                            type="number"
+                            step="any"
+                            value={measurement.reviewedValue ?? ""}
+                            onChange={(event) => updateVisualMeasurement(index, { reviewedValue: numericInputValue(event.target.value) })}
+                            disabled={generating || savingMeasurementReviews}
+                            className={blueprintInputClass(measurement.reviewStatus === "pending")}
+                          />
+                        </label>
+                        <label className="text-sm font-medium">Unit
+                          <select
+                            value={measurement.reviewedUnit ?? measurement.unit}
+                            onChange={(event) => updateVisualMeasurement(index, { reviewedUnit: event.target.value })}
+                            disabled={generating || savingMeasurementReviews}
+                            className={blueprintInputClass(measurement.reviewStatus === "pending")}
+                          >
+                            <option value="unknown">Unknown</option>
+                            <option value="mm">mm</option>
+                            <option value="cm">cm</option>
+                            <option value="m">m</option>
+                            <option value="in">in</option>
+                            <option value="inch">inch</option>
+                            <option value="deg">deg</option>
+                            <option value="°">°</option>
+                            <option value="count">count</option>
+                          </select>
+                        </label>
+                      </div>
+                      <label className="block text-sm font-medium">Feature this callout appears to describe (your note; not a CAD binding)
+                        <input
+                          value={measurement.reviewedFeature ?? ""}
+                          onChange={(event) => updateVisualMeasurement(index, { reviewedFeature: event.target.value.slice(0, 120) })}
+                          maxLength={120}
+                          disabled={generating || savingMeasurementReviews}
+                          className={blueprintInputClass(false)}
+                          placeholder="e.g. outer circular edge, central bore, six mounting holes"
+                        />
+                      </label>
+                      <label className="block text-sm font-medium">Review note (optional)
+                        <textarea
+                          value={measurement.reviewNote ?? ""}
+                          onChange={(event) => updateVisualMeasurement(index, { reviewNote: event.target.value.slice(0, 500) })}
+                          maxLength={500}
+                          rows={2}
+                          disabled={generating || savingMeasurementReviews}
+                          className={blueprintInputClass(false)}
+                          placeholder="Note any ambiguity, tolerance or reason for rejecting this reading."
+                        />
+                      </label>
+                      <div className="flex flex-wrap gap-2">
+                        <Button type="button" size="sm" onClick={() => setVisualMeasurementDecision(index, "confirmed")} disabled={!canConfirmMeasurementReading(measurement) || generating || savingMeasurementReviews}>
+                          Confirm reading
+                        </Button>
+                        <Button type="button" size="sm" variant="outline" onClick={() => setVisualMeasurementDecision(index, "rejected")} disabled={generating || savingMeasurementReviews}>
+                          Reject candidate
+                        </Button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3">
+                  <p className="text-xs leading-5 text-muted-foreground">Edits reset the decision to pending. Saved decisions retain the source candidate separately and are not used as CAD dimensions.</p>
+                  <Button type="button" variant="outline" onClick={saveMeasurementReviews} disabled={savingMeasurementReviews || analyzing || generating}>
+                    {savingMeasurementReviews ? <><LoaderCircle className="size-4 animate-spin" /> Saving review…</> : "Save measurement review"}
+                  </Button>
+                </div>
+              </section>
+            )}
             {blueprint && (
               <section className="space-y-4 rounded-xl border border-border p-4">
                 <div className="flex flex-wrap items-start justify-between gap-2">
