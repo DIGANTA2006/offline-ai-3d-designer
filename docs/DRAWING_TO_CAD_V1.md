@@ -109,3 +109,10 @@ Requires the current service-token authentication and reviewed=true. The server 
 ## Regression tests
 
 tests/test_drawing_to_cad_blueprint.py checks defaults, dimension grounding, root-radius-derived scallops, PCD holes, annular ring steps, vision timeout configuration, JPEG payload sizing, JSON-mode compatibility fallback, vector-PDF rendering, and STEP/STL generation. tests/test_ocr_api.py verifies the existing API accepts a reviewed structured blueprint without requiring a shape phrase in the description.
+
+
+## User-reviewed measurement ledger
+
+The project UI can now retain a user's transcription decision for an image-read candidate using the authenticated \`POST /api/projects/[projectId]/drawing-review\` route. The original OCR/vision candidate stays immutable under \`ocrResults[].spec.blueprint.visual_measurements\`; a separate \`visualMeasurementReviews\` sidecar stores the candidate index, decision, corrected value/unit, optional feature description/note, authenticated reviewer and server timestamp.
+
+A confirmed reading means the user confirms the callout transcription. It does not establish leader-line/feature association and does not become a CAD parameter. The review UI sends only the canonical Blueprint fields to the geometry generator; UI-only review fields are stripped before generation. Applying a reviewed value to a specific geometry field remains a separate gated workflow.

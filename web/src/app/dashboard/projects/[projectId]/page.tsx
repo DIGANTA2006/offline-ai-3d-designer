@@ -77,6 +77,16 @@ export default async function ProjectDetailPage({ params }: Props) {
             needsReview?: boolean;
             limitations?: string[];
           } : undefined,
+          measurementReviews: Array.isArray(saved?.visualMeasurementReviews)
+            ? saved.visualMeasurementReviews as Array<{
+                measurementIndex: number;
+                decision: "confirmed_reading" | "rejected";
+                value?: number | null;
+                unit?: string | null;
+                featureDescription?: string | null;
+                note?: string | null;
+              }>
+            : [],
         }];
       })
     : [];
