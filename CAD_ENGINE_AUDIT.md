@@ -1,6 +1,8 @@
 # CAD Engine Audit and Engineering Roadmap
 
-Audit date: 23 October 2026
+> **Historical audit:** the original audit below was written on 23 October 2026. It is retained as historical design/implementation context and is not the current repository snapshot. Use [Project Architecture, Status and Delivery — 8 November 2026](docs/PROJECT_ARCHITECTURE_STATUS_2026-11-08.md) for the verified current architecture, PR status and release gaps.
+
+Audit date: 23 October 2026 (historical baseline; status pointer refreshed 8 November 2026)
 
 This document separates capabilities that exist in code from capabilities that are only planned. The current engine is a conservative parametric primitive generator, not a general-purpose CAD kernel or a vision model that can reconstruct every mechanical part from a single image.
 
