@@ -217,6 +217,38 @@ try {
   assert.equal(unsupportedFeatureField.status, 422, "feature fields must be allowlisted for the feature type");
   assert.equal(calls.updates, 1);
 
+  const originalBodyType = project.versions[0].spec.ocrResults[0].spec.blueprint.primary_body_type;
+  project.versions[0].spec.ocrResults[0].spec.blueprint.primary_body_type = "prismatic_box";
+  const wrongBodyFeature = await send({
+    fileIndex: 0,
+    reviews: [{
+      measurementIndex: 0,
+      decision: "confirmed_reading",
+      value: 80,
+      unit: "mm",
+      targetBinding: { scope: "feature", featureIndex: 0, field: "count" },
+    }],
+  });
+  assert.equal(wrongBodyFeature.status, 422, "hole-pattern targets require a rotational flange body");
+  assert.equal(calls.updates, 1);
+  project.versions[0].spec.ocrResults[0].spec.blueprint.primary_body_type = originalBodyType;
+
+  const originalProfile = project.versions[0].spec.ocrResults[0].spec.blueprint.base_sketch.profile;
+  project.versions[0].spec.ocrResults[0].spec.blueprint.base_sketch.profile = "rectangle";
+  const wrongBaseProfile = await send({
+    fileIndex: 0,
+    reviews: [{
+      measurementIndex: 0,
+      decision: "confirmed_reading",
+      value: 80,
+      unit: "mm",
+      targetBinding: { scope: "base_sketch", field: "outer_diameter" },
+    }],
+  });
+  assert.equal(wrongBaseProfile.status, 422, "base diameter targets require a circular flange profile");
+  assert.equal(calls.updates, 1);
+  project.versions[0].spec.ocrResults[0].spec.blueprint.base_sketch.profile = originalProfile;
+
   const unknownFeature = await send({
     fileIndex: 0,
     reviews: [{
