@@ -1,81 +1,73 @@
 # Next Session Handoff — Offline AI 3D Designer
 
 **Updated:** 8 November 2026  
-**Repository:** \`DIGANTA2006/offline-ai-3d-designer\` (private)  
-**Default branch:** \`main\`  
-**Current main:** \`9c8707c89f6ae04607a4a77cd183ba1491ad18a8\`  
-**Last merged PR:** #20
+**Repository:** `DIGANTA2006/offline-ai-3d-designer` (private)  
+**Client:** C-DAC Kolkata  
+**Default branch:** `main`  
+**Current main at audit:** `06a3f2b0c60896cfc2c18d0d26d55e4b1da08c80`
 
-## Product identity and engineering objective
+## Read this first
 
-Offline AI 3D Designer is an engineering-grade CAD and manufacturing platform. Its interface should guide people who do not know CAD; its feature program, CAD kernel, measurement provenance, geometry checks, export safeguards, printability requirements and manufacturing acceptance gates remain engineering-grade.
+The internal source of truth for pre-submission work is [C-DAC Client Submission Readiness and Verified Gap Register](docs/CLIENT_SUBMISSION_READINESS_2026-11-08.md).
 
-The intended journey is natural-language/drawing input → OCR and visual evidence → structured blueprint → missing-information questions → user-reviewed dimensions → deterministic CAD → geometry validation → printability → interactive 3D review → STEP/STL/3MF/ZIP and reports → printer-aware CuraEngine slicing → G-code/toolpath review → later local provider discovery.
+**Do not claim the product is production-accepted or ready for arbitrary engineering drawings.** This is an engineering-grade project, but the current repository evidence is an engineering foundation—not a completed client acceptance package.
 
-AI proposes; deterministic code validates. Uncertain or unsupported geometry is blocked or routed to clarification. A photo without known scale is not an exact engineering drawing.
+## Current mainline evidence
 
-## Verified mainline baseline
+Merged implementation increments:
+- PR #20 — drawing export provenance and provisional-dimension confirmation.
+- PR #23 — Blueprint-native printability against generated solids.
+- PR #24 — real positive G-code extrusion measurement/validation.
+- PR #25 — MIME-aware OCR source selection.
+- PR #29 — visual measurement candidates and persisted review decisions.
 
-- Main is PR #20's merge commit \`9c8707c...\`.
-- PR #20 stores the effective dimensions used to create geometry, blocks drawing generation without the saved Blueprint, and requires exact provisional height/wall confirmation before export.
-- Main already contains separate \`PartSpec\` and drawing \`Blueprint\` contracts. Do not merge or silently reinterpret these schemas.
-- The repository is private. No Production deployment or secret change is included in the current draft PR work.
+Merged documentation increments:
+- PR #26 — engineering-grade guided UX wording.
+- PR #28 — architecture/status baseline. Its original PR table became stale after subsequent same-day merges; current status is recorded in the new readiness register.
 
-## Active drafts
+Latest main SHA: `06a3f2b0c60896cfc2c18d0d26d55e4b1da08c80`.
 
-- **#22:** semantic dimension evidence; recorded CI head passed 324 Python tests plus web, Docker and CodeQL.
-- **#23:** saved drawing Blueprint printability; recorded head passed 320 Python tests plus web and CodeQL. Its Docker smoke reported 0.000 m because it predates #24's E-axis smoke gate.
-- **#24:** positive E-axis extrusion/deposition validation; recorded 10 mm test cube measured 0.345410 m and 2,962 deposition moves; 322 Python tests, web and CodeQL passed.
-- **#25:** OCR source selection from validated MIME/type; 316 Python tests and web/Docker/CodeQL passed.
-- **#26:** documentation-only T73 wording change to guided UX / advanced engineering mode; CI passed.
-- **#29:** combined Phase 2 visual candidates plus the first persisted Phase 3 review ledger; head ee77ff2... passed 327 Python tests, web lint/typecheck/build, Docker/CAD-OCR smoke and both CodeQL scans. Docker smoke still reports 0.000 m filament; integrate #24 before treating its filament estimate as valid.
+Latest main checks: 337 Python tests passed (2 warnings), web lint/typecheck/build passed, CodeQL Python and JS/TS passed, Docker CAD/OCR smoke passed, and the actual CuraEngine test slice reported 0.345410 m E-axis filament length and 2,962 deposition moves. Filament mass is not measured.
 
-PRs #18 and #27 are closed as superseded by #29. PRs #16/#17/#19 and #21 are closed as superseded. PR #20 is merged. PRs #22–#26 and #29 remain unmerged drafts.
+## Open PRs
 
-## Actual architecture
+- **#15 roadmap:** documentation-only, stale/diverged. Refresh to current main before relying on its status claims.
+- **#22 semantic dimension evidence:** diverged from current main and overlaps drawing extraction/docs/tests changed by #29. Do not merge the branch wholesale. Compare exact hunks and selectively port only demonstrably missing changes; rerun CI on a main-based branch.
 
-- Web: Next.js 15 App Router / TypeScript in \`web/\`, hosted on Vercel.
-- Authentication: Firebase with server-side session validation.
-- Database: PostgreSQL through Prisma; Supabase is the hosted service.
-- Files: private Vercel Blob storage.
-- Service boundary: Next.js routes call Railway FastAPI using a server-side CAD service token.
-- CAD: Python, build123d and OpenCASCADE; general \`PartSpec\`/GeometryEngine and separate drawing \`Blueprint\` generator.
-- Drawing: PyMuPDF/Tesseract plus optional vision adapter. Hosted vision remains blocked unless the server-side policy explicitly allows it.
-- Manufacturing: CuraEngine and printer/extruder definitions, plus G-code validation.
-- Billing: Razorpay subscription integration.
+## Architecture boundaries
 
-## Critical limitations
+- Web: Next.js 15 App Router / TypeScript in `web/`.
+- Authentication: Firebase sessions.
+- Database: PostgreSQL via Prisma / Supabase.
+- Files: private Vercel Blob.
+- CAD service: FastAPI/Python, Railway, server-side service-token proxy.
+- CAD kernel: build123d/OpenCASCADE.
+- General `PartSpec` and drawing-specific `Blueprint` are different contracts.
+- Drawing Blueprint currently supports four body types and seven feature types. It is not universal drawing-to-CAD.
+- Sprocket builder uses circular seat cuts; it is not an ISO 606 involute chain-sprocket profile.
+- Measurement review currently confirms transcription only; it does not map the measurement to a CAD parameter or prove arrow-to-feature association.
+- Hardware fit check is axis-aligned, not full 3D interference/keep-out analysis.
+- Printability thresholds are generic guidance, not printer/material certification.
+- Positive E-axis G-code parsing exists; selected printer profiles, physical print evidence and measured filament mass remain open.
+- No production WebGL viewer, CATIA opening evidence, drawing accuracy benchmark or physical-print acceptance artifact is currently evidenced.
 
-- Drawing Blueprint currently has four body types and seven feature types; it is not universal drawing-to-CAD.
-- The broader PartSpec feature engine is not proof that every operation is exposed in each drawing/web path.
-- The dedicated sprocket builder uses circular seat cuts; it is not an ISO 606 involute chain-sprocket profile.
-- OCR value matches and visual candidates do not prove dimension-arrow/feature association.
-- PR #29 adds a persisted reading-confirmation/rejection sidecar with reviewer/time provenance and immutable OCR evidence. Manual entries, dimension-to-CAD-field mapping, image-region highlighting and the complete geometry-linked measurement editor remain incomplete.
-- No interactive browser 3D viewer was found in the current main component tree.
-- Printer-specific profiles, layer preview and physical print evidence remain open.
-- Hardware fit-check is axis-aligned; it does not certify arbitrary 3D interference, thermal or structural performance.
-- Physical printer control is not implemented and must remain disabled.
+## Required execution order before client submission
 
-## Next engineering order
-
-1. Review and integrate approved Phase 1 PRs after current-head CI, rebases and product-owner approval.
-2. Finish #27 on the integrated #22/#25 baseline; do not merge a failed or stale head.
-3. Build the measurement editor with source, unit, value, tolerance, page/view/region, feature association, confidence and confirmation state; edits invalidate previous confirmation.
-4. Build a real interactive viewer from the exact validated generated solid/mesh.
-5. Establish the golden drawing set and dimension/feature/bounding-box accuracy metrics.
-6. Add printer-specific profiles, layer/toolpath review and physical print records after owner selects printer models.
-7. Update status documents after each merge and live test.
-
-## Owner inputs and acceptance decisions
-
-No separate, authoritative 65-feature C-DAC acceptance catalogue was found in the current repository or supplied status material. In the existing team plan **T65** means opening the exported STEP in CATIA and logging the findings; the wider task plan includes IDs beyond T65. Obtain the actual C-DAC 65-item specification before turning it into an implementation checklist or claiming coverage.
-
-Also confirm signed C-DAC scope, ISO 606 sprocket requirement, vision/data policy, printer/material profiles, IP/licence terms and the golden drawing artifacts.
+1. Freeze signed C-DAC scope, exact 65-item acceptance list (if applicable), tolerance requirements, printers/materials, privacy/offline boundary and acceptance terms.
+2. Establish a C-DAC-approved golden drawing/reference-model benchmark; define acceptance thresholds before measuring accuracy.
+3. Finish measurement source-region review, manual entry, dimension-to-feature/CAD-field association and geometry-change invalidation.
+4. Complete only feature operations mapped to the signed acceptance scope; block unsupported geometry.
+5. Implement a version-correct interactive 3D viewer with dimensions/features and drawing comparison.
+6. Validate actual printer/material profiles, inspect G-code and perform documented physical prints.
+7. Verify STEP/3MF/STL exports through CATIA and the agreed slicer, as required by the contract.
+8. Run clean-account staging end-to-end, permissions/quota/error paths, security, backup/restore and user acceptance.
+9. Deliver user/admin/deployment/restore documentation and a signed pass/fail/deviation matrix.
 
 ## Safe operating rules
 
-- Work in focused branches and draft PRs.
-- Do not commit directly to main, merge, or deploy without Diganta's approval.
-- Do not change Production secrets, databases, hosted-vision settings or payment settings.
-- Prefer Vercel/Railway/Supabase Preview and CI for cloud verification; do not require a local Docker/Linux setup when cloud verification suffices.
-- For work needing local Windows execution, provide a complete PowerShell script with backups, path checks, bracket-safe paths, tests and explicit PASS/FAIL output.
+- Work in focused branches and draft PRs; keep main and Production protected from experimental work.
+- Do not merge or deploy without explicit product-owner approval.
+- Do not send client-confidential drawings to an unapproved hosted vision provider.
+- Do not turn a passing test or a generated file into an engineering acceptance claim.
+- Keep unsupported geometry, uncertain dimensions and unconfirmed defaults blocked from misleading export/print-ready claims.
+- Record every benchmark, defect, deviation, owner decision and acceptance result.
