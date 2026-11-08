@@ -149,7 +149,7 @@ assert.equal(applied.base_sketch.thickness_is_default, false, "replaced provisio
 assert.equal(applied.features[0].count, 6, "saved count must update its selected feature");
 assert.equal(applied.features[0].start_angle, 45, "saved angle must update its selected feature");
 assert.equal(applied.features[0].diameter, 5, "unsaved mappings must never reach geometry");
-assert.equal(applied.base_sketch.thickness, 10, "pending mappings must never reach geometry");
+assert.equal(applied.base_sketch.thickness, 8, "only the confirmed and saved thickness mapping may replace the default");
 assert.equal(applied.base_sketch.wall_thickness, 2.5, "unsupported units must never reach geometry");
 assert.equal(applied.needs_review, true, "applied measurements must keep the Blueprint in review state");
 
