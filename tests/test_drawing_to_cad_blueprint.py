@@ -640,8 +640,10 @@ def test_exported_part_spec_records_applied_defaults():
 def test_inventory_preserves_different_semantic_callouts_with_the_same_value():
     inventory = _dimension_inventory("OD 80 mm PCD 80 mm", {"dimensions": {}}, 1)
 
-    assert any(token.kind == "diameter" and "outer diameter" in token.raw.lower() for token in inventory)
-    assert any(token.kind == "diameter" and "pitch circle diameter" in token.raw.lower() for token in inventory)
+    # Keep the OCR source wording intact; semantic classification is separate
+    # from the raw evidence and must not fabricate a replacement callout.
+    assert any(token.kind == "diameter" and token.raw.lower().startswith("od 80") for token in inventory)
+    assert any(token.kind == "diameter" and token.raw.lower().startswith("pcd 80") for token in inventory)
 
 
 def test_outer_diameter_cannot_be_grounded_from_an_unrelated_hole_diameter():

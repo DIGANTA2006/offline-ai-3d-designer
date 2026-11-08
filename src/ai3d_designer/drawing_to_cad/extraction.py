@@ -487,7 +487,7 @@ def _dimension_inventory(
     # Labels are strong semantic evidence and also let the half-PCD grounding rule work.
     for labels, kind in (
         (["outer diameter", "outside diameter", "outer dia", "od"], "diameter"),
-        (["outer radius", "outside radius", "root radius", "root circle radius", "dedendum radius", "gullet radius", "radial cutout radius", "cutout radius", "notch radius"], "radius"),
+        (["outer radius", "outside radius", "root radius", "root circle radius", "dedendum radius", "gullet radius", "radial cutout radius", "cutout radius", "notch radius", "pitch circle radius", "bolt circle radius", "pitch radius"], "radius"),
         (["inner bore diameter", "bore diameter", "bore dia", "inner diameter", "id"], "diameter"),
         (["pitch circle diameter", "pitch circle dia", "pcd", "bcd", "bolt circle diameter"], "diameter"),
         (["hole diameter", "hole dia", "dia of holes"], "diameter"),
@@ -542,7 +542,7 @@ def _dimension_inventory(
     if isinstance(page_texts, list):
         labels = (
             (["outer diameter", "outside diameter", "outer dia", "od"], "diameter"),
-            (["outer radius", "outside radius", "root radius", "root circle radius", "dedendum radius", "gullet radius", "radial cutout radius", "cutout radius", "notch radius"], "radius"),
+            (["outer radius", "outside radius", "root radius", "root circle radius", "dedendum radius", "gullet radius", "radial cutout radius", "cutout radius", "notch radius", "pitch circle radius", "bolt circle radius", "pitch radius"], "radius"),
             (["inner bore diameter", "bore diameter", "bore dia", "inner diameter", "id"], "diameter"),
             (["pitch circle diameter", "pitch circle dia", "pcd", "bcd", "bolt circle diameter"], "diameter"),
             (["hole diameter", "hole dia", "dia of holes"], "diameter"),
