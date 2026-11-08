@@ -166,13 +166,17 @@ function validateReview(
   if (seen.has(index)) throw new RouteError("A drawing measurement may be reviewed only once per save.", 400);
   seen.add(index);
 
+  const candidate = candidates[index];
+  if (!isRecord(candidate)) {
+    throw new RouteError("The selected drawing candidate is invalid or no longer available.", 422);
+  }
+
   const decision = raw.decision;
   if (decision !== "confirmed_reading" && decision !== "rejected") {
     throw new RouteError("Measurement decision must be confirmed_reading or rejected.", 400);
   }
   const featureDescription = optionalText(raw.featureDescription, "Feature description", 120);
   const note = optionalText(raw.note, "Review note", 500);
-  const candidate = candidates[index];
   if (decision === "rejected" && raw.targetBinding !== undefined && raw.targetBinding !== null) {
     throw new RouteError("A rejected measurement cannot be associated with CAD geometry.", 422);
   }
