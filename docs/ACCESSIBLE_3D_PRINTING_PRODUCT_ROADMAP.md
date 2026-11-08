@@ -23,9 +23,9 @@
 | #24 | Positive G-code extrusion and measured filament | 322 Python tests; the 10 mm test cube reported 0.345410 m E-axis filament and 2,962 deposition moves; web and CodeQL passed |
 | #25 | OCR source selection using validated MIME/type | 316 Python tests; OCR helper, web, Docker and CodeQL passed |
 | #26 | Engineering-grade guided UX wording | Documentation-only; CI passed; T73 renamed to “Guided user experience and advanced engineering mode switch” |
-| #27 | Combined visual measurement candidates, semantic grounding and MIME-aware drawing review | Latest head f35d69d...; 327 Python tests, web, Docker/CAD-OCR smoke and CodeQL passed |
+| #29 | Combined Phase 2 visual candidates plus persisted Phase 3 measurement-review ledger | Latest head ee77ff2...; 327 Python tests, web, Docker/CAD-OCR smoke and both CodeQL scans passed. Docker smoke still reports 0.000 m filament until #24 is integrated. |
 
-The earlier PRs #16, #17 and #19 were closed as superseded by #23, #24 and #25. PR #18 was closed in favour of #27. PR #21 was closed in favour of #22. PR #20 is merged. PRs #22–#27 remain drafts and are **not** part of main until Diganta reviews and merges them.
+The earlier PRs #16, #17 and #19 were closed as superseded by #23, #24 and #25. PRs #18 and #27 are closed as superseded by #29. PR #21 was closed in favour of #22. PR #20 is merged. PRs #22–#26 and #29 remain drafts and are **not** part of main until Diganta reviews and merges them.
 
 **Important CI boundary:** PR #27's Docker/CAD-OCR smoke still reports 0.000 m filament because #27 does not include the separate slicer correction in #24. A successful image build or CAD/OCR smoke is not proof of valid extrusion. Re-run the combined smoke after #24 is integrated.
 
