@@ -12,12 +12,16 @@ export const maxDuration = 20;
 
 type Context = { params: Promise<{ projectId: string }> };
 type Candidate = { kind?: unknown };
+type MeasurementBinding =
+  | { scope: "base_sketch"; field: "outer_diameter" | "inner_bore_diameter" | "width" | "length" | "thickness" | "wall_thickness" }
+  | { scope: "feature"; featureIndex: number; field: "count" | "pitch_radius" | "start_angle" | "angular_pitch" | "diameter" | "inner_diameter" | "root_radius" | "length" | "width" | "depth" | "radius" };
 type ReviewInput = {
   measurementIndex: number;
   decision: "confirmed_reading" | "rejected";
   value?: number | null;
   unit?: string | null;
   featureDescription?: string | null;
+  targetBinding?: MeasurementBinding | null;
   note?: string | null;
 };
 type SavedReview = ReviewInput & { reviewedAt: string; reviewedBy: string };
@@ -52,9 +56,130 @@ function optionalText(value: unknown, label: string, maxLength: number): string 
   return cleaned || null;
 }
 
+function hasSupportedBlueprintBodyProfile(bodyType: string | null, profile: string | null): boolean {
+  if (bodyType === "rotational_flange") return profile === "circle";
+  if (bodyType === "prismatic_box" || bodyType === "sheet_enclosure") {
+    return ["rectangle", "polygon", "complex_path"].includes(profile ?? "");
+  }
+  return false;
+}
+
+function validateTargetBinding(
+  raw: unknown,
+  candidateKind: unknown,
+  blueprint: Record<string, unknown>,
+): MeasurementBinding | null {
+  if (raw === undefined || raw === null) return null;
+  if (!isRecord(raw)) throw new RouteError("CAD field association must be an object.", 400);
+
+  const baseFieldKinds: Record<string, string> = {
+    outer_diameter: "diameter",
+    inner_bore_diameter: "diameter",
+    width: "linear",
+    length: "linear",
+    thickness: "linear",
+    wall_thickness: "linear",
+  };
+  const bodyType = typeof blueprint.primary_body_type === "string" ? blueprint.primary_body_type : null;
+  const baseSketch = isRecord(blueprint.base_sketch) ? blueprint.base_sketch : null;
+  const profile = typeof baseSketch?.profile === "string" ? baseSketch.profile : null;
+
+  if (raw.scope === "base_sketch") {
+    if (!hasSupportedBlueprintBodyProfile(bodyType, profile)) {
+      throw new RouteError("Base-sketch bindings require a supported body type and matching sketch profile.", 422);
+    }
+    if (Object.keys(raw).some((key) => !["scope", "field"].includes(key))) {
+      throw new RouteError("Base-sketch association contains unsupported properties.", 400);
+    }
+    const field = raw.field;
+    if (typeof field !== "string" || !Object.hasOwn(baseFieldKinds, field)) {
+      throw new RouteError("This base-sketch field cannot receive a reviewed measurement.", 422);
+    }
+    if (candidateKind !== baseFieldKinds[field]) {
+      throw new RouteError("Measurement kind does not match the selected base-sketch field.", 422);
+    }
+    if ((field === "outer_diameter" || field === "inner_bore_diameter") &&
+        (bodyType !== "rotational_flange" || profile !== "circle")) {
+      throw new RouteError("Base-sketch diameter bindings require a circular rotational flange profile.", 422);
+    }
+    if ((field === "width" || field === "length") &&
+        (!["prismatic_box", "sheet_enclosure"].includes(bodyType ?? "") ||
+          !["rectangle", "polygon", "complex_path"].includes(profile ?? ""))) {
+      throw new RouteError("Base-sketch width and length bindings require a prismatic body.", 422);
+    }
+    if (field === "thickness" && (!bodyType || bodyType === "revolved_profile")) {
+      throw new RouteError("Solid thickness cannot be bound for this body type.", 422);
+    }
+    if (field === "wall_thickness" && bodyType !== "sheet_enclosure") {
+      throw new RouteError("Wall thickness can only be bound on a sheet enclosure.", 422);
+    }
+    return {
+      scope: "base_sketch",
+      field: field as Extract<MeasurementBinding, { scope: "base_sketch" }>["field"],
+    };
+  }
+
+  if (raw.scope === "feature") {
+    if (Object.keys(raw).some((key) => !["scope", "featureIndex", "field"].includes(key))) {
+      throw new RouteError("Feature association contains unsupported properties.", 400);
+    }
+    const featureIndex = raw.featureIndex;
+    const features = blueprint.features;
+    if (typeof featureIndex !== "number" || !Number.isSafeInteger(featureIndex) ||
+        !Array.isArray(features) || featureIndex < 0 || featureIndex >= features.length) {
+      throw new RouteError("CAD field association refers to an unknown Blueprint feature.", 422);
+    }
+    const feature = features[featureIndex];
+    if (!isRecord(feature) || typeof feature.type !== "string") {
+      throw new RouteError("The selected Blueprint feature is invalid.", 422);
+    }
+    if (!hasSupportedBlueprintBodyProfile(bodyType, profile)) {
+      throw new RouteError("Feature bindings require a supported body type and matching sketch profile.", 422);
+    }
+    if (
+      ["hole_pattern", "radial_cutout_pattern", "ring_step"].includes(feature.type)
+      && bodyType !== "rotational_flange"
+    ) {
+      throw new RouteError("This feature can only be bound on a rotational flange.", 422);
+    }
+
+    const featureFieldKinds: Record<string, Record<string, string>> = {
+      circular_pattern_cut: { count: "count", pitch_radius: "radius", start_angle: "angle", angular_pitch: "angle", diameter: "diameter", depth: "linear" },
+      hole_pattern: { count: "count", pitch_radius: "radius", start_angle: "angle", angular_pitch: "angle", diameter: "diameter", depth: "linear" },
+      radial_cutout_pattern: { count: "count", pitch_radius: "radius", root_radius: "radius", radius: "radius", start_angle: "angle", angular_pitch: "angle" },
+      ring_step: { diameter: "diameter", inner_diameter: "diameter", depth: "linear" },
+      through_hole: { diameter: "diameter", depth: "linear" },
+      pocket: { diameter: "diameter", length: "linear", width: "linear", depth: "linear" },
+      fillet: { radius: "radius" },
+    };
+    const allowedFields = featureFieldKinds[feature.type];
+    const field = raw.field;
+    if (!allowedFields || typeof field !== "string" || !Object.hasOwn(allowedFields, field)) {
+      throw new RouteError("This field is not supported for the selected Blueprint feature.", 422);
+    }
+    if (candidateKind !== allowedFields[field]) {
+      throw new RouteError("Measurement kind does not match the selected feature field.", 422);
+    }
+    return {
+      scope: "feature",
+      featureIndex,
+      field: field as Extract<MeasurementBinding, { scope: "feature" }>["field"],
+    };
+  }
+
+  throw new RouteError("CAD field association scope must be base_sketch or feature.", 400);
+}
+
+function bindingKey(binding: MeasurementBinding): string {
+  return binding.scope === "base_sketch"
+    ? `base_sketch.${binding.field}`
+    : `features[${binding.featureIndex}].${binding.field}`;
+}
+
 function validateReview(
   raw: unknown,
   candidates: Candidate[],
+  blueprint: Record<string, unknown>,
   userId: string,
   reviewedAt: string,
   seen: Set<number>,
@@ -67,18 +192,29 @@ function validateReview(
   if (seen.has(index)) throw new RouteError("A drawing measurement may be reviewed only once per save.", 400);
   seen.add(index);
 
+  const candidate = candidates[index];
+  if (!isRecord(candidate)) {
+    throw new RouteError("The selected drawing candidate is invalid or no longer available.", 422);
+  }
+
   const decision = raw.decision;
   if (decision !== "confirmed_reading" && decision !== "rejected") {
     throw new RouteError("Measurement decision must be confirmed_reading or rejected.", 400);
   }
   const featureDescription = optionalText(raw.featureDescription, "Feature description", 120);
   const note = optionalText(raw.note, "Review note", 500);
-  const candidate = candidates[index];
+  if (decision === "rejected" && raw.targetBinding !== undefined && raw.targetBinding !== null) {
+    throw new RouteError("A rejected measurement cannot be associated with CAD geometry.", 422);
+  }
+  const targetBinding = decision === "confirmed_reading"
+    ? validateTargetBinding(raw.targetBinding, candidate.kind, blueprint)
+    : null;
   const saved: SavedReview = {
     measurementIndex: index,
     decision,
     featureDescription,
     note,
+    ...(targetBinding ? { targetBinding } : {}),
     reviewedAt,
     reviewedBy: userId,
   };
@@ -104,6 +240,25 @@ function validateReview(
       }
     } else {
       throw new RouteError("This candidate has an unknown dimension kind and cannot be confirmed yet.", 422);
+    }
+    if (targetBinding) {
+      if (candidate.kind === "linear" || candidate.kind === "diameter" || candidate.kind === "radius") {
+        const multiplier = unit === "mm" ? 1 : unit === "cm" ? 10 : unit === "m" ? 1000 : 25.4;
+        if (!Number.isFinite(value * multiplier) || value * multiplier > MAX_MEASUREMENT_VALUE) {
+          throw new RouteError("Converted CAD dimensions must not exceed 1,000,000 mm.", 422);
+        }
+      }
+      if (targetBinding.scope === "feature") {
+        if (targetBinding.field === "count" && value > 360) {
+          throw new RouteError("A feature count cannot exceed 360.", 422);
+        }
+        if (targetBinding.field === "start_angle" && (value < 0 || value > 360)) {
+          throw new RouteError("A feature start angle must be between 0 and 360 degrees.", 422);
+        }
+        if (targetBinding.field === "angular_pitch" && (value <= 0 || value > 360)) {
+          throw new RouteError("Angular pitch must be greater than 0 and no more than 360 degrees.", 422);
+        }
+      }
     }
     saved.value = value;
     saved.unit = unit;
@@ -182,8 +337,20 @@ export async function POST(request: Request, { params }: Context) {
     const reviewedAt = new Date().toISOString();
     const seen = new Set<number>();
     const savedReviews = body.reviews.map((item) =>
-      validateReview(item, candidates as Candidate[], user.id, reviewedAt, seen)
+      validateReview(item, candidates as Candidate[], blueprint, user.id, reviewedAt, seen)
     );
+    const confirmedCount = savedReviews.filter((item) => item.decision === "confirmed_reading").length;
+    const rejectedCount = savedReviews.filter((item) => item.decision === "rejected").length;
+    const associatedCount = savedReviews.filter((item) => item.targetBinding).length;
+    const usedBindings = new Set<string>();
+    for (const review of savedReviews) {
+      if (!review.targetBinding) continue;
+      const key = bindingKey(review.targetBinding);
+      if (usedBindings.has(key)) {
+        throw new RouteError("Only one reviewed measurement may be assigned to each CAD field in a save.", 400);
+      }
+      usedBindings.add(key);
+    }
 
     const nextResults = [...ocrResults];
     nextResults[resultIndex] = { ...resultRecord, visualMeasurementReviews: savedReviews };
@@ -206,8 +373,9 @@ export async function POST(request: Request, { params }: Context) {
             projectId,
             versionId: version.id,
             fileIndex,
-            confirmedCount: savedReviews.filter((item) => item.decision === "confirmed_reading").length,
-            rejectedCount: savedReviews.filter((item) => item.decision === "rejected").length,
+            confirmedCount,
+            rejectedCount,
+            associatedCount,
           },
         },
       });
@@ -219,8 +387,9 @@ export async function POST(request: Request, { params }: Context) {
       ok: true,
       fileIndex,
       reviewCount: savedReviews.length,
-      confirmedCount: savedReviews.filter((item) => item.decision === "confirmed_reading").length,
-      rejectedCount: savedReviews.filter((item) => item.decision === "rejected").length,
+      confirmedCount,
+      rejectedCount,
+      associatedCount,
       reviewedAt,
     });
   } catch (error) {

@@ -5,6 +5,11 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { AlertTriangle, FileSearch, LoaderCircle, ShieldCheck, WandSparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  applySavedMeasurementBindings,
+  bindingValue,
+  type MeasurementBinding,
+} from "@/lib/drawing-measurement-bindings";
 import { isOcrSourceFile } from "@/lib/upload/ocr-source-support";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -47,6 +52,9 @@ type VisualMeasurement = {
   reviewedUnit?: string;
   reviewedFeature?: string | null;
   reviewNote?: string;
+  targetBinding?: MeasurementBinding | null;
+  reviewPersisted?: boolean;
+  reviewRequiresSave?: boolean;
 };
 
 type StoredMeasurementReview = {
@@ -55,6 +63,7 @@ type StoredMeasurementReview = {
   value?: number | null;
   unit?: string | null;
   featureDescription?: string | null;
+  targetBinding?: MeasurementBinding | null;
   note?: string | null;
 };
 
@@ -122,6 +131,102 @@ type Props = { projectId: string; sourceFiles: SourceFile[] };
 type SketchNumberKey = "outer_diameter" | "inner_bore_diameter" | "width" | "length" | "thickness" | "wall_thickness";
 type FeatureNumberKey = "count" | "pitch_radius" | "start_angle" | "angular_pitch" | "diameter" | "inner_diameter" | "root_radius" | "length" | "width" | "depth" | "radius" | "x" | "y";
 type DefaultFieldKey = "base_sketch.thickness" | "base_sketch.wall_thickness";
+type BindingOption = { value: string; label: string; binding: MeasurementBinding };
+
+const baseBindingFields: Array<{
+  field: SketchNumberKey;
+  label: string;
+  kind: "linear" | "diameter";
+  bodies: BlueprintBodyType[];
+  profiles: BlueprintProfile[];
+}> = [
+  { field: "outer_diameter", label: "Base sketch · outer diameter", kind: "diameter", bodies: ["rotational_flange"], profiles: ["circle"] },
+  { field: "inner_bore_diameter", label: "Base sketch · central bore diameter", kind: "diameter", bodies: ["rotational_flange"], profiles: ["circle"] },
+  { field: "length", label: "Base sketch · overall length", kind: "linear", bodies: ["prismatic_box", "sheet_enclosure"], profiles: ["rectangle", "polygon", "complex_path"] },
+  { field: "width", label: "Base sketch · overall width", kind: "linear", bodies: ["prismatic_box", "sheet_enclosure"], profiles: ["rectangle", "polygon", "complex_path"] },
+  { field: "thickness", label: "Base sketch · solid thickness", kind: "linear", bodies: ["rotational_flange", "prismatic_box", "sheet_enclosure"], profiles: ["circle", "rectangle", "polygon", "complex_path"] },
+  { field: "wall_thickness", label: "Base sketch · enclosure wall thickness", kind: "linear", bodies: ["sheet_enclosure"], profiles: ["rectangle", "polygon", "complex_path"] },
+];
+
+const featureBindingFields: Record<BlueprintFeatureType, Array<{
+  field: Exclude<FeatureNumberKey, "x" | "y">;
+  label: string;
+  kind: "linear" | "diameter" | "radius" | "angle" | "count";
+}>> = {
+  circular_pattern_cut: [
+    { field: "count", label: "count", kind: "count" },
+    { field: "diameter", label: "hole diameter", kind: "diameter" },
+    { field: "pitch_radius", label: "pattern radius (explicit R callout)", kind: "radius" },
+    { field: "start_angle", label: "pattern start angle", kind: "angle" },
+    { field: "angular_pitch", label: "pattern angular pitch", kind: "angle" },
+    { field: "depth", label: "cut depth", kind: "linear" },
+  ],
+  hole_pattern: [
+    { field: "count", label: "hole count", kind: "count" },
+    { field: "diameter", label: "hole diameter", kind: "diameter" },
+    { field: "pitch_radius", label: "pattern radius (PCD / 2)", kind: "radius" },
+    { field: "start_angle", label: "pattern start angle", kind: "angle" },
+    { field: "angular_pitch", label: "pattern angular pitch", kind: "angle" },
+    { field: "depth", label: "hole depth", kind: "linear" },
+  ],
+  radial_cutout_pattern: [
+    { field: "count", label: "cutout count", kind: "count" },
+    { field: "radius", label: "cutout / gullet radius", kind: "radius" },
+    { field: "root_radius", label: "root radius", kind: "radius" },
+    { field: "pitch_radius", label: "cutter-centre radius", kind: "radius" },
+    { field: "start_angle", label: "pattern start angle", kind: "angle" },
+    { field: "angular_pitch", label: "pattern angular pitch", kind: "angle" },
+  ],
+  ring_step: [
+    { field: "diameter", label: "ring outer diameter", kind: "diameter" },
+    { field: "inner_diameter", label: "ring inner diameter", kind: "diameter" },
+    { field: "depth", label: "ring recess / boss depth", kind: "linear" },
+  ],
+  through_hole: [
+    { field: "diameter", label: "hole diameter", kind: "diameter" },
+    { field: "depth", label: "hole depth", kind: "linear" },
+  ],
+  pocket: [
+    { field: "diameter", label: "circular pocket diameter", kind: "diameter" },
+    { field: "length", label: "pocket length", kind: "linear" },
+    { field: "width", label: "pocket width", kind: "linear" },
+    { field: "depth", label: "pocket depth", kind: "linear" },
+  ],
+  fillet: [{ field: "radius", label: "fillet radius", kind: "radius" }],
+};
+
+function getMeasurementBindingOptions(blueprint: Blueprint, kind: string): BindingOption[] {
+  const options: BindingOption[] = [];
+  const bodyType = blueprint.primary_body_type;
+  const supportedBodyProfile = bodyType === "rotational_flange"
+    ? blueprint.base_sketch.profile === "circle"
+    : (bodyType === "prismatic_box" || bodyType === "sheet_enclosure")
+      && ["rectangle", "polygon", "complex_path"].includes(blueprint.base_sketch.profile);
+  if (!supportedBodyProfile) return options;
+
+  for (const item of baseBindingFields) {
+    if (
+      item.kind !== kind
+      || !item.bodies.includes(blueprint.primary_body_type ?? "revolved_profile")
+      || !item.profiles.includes(blueprint.base_sketch.profile)
+    ) continue;
+    const binding: MeasurementBinding = { scope: "base_sketch", field: item.field };
+    options.push({ value: bindingValue(binding), label: item.label, binding });
+  }
+  blueprint.features.forEach((feature, featureIndex) => {
+    if (blueprint.primary_body_type === "revolved_profile" || !blueprint.primary_body_type) return;
+    if (
+      ["hole_pattern", "radial_cutout_pattern", "ring_step"].includes(feature.type)
+      && blueprint.primary_body_type !== "rotational_flange"
+    ) return;
+    for (const item of featureBindingFields[feature.type] ?? []) {
+      if (item.kind !== kind) continue;
+      const binding: MeasurementBinding = { scope: "feature", featureIndex, field: item.field };
+      options.push({ value: bindingValue(binding), label: `Feature ${featureIndex + 1} (${feature.type}) · ${item.label}`, binding });
+    }
+  });
+  return options;
+}
 
 const blueprintSketchFields: Array<{ key: SketchNumberKey; label: string; defaultFlag?: "thickness_is_default" | "wall_thickness_is_default" }> = [
   { key: "outer_diameter", label: "Outer diameter (mm)" },
@@ -167,6 +272,9 @@ function attachSavedMeasurementReviews(spec: OCRSpec, reviews: StoredMeasurement
       ...spec.blueprint,
       visual_measurements: spec.blueprint.visual_measurements.map((measurement, index) => {
         const saved = byIndex.get(index);
+        const savedBinding = saved?.targetBinding ?? null;
+        const bindingIsStillValid = !savedBinding || getMeasurementBindingOptions(spec.blueprint!, measurement.kind)
+          .some((option) => option.value === bindingValue(savedBinding));
         return {
           ...measurement,
           reviewStatus: saved?.decision === "confirmed_reading" ? "confirmed"
@@ -175,6 +283,9 @@ function attachSavedMeasurementReviews(spec: OCRSpec, reviews: StoredMeasurement
           reviewedUnit: saved?.unit ?? measurement.unit,
           reviewedFeature: saved?.featureDescription ?? measurement.feature ?? "",
           reviewNote: saved?.note ?? "",
+          targetBinding: bindingIsStillValid ? savedBinding : null,
+          reviewPersisted: Boolean(saved && bindingIsStillValid),
+          reviewRequiresSave: Boolean(savedBinding && !bindingIsStillValid),
         };
       }),
     },
@@ -193,18 +304,20 @@ function canConfirmMeasurementReading(measurement: VisualMeasurement): boolean {
   return false;
 }
 
-function getCanonicalBlueprintForGeneration(blueprint: Blueprint): Blueprint {
+function getCanonicalBlueprintForGeneration(source: Blueprint): Blueprint {
+  const blueprint = applySavedMeasurementBindings(source);
   return {
     ...blueprint,
     visual_measurements: (blueprint.visual_measurements ?? []).map((measurement) => {
-      const {
-        reviewStatus: _reviewStatus,
-        reviewedValue: _reviewedValue,
-        reviewedUnit: _reviewedUnit,
-        reviewedFeature: _reviewedFeature,
-        reviewNote: _reviewNote,
-        ...candidate
-      } = measurement;
+      const candidate = { ...measurement };
+      delete candidate.reviewStatus;
+      delete candidate.reviewedValue;
+      delete candidate.reviewedUnit;
+      delete candidate.reviewedFeature;
+      delete candidate.reviewNote;
+      delete candidate.targetBinding;
+      delete candidate.reviewPersisted;
+      delete candidate.reviewRequiresSave;
       return candidate;
     }),
   };
@@ -213,7 +326,12 @@ function getCanonicalBlueprintForGeneration(blueprint: Blueprint): Blueprint {
 function getProvisionalDefaultFields(blueprint: Blueprint | null): Array<{ field: DefaultFieldKey; label: string; value: number | null }> {
   if (!blueprint) return [];
   const fields: Array<{ field: DefaultFieldKey; label: string; value: number | null }> = [];
-  if (blueprint.primary_body_type !== "revolved_profile" && blueprint.base_sketch.thickness_is_default) {
+  const confirmedBindings = new Set(
+    (blueprint.visual_measurements ?? [])
+      .filter((measurement) => measurement.reviewStatus === "confirmed" && measurement.reviewPersisted === true && measurement.targetBinding)
+      .map((measurement) => measurement.targetBinding ? bindingValue(measurement.targetBinding) : ""),
+  );
+  if (blueprint.primary_body_type !== "revolved_profile" && blueprint.base_sketch.thickness_is_default && !confirmedBindings.has("base_sketch.thickness")) {
     fields.push({
       field: "base_sketch.thickness",
       label: "height / depth",
@@ -222,7 +340,7 @@ function getProvisionalDefaultFields(blueprint: Blueprint | null): Array<{ field
         : null,
     });
   }
-  if (blueprint.primary_body_type === "sheet_enclosure" && blueprint.base_sketch.wall_thickness_is_default) {
+  if (blueprint.primary_body_type === "sheet_enclosure" && blueprint.base_sketch.wall_thickness_is_default && !confirmedBindings.has("base_sketch.wall_thickness")) {
     fields.push({
       field: "base_sketch.wall_thickness",
       label: "enclosure wall thickness",
@@ -248,6 +366,15 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
   const [analyzing, setAnalyzing] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [savingMeasurementReviews, setSavingMeasurementReviews] = useState(false);
+  const [measurementReviewsDirty, setMeasurementReviewsDirty] = useState<Record<number, boolean>>(() =>
+    Object.fromEntries(ocrSourceFiles.flatMap((file) => {
+      if (!file.ocrResult) return [];
+      const attached = attachSavedMeasurementReviews(file.ocrResult, file.measurementReviews);
+      return attached.blueprint?.visual_measurements?.some((measurement) => measurement.reviewRequiresSave)
+        ? [[file.index, true] as const]
+        : [];
+    })),
+  );
   const [confirmedDefaultFields, setConfirmedDefaultFields] = useState<Record<number, DefaultFieldKey[]>>({});
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -268,7 +395,25 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
     });
   }
 
+  function invalidateMeasurementBinding(target: string) {
+    const hasSavedBinding = (blueprint?.visual_measurements ?? []).some(
+      (measurement) => measurement.targetBinding && bindingValue(measurement.targetBinding) === target,
+    );
+    if (hasSavedBinding) {
+      setMeasurementReviewsDirty((previous) => ({ ...previous, [selectedIndex]: true }));
+    }
+    updateCurrentResult((result) => {
+      if (!result.blueprint?.visual_measurements) return result;
+      const nextMeasurements = result.blueprint.visual_measurements.map((measurement) => {
+        if (!measurement.targetBinding || bindingValue(measurement.targetBinding) !== target) return measurement;
+        return { ...measurement, targetBinding: null, reviewStatus: "pending" as const, reviewPersisted: false, reviewRequiresSave: true };
+      });
+      return { ...result, blueprint: { ...result.blueprint, visual_measurements: nextMeasurements, needs_review: true } };
+    });
+  }
+
   function updateBlueprintSketch(key: SketchNumberKey, raw: string) {
+    invalidateMeasurementBinding(`base_sketch.${key}`);
     const confirmationField: DefaultFieldKey | null =
       key === "thickness" ? "base_sketch.thickness"
       : key === "wall_thickness" ? "base_sketch.wall_thickness"
@@ -292,7 +437,8 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
     });
   }
 
-  function updateVisualMeasurement(index: number, patch: Partial<Pick<VisualMeasurement, "reviewedValue" | "reviewedUnit" | "reviewedFeature" | "reviewNote">>) {
+  function updateVisualMeasurement(index: number, patch: Partial<Pick<VisualMeasurement, "reviewedValue" | "reviewedUnit" | "reviewedFeature" | "reviewNote" | "targetBinding">>) {
+    setMeasurementReviewsDirty((previous) => ({ ...previous, [selectedIndex]: true }));
     updateCurrentResult((result) => {
       if (!result.blueprint?.visual_measurements) return result;
       return {
@@ -300,7 +446,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
         blueprint: {
           ...result.blueprint,
           visual_measurements: result.blueprint.visual_measurements.map((measurement, itemIndex) => itemIndex === index
-            ? { ...measurement, ...patch, reviewStatus: "pending" }
+            ? { ...measurement, ...patch, reviewStatus: "pending", reviewPersisted: false, reviewRequiresSave: true }
             : measurement),
         },
       };
@@ -308,6 +454,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
   }
 
   function setVisualMeasurementDecision(index: number, decision: "confirmed" | "rejected") {
+    setMeasurementReviewsDirty((previous) => ({ ...previous, [selectedIndex]: true }));
     updateCurrentResult((result) => {
       if (!result.blueprint?.visual_measurements) return result;
       const measurement = result.blueprint.visual_measurements[index];
@@ -318,7 +465,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
         blueprint: {
           ...result.blueprint,
           visual_measurements: result.blueprint.visual_measurements.map((item, itemIndex) => itemIndex === index
-            ? { ...item, reviewStatus: decision }
+            ? { ...item, reviewStatus: decision, reviewPersisted: false, reviewRequiresSave: true, ...(decision === "rejected" ? { targetBinding: null } : {}) }
             : item),
         },
       };
@@ -336,6 +483,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
           value: measurement.reviewedValue,
           unit: measurement.reviewedUnit ?? measurement.unit,
           featureDescription: measurement.reviewedFeature ?? null,
+          targetBinding: measurement.targetBinding ?? null,
         } : {}),
         note: measurement.reviewNote ?? null,
       }];
@@ -350,14 +498,26 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fileIndex: selected.index, reviews }),
       });
-      const payload = await response.json().catch(() => ({})) as { error?: string; ok?: boolean; confirmedCount?: number; rejectedCount?: number };
+      const payload = await response.json().catch(() => ({})) as { error?: string; ok?: boolean; confirmedCount?: number; rejectedCount?: number; associatedCount?: number };
       if (response.status === 401) {
         router.replace("/login");
         return;
       }
       if (response.status === 402) throw new Error("Saving measurement reviews requires an active Pro subscription or administrator access.");
       if (!response.ok || !payload.ok) throw new Error(payload.error ?? `Saving measurement reviews failed (HTTP ${response.status}).`);
-      setNotice(`Saved ${payload.confirmedCount ?? 0} confirmed reading(s) and ${payload.rejectedCount ?? 0} rejected candidate(s). These decisions are stored separately from CAD geometry.`);
+      updateCurrentResult((result) => !result.blueprint ? result : ({
+        ...result,
+        blueprint: {
+          ...result.blueprint,
+          visual_measurements: (result.blueprint.visual_measurements ?? []).map((measurement) => ({
+            ...measurement,
+            reviewPersisted: measurement.reviewStatus === "confirmed" || measurement.reviewStatus === "rejected",
+            reviewRequiresSave: false,
+          })),
+        },
+      }));
+      setMeasurementReviewsDirty((previous) => ({ ...previous, [selected.index]: false }));
+      setNotice(`Saved ${payload.confirmedCount ?? 0} confirmed reading(s), ${payload.rejectedCount ?? 0} rejected candidate(s), and ${payload.associatedCount ?? 0} explicit CAD field association(s). Saved associations are applied only when generating reviewed CAD.`);
       router.refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not save measurement reviews.");
@@ -376,6 +536,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
   }
 
   function updateBlueprintFeature(index: number, key: FeatureNumberKey, raw: string) {
+    if (key !== "x" && key !== "y") invalidateMeasurementBinding(`features[${index}].${key}`);
     updateCurrentResult((result) => {
       if (!result.blueprint) return result;
       const value = numericInputValue(raw);
@@ -395,11 +556,19 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
 
   function updateBlueprintBodyType(value: string) {
     const allowed: BlueprintBodyType[] = ["rotational_flange", "prismatic_box", "sheet_enclosure", "revolved_profile"];
+    if ((blueprint?.visual_measurements ?? []).some((measurement) => measurement.targetBinding)) {
+      setMeasurementReviewsDirty((previous) => ({ ...previous, [selectedIndex]: true }));
+    }
     updateCurrentResult((result) => !result.blueprint ? result : ({
       ...result,
       blueprint: {
         ...result.blueprint,
         primary_body_type: allowed.includes(value as BlueprintBodyType) ? value as BlueprintBodyType : null,
+        visual_measurements: (result.blueprint.visual_measurements ?? []).map((measurement) =>
+          measurement.targetBinding
+            ? { ...measurement, targetBinding: null, reviewStatus: "pending" as const, reviewPersisted: false, reviewRequiresSave: true }
+            : measurement
+        ),
         needs_review: true,
       },
     }));
@@ -407,6 +576,9 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
 
   function updateBlueprintProfile(value: string) {
     const allowed: BlueprintProfile[] = ["circle", "rectangle", "polygon", "complex_path"];
+    if ((blueprint?.visual_measurements ?? []).some((measurement) => measurement.targetBinding?.scope === "base_sketch")) {
+      setMeasurementReviewsDirty((previous) => ({ ...previous, [selectedIndex]: true }));
+    }
     updateCurrentResult((result) => !result.blueprint ? result : ({
       ...result,
       blueprint: {
@@ -415,6 +587,11 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
           ...result.blueprint.base_sketch,
           profile: allowed.includes(value as BlueprintProfile) ? value as BlueprintProfile : "circle",
         },
+        visual_measurements: (result.blueprint.visual_measurements ?? []).map((measurement) =>
+          measurement.targetBinding?.scope === "base_sketch"
+            ? { ...measurement, targetBinding: null, reviewStatus: "pending" as const, reviewPersisted: false, reviewRequiresSave: true }
+            : measurement
+        ),
         needs_review: true,
       },
     }));
@@ -437,11 +614,23 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
   }
 
   function removeBlueprintFeature(index: number) {
+    if ((blueprint?.visual_measurements ?? []).some(
+      (measurement) => measurement.targetBinding?.scope === "feature" && measurement.targetBinding.featureIndex >= index,
+    )) {
+      setMeasurementReviewsDirty((previous) => ({ ...previous, [selectedIndex]: true }));
+    }
     updateCurrentResult((result) => !result.blueprint ? result : ({
       ...result,
       blueprint: {
         ...result.blueprint,
         features: result.blueprint.features.filter((_feature, i) => i !== index),
+        visual_measurements: (result.blueprint.visual_measurements ?? []).map((measurement) =>
+          measurement.targetBinding?.scope === "feature" && measurement.targetBinding.featureIndex >= index
+            ? { ...measurement, targetBinding: null, reviewStatus: "pending" as const, reviewPersisted: false, reviewRequiresSave: true }
+            : measurement.targetBinding?.scope === "feature" && measurement.targetBinding.featureIndex < index
+              ? { ...measurement, targetBinding: { ...measurement.targetBinding, featureIndex: measurement.targetBinding.featureIndex } }
+              : measurement
+        ),
         needs_review: true,
       },
     }));
@@ -499,6 +688,17 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
     }
     if (blueprint && !blueprint.primary_body_type) {
       setError("Select a supported primary body type after inspecting the drawing.");
+      return;
+    }
+    if (measurementReviewsDirty[selectedIndex]) {
+      setError("Save your latest measurement review changes before generating CAD. This persists removals or edits to previous CAD field associations.");
+      return;
+    }
+    const unsavedBindings = (blueprint?.visual_measurements ?? []).some(
+      (measurement) => measurement.reviewStatus === "confirmed" && measurement.targetBinding && measurement.reviewPersisted !== true,
+    );
+    if (unsavedBindings) {
+      setError("Save each confirmed CAD field association before generating. This keeps the selected dimension-to-feature mapping in the project review ledger.");
       return;
     }
     if (blueprint?.unsupported_geometry.length) {
@@ -603,11 +803,14 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
                 <div>
                   <h3 className="font-semibold">Drawing measurement review ledger</h3>
                   <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                    Compare each candidate with the original drawing. Confirming a reading records your transcription decision only; it does not assign the value to a CAD feature or change the model geometry.
+                    Compare each candidate with the original drawing. A CAD association is optional and must be selected manually; no AI feature hint is applied automatically.
                   </p>
                 </div>
                 <div className="space-y-3">
-                  {blueprint.visual_measurements.map((measurement, index) => (
+                  {blueprint.visual_measurements.map((measurement, index) => {
+                    const bindingOptions = getMeasurementBindingOptions(blueprint, measurement.kind);
+                    const selectedBinding = measurement.targetBinding ? bindingValue(measurement.targetBinding) : "";
+                    return (
                     <article key={index} className="space-y-3 rounded-lg border border-border p-3">
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <div>
@@ -632,6 +835,11 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
                       <p className="text-xs text-muted-foreground">
                         Model confidence estimate: {Math.round(measurement.confidence * 100)}% · Uncalibrated and not an accuracy probability
                       </p>
+                      {measurement.reviewRequiresSave && (
+                        <p className="text-xs font-medium text-amber-700">
+                          A previous CAD association is no longer compatible with this Blueprint. Save the review ledger to permanently clear it before generating.
+                        </p>
+                      )}
                       <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_160px]">
                         <label className="text-sm font-medium">Value you read from the drawing
                           <input
@@ -683,6 +891,29 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
                           placeholder="Note any ambiguity, tolerance or reason for rejecting this reading."
                         />
                       </label>
+                      <label className="block text-sm font-medium">Associate this confirmed reading with a CAD field (optional)
+                        <select
+                          value={selectedBinding}
+                          onChange={(event) => {
+                            const option = bindingOptions.find((item) => item.value === event.target.value);
+                            updateVisualMeasurement(index, { targetBinding: option?.binding ?? null });
+                          }}
+                          disabled={generating || savingMeasurementReviews || measurement.reviewStatus === "rejected"}
+                          className={blueprintInputClass(Boolean(measurement.targetBinding && !measurement.reviewPersisted))}
+                        >
+                          <option value="">Do not apply to CAD geometry</option>
+                          {bindingOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                        </select>
+                        <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                          Only compatible Blueprint fields are listed. Selecting a field does not apply it yet: confirm the reading and save the review first. A saved association will replace that exact CAD field during generation.
+                        </span>
+                        {measurement.targetBinding && (
+                          <span className="mt-1 block text-xs font-medium text-primary">
+                            {measurement.reviewPersisted && measurement.reviewStatus === "confirmed" ? "Saved association: " : "Pending association: "}
+                            {bindingOptions.find((option) => option.value === selectedBinding)?.label ?? "Target no longer exists; choose a valid field"}
+                          </span>
+                        )}
+                      </label>
                       <div className="flex flex-wrap gap-2">
                         <Button type="button" size="sm" onClick={() => setVisualMeasurementDecision(index, "confirmed")} disabled={!canConfirmMeasurementReading(measurement) || generating || savingMeasurementReviews}>
                           Confirm reading
@@ -692,10 +923,11 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
                         </Button>
                       </div>
                     </article>
-                  ))}
+                    );
+                  })}
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3">
-                  <p className="text-xs leading-5 text-muted-foreground">Edits reset the decision to pending. Saved decisions retain the source candidate separately and are not used as CAD dimensions.</p>
+                  <p className="text-xs leading-5 text-muted-foreground">Edits reset the decision to pending. Only a saved, confirmed, manually selected association is applied to its exact CAD field; source OCR/vision evidence remains unchanged.</p>
                   <Button type="button" variant="outline" onClick={saveMeasurementReviews} disabled={savingMeasurementReviews || analyzing || generating}>
                     {savingMeasurementReviews ? <><LoaderCircle className="size-4 animate-spin" /> Saving review…</> : "Save measurement review"}
                   </Button>
