@@ -419,7 +419,19 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
     });
   }
 
+  function invalidateMeasurementBinding(target: string) {
+    updateCurrentResult((result) => {
+      if (!result.blueprint?.visual_measurements) return result;
+      const nextMeasurements = result.blueprint.visual_measurements.map((measurement) => {
+        if (!measurement.targetBinding || bindingValue(measurement.targetBinding) !== target) return measurement;
+        return { ...measurement, targetBinding: null, reviewStatus: "pending" as const, reviewPersisted: false };
+      });
+      return { ...result, blueprint: { ...result.blueprint, visual_measurements: nextMeasurements, needs_review: true } };
+    });
+  }
+
   function updateBlueprintSketch(key: SketchNumberKey, raw: string) {
+    invalidateMeasurementBinding(`base_sketch.${key}`);
     const confirmationField: DefaultFieldKey | null =
       key === "thickness" ? "base_sketch.thickness"
       : key === "wall_thickness" ? "base_sketch.wall_thickness"
@@ -528,6 +540,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
   }
 
   function updateBlueprintFeature(index: number, key: FeatureNumberKey, raw: string) {
+    if (key !== "x" && key !== "y") invalidateMeasurementBinding(`features[${index}].${key}`);
     updateCurrentResult((result) => {
       if (!result.blueprint) return result;
       const value = numericInputValue(raw);
@@ -552,6 +565,11 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
       blueprint: {
         ...result.blueprint,
         primary_body_type: allowed.includes(value as BlueprintBodyType) ? value as BlueprintBodyType : null,
+        visual_measurements: (result.blueprint.visual_measurements ?? []).map((measurement) =>
+          measurement.targetBinding?.scope === "base_sketch"
+            ? { ...measurement, targetBinding: null, reviewStatus: "pending" as const, reviewPersisted: false }
+            : measurement
+        ),
         needs_review: true,
       },
     }));
@@ -594,6 +612,11 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
       blueprint: {
         ...result.blueprint,
         features: result.blueprint.features.filter((_feature, i) => i !== index),
+        visual_measurements: (result.blueprint.visual_measurements ?? []).map((measurement) =>
+          measurement.targetBinding?.scope === "feature"
+            ? { ...measurement, targetBinding: null, reviewStatus: "pending" as const, reviewPersisted: false }
+            : measurement
+        ),
         needs_review: true,
       },
     }));
@@ -762,11 +785,14 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
                 <div>
                   <h3 className="font-semibold">Drawing measurement review ledger</h3>
                   <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                    Compare each candidate with the original drawing. Confirming a reading records your transcription decision only; it does not assign the value to a CAD feature or change the model geometry.
+                    Compare each candidate with the original drawing. A CAD association is optional and must be selected manually; no AI feature hint is applied automatically.
                   </p>
                 </div>
                 <div className="space-y-3">
-                  {blueprint.visual_measurements.map((measurement, index) => (
+                  {blueprint.visual_measurements.map((measurement, index) => {
+                    const bindingOptions = getMeasurementBindingOptions(blueprint, measurement.kind);
+                    const selectedBinding = measurement.targetBinding ? bindingValue(measurement.targetBinding) : "";
+                    return (
                     <article key={index} className="space-y-3 rounded-lg border border-border p-3">
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <div>
@@ -842,6 +868,29 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
                           placeholder="Note any ambiguity, tolerance or reason for rejecting this reading."
                         />
                       </label>
+                      <label className="block text-sm font-medium">Associate this confirmed reading with a CAD field (optional)
+                        <select
+                          value={selectedBinding}
+                          onChange={(event) => {
+                            const option = bindingOptions.find((item) => item.value === event.target.value);
+                            updateVisualMeasurement(index, { targetBinding: option?.binding ?? null });
+                          }}
+                          disabled={generating || savingMeasurementReviews || measurement.reviewStatus === "rejected"}
+                          className={blueprintInputClass(Boolean(measurement.targetBinding && !measurement.reviewPersisted))}
+                        >
+                          <option value="">Do not apply to CAD geometry</option>
+                          {bindingOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                        </select>
+                        <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                          Only compatible Blueprint fields are listed. Selecting a field does not apply it yet: confirm the reading and save the review first. A saved association will replace that exact CAD field during generation.
+                        </span>
+                        {measurement.targetBinding && (
+                          <span className="mt-1 block text-xs font-medium text-primary">
+                            {measurement.reviewPersisted && measurement.reviewStatus === "confirmed" ? "Saved association: " : "Pending association: "}
+                            {bindingOptions.find((option) => option.value === selectedBinding)?.label ?? "Target no longer exists; choose a valid field"}
+                          </span>
+                        )}
+                      </label>
                       <div className="flex flex-wrap gap-2">
                         <Button type="button" size="sm" onClick={() => setVisualMeasurementDecision(index, "confirmed")} disabled={!canConfirmMeasurementReading(measurement) || generating || savingMeasurementReviews}>
                           Confirm reading
@@ -851,10 +900,11 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
                         </Button>
                       </div>
                     </article>
-                  ))}
+                    );
+                  })}
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3">
-                  <p className="text-xs leading-5 text-muted-foreground">Edits reset the decision to pending. Saved decisions retain the source candidate separately and are not used as CAD dimensions.</p>
+                  <p className="text-xs leading-5 text-muted-foreground">Edits reset the decision to pending. Only a saved, confirmed, manually selected association is applied to its exact CAD field; source OCR/vision evidence remains unchanged.</p>
                   <Button type="button" variant="outline" onClick={saveMeasurementReviews} disabled={savingMeasurementReviews || analyzing || generating}>
                     {savingMeasurementReviews ? <><LoaderCircle className="size-4 animate-spin" /> Saving review…</> : "Save measurement review"}
                   </Button>
