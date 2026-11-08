@@ -5,6 +5,11 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { AlertTriangle, FileSearch, LoaderCircle, ShieldCheck, WandSparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  applySavedMeasurementBindings,
+  bindingValue,
+  type MeasurementBinding,
+} from "@/lib/drawing-measurement-bindings";
 import { isOcrSourceFile } from "@/lib/upload/ocr-source-support";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -29,10 +34,6 @@ type BlueprintFeature = {
   x: number;
   y: number;
 };
-type MeasurementBinding =
-  | { scope: "base_sketch"; field: SketchNumberKey }
-  | { scope: "feature"; featureIndex: number; field: Exclude<FeatureNumberKey, "x" | "y"> };
-
 type VisualMeasurement = {
   dimension_name: string;
   raw_callout: string;
@@ -193,12 +194,6 @@ const featureBindingFields: Record<BlueprintFeatureType, Array<{
   fillet: [{ field: "radius", label: "fillet radius", kind: "radius" }],
 };
 
-function bindingValue(binding: MeasurementBinding): string {
-  return binding.scope === "base_sketch"
-    ? `base_sketch.${binding.field}`
-    : `features[${binding.featureIndex}].${binding.field}`;
-}
-
 function getMeasurementBindingOptions(blueprint: Blueprint, kind: string): BindingOption[] {
   const options: BindingOption[] = [];
   for (const item of baseBindingFields) {
@@ -224,55 +219,6 @@ function getMeasurementBindingOptions(blueprint: Blueprint, kind: string): Bindi
   });
   return options;
 }
-
-function measurementValueInBlueprintUnits(measurement: VisualMeasurement): number | null {
-  const value = measurement.reviewedValue;
-  if (typeof value !== "number" || !Number.isFinite(value)) return null;
-  if (measurement.kind === "linear" || measurement.kind === "diameter" || measurement.kind === "radius") {
-    const unit = measurement.reviewedUnit ?? measurement.unit;
-    const multiplier = unit === "mm" ? 1 : unit === "cm" ? 10 : unit === "m" ? 1000 : unit === "in" || unit === "inch" ? 25.4 : NaN;
-    const converted = value * multiplier;
-    return Number.isFinite(converted) && converted > 0 && converted <= 1_000_000 ? converted : null;
-  }
-  if (measurement.kind === "angle" && ["deg", "°"].includes(measurement.reviewedUnit ?? measurement.unit)) {
-    return value >= 0 && value <= 360 ? value : null;
-  }
-  if (measurement.kind === "count" && (measurement.reviewedUnit ?? measurement.unit) === "count") {
-    return Number.isInteger(value) && value >= 1 && value <= 360 ? value : null;
-  }
-  return null;
-}
-
-function applySavedMeasurementBindings(source: Blueprint): Blueprint {
-  const blueprint: Blueprint = {
-    ...source,
-    base_sketch: { ...source.base_sketch },
-    features: source.features.map((feature) => ({ ...feature })),
-    visual_measurements: [...(source.visual_measurements ?? [])],
-  };
-  const usedTargets = new Set<string>();
-  for (const measurement of blueprint.visual_measurements ?? []) {
-    const binding = measurement.targetBinding;
-    if (measurement.reviewStatus !== "confirmed" || measurement.reviewPersisted !== true || !binding) continue;
-    const target = bindingValue(binding);
-    const value = measurementValueInBlueprintUnits(measurement);
-    if (usedTargets.has(target) || value === null) continue;
-    usedTargets.add(target);
-    if (binding.scope === "base_sketch") {
-      blueprint.base_sketch[binding.field] = value;
-      if (binding.field === "thickness") blueprint.base_sketch.thickness_is_default = false;
-      if (binding.field === "wall_thickness") blueprint.base_sketch.wall_thickness_is_default = false;
-    } else if (blueprint.features[binding.featureIndex]) {
-      blueprint.features[binding.featureIndex] = {
-        ...blueprint.features[binding.featureIndex],
-        [binding.field]: value,
-      };
-    }
-  }
-  if (usedTargets.size > 0) blueprint.needs_review = true;
-  return blueprint;
-}
-
 
 const blueprintSketchFields: Array<{ key: SketchNumberKey; label: string; defaultFlag?: "thickness_is_default" | "wall_thickness_is_default" }> = [
   { key: "outer_diameter", label: "Outer diameter (mm)" },
