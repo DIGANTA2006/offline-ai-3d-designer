@@ -54,6 +54,7 @@ type VisualMeasurement = {
   reviewNote?: string;
   targetBinding?: MeasurementBinding | null;
   reviewPersisted?: boolean;
+  reviewRequiresSave?: boolean;
 };
 
 type StoredMeasurementReview = {
@@ -284,6 +285,7 @@ function attachSavedMeasurementReviews(spec: OCRSpec, reviews: StoredMeasurement
           reviewNote: saved?.note ?? "",
           targetBinding: bindingIsStillValid ? savedBinding : null,
           reviewPersisted: Boolean(saved && bindingIsStillValid),
+          reviewRequiresSave: Boolean(savedBinding && !bindingIsStillValid),
         };
       }),
     },
@@ -315,6 +317,7 @@ function getCanonicalBlueprintForGeneration(source: Blueprint): Blueprint {
       delete candidate.reviewNote;
       delete candidate.targetBinding;
       delete candidate.reviewPersisted;
+      delete candidate.reviewRequiresSave;
       return candidate;
     }),
   };
@@ -363,7 +366,15 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
   const [analyzing, setAnalyzing] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [savingMeasurementReviews, setSavingMeasurementReviews] = useState(false);
-  const [measurementReviewsDirty, setMeasurementReviewsDirty] = useState<Record<number, boolean>>({});
+  const [measurementReviewsDirty, setMeasurementReviewsDirty] = useState<Record<number, boolean>>(() =>
+    Object.fromEntries(ocrSourceFiles.flatMap((file) => {
+      if (!file.ocrResult) return [];
+      const attached = attachSavedMeasurementReviews(file.ocrResult, file.measurementReviews);
+      return attached.blueprint?.visual_measurements?.some((measurement) => measurement.reviewRequiresSave)
+        ? [[file.index, true] as const]
+        : [];
+    })),
+  );
   const [confirmedDefaultFields, setConfirmedDefaultFields] = useState<Record<number, DefaultFieldKey[]>>({});
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -395,7 +406,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
       if (!result.blueprint?.visual_measurements) return result;
       const nextMeasurements = result.blueprint.visual_measurements.map((measurement) => {
         if (!measurement.targetBinding || bindingValue(measurement.targetBinding) !== target) return measurement;
-        return { ...measurement, targetBinding: null, reviewStatus: "pending" as const, reviewPersisted: false };
+        return { ...measurement, targetBinding: null, reviewStatus: "pending" as const, reviewPersisted: false, reviewRequiresSave: true };
       });
       return { ...result, blueprint: { ...result.blueprint, visual_measurements: nextMeasurements, needs_review: true } };
     });
@@ -435,7 +446,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
         blueprint: {
           ...result.blueprint,
           visual_measurements: result.blueprint.visual_measurements.map((measurement, itemIndex) => itemIndex === index
-            ? { ...measurement, ...patch, reviewStatus: "pending", reviewPersisted: false }
+            ? { ...measurement, ...patch, reviewStatus: "pending", reviewPersisted: false, reviewRequiresSave: true }
             : measurement),
         },
       };
@@ -454,7 +465,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
         blueprint: {
           ...result.blueprint,
           visual_measurements: result.blueprint.visual_measurements.map((item, itemIndex) => itemIndex === index
-            ? { ...item, reviewStatus: decision, reviewPersisted: false, ...(decision === "rejected" ? { targetBinding: null } : {}) }
+            ? { ...item, reviewStatus: decision, reviewPersisted: false, reviewRequiresSave: true, ...(decision === "rejected" ? { targetBinding: null } : {}) }
             : item),
         },
       };
@@ -501,6 +512,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
           visual_measurements: (result.blueprint.visual_measurements ?? []).map((measurement) => ({
             ...measurement,
             reviewPersisted: measurement.reviewStatus === "confirmed" || measurement.reviewStatus === "rejected",
+            reviewRequiresSave: false,
           })),
         },
       }));
@@ -554,7 +566,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
         primary_body_type: allowed.includes(value as BlueprintBodyType) ? value as BlueprintBodyType : null,
         visual_measurements: (result.blueprint.visual_measurements ?? []).map((measurement) =>
           measurement.targetBinding
-            ? { ...measurement, targetBinding: null, reviewStatus: "pending" as const, reviewPersisted: false }
+            ? { ...measurement, targetBinding: null, reviewStatus: "pending" as const, reviewPersisted: false, reviewRequiresSave: true }
             : measurement
         ),
         needs_review: true,
@@ -614,7 +626,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
         features: result.blueprint.features.filter((_feature, i) => i !== index),
         visual_measurements: (result.blueprint.visual_measurements ?? []).map((measurement) =>
           measurement.targetBinding?.scope === "feature" && measurement.targetBinding.featureIndex >= index
-            ? { ...measurement, targetBinding: null, reviewStatus: "pending" as const, reviewPersisted: false }
+            ? { ...measurement, targetBinding: null, reviewStatus: "pending" as const, reviewPersisted: false, reviewRequiresSave: true }
             : measurement.targetBinding?.scope === "feature" && measurement.targetBinding.featureIndex < index
               ? { ...measurement, targetBinding: { ...measurement.targetBinding, featureIndex: measurement.targetBinding.featureIndex } }
               : measurement
@@ -823,6 +835,11 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
                       <p className="text-xs text-muted-foreground">
                         Model confidence estimate: {Math.round(measurement.confidence * 100)}% · Uncalibrated and not an accuracy probability
                       </p>
+                      {measurement.reviewRequiresSave && (
+                        <p className="text-xs font-medium text-amber-700">
+                          A previous CAD association is no longer compatible with this Blueprint. Save the review ledger to permanently clear it before generating.
+                        </p>
+                      )}
                       <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_160px]">
                         <label className="text-sm font-medium">Value you read from the drawing
                           <input
