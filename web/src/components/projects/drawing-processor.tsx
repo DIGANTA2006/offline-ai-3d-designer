@@ -402,6 +402,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
   const [analyzing, setAnalyzing] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [savingMeasurementReviews, setSavingMeasurementReviews] = useState(false);
+  const [measurementReviewsDirty, setMeasurementReviewsDirty] = useState<Record<number, boolean>>({});
   const [confirmedDefaultFields, setConfirmedDefaultFields] = useState<Record<number, DefaultFieldKey[]>>({});
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -423,6 +424,12 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
   }
 
   function invalidateMeasurementBinding(target: string) {
+    const hasSavedBinding = (blueprint?.visual_measurements ?? []).some(
+      (measurement) => measurement.targetBinding && bindingValue(measurement.targetBinding) === target,
+    );
+    if (hasSavedBinding) {
+      setMeasurementReviewsDirty((previous) => ({ ...previous, [selectedIndex]: true }));
+    }
     updateCurrentResult((result) => {
       if (!result.blueprint?.visual_measurements) return result;
       const nextMeasurements = result.blueprint.visual_measurements.map((measurement) => {
@@ -459,6 +466,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
   }
 
   function updateVisualMeasurement(index: number, patch: Partial<Pick<VisualMeasurement, "reviewedValue" | "reviewedUnit" | "reviewedFeature" | "reviewNote" | "targetBinding">>) {
+    setMeasurementReviewsDirty((previous) => ({ ...previous, [selectedIndex]: true }));
     updateCurrentResult((result) => {
       if (!result.blueprint?.visual_measurements) return result;
       return {
@@ -474,6 +482,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
   }
 
   function setVisualMeasurementDecision(index: number, decision: "confirmed" | "rejected") {
+    setMeasurementReviewsDirty((previous) => ({ ...previous, [selectedIndex]: true }));
     updateCurrentResult((result) => {
       if (!result.blueprint?.visual_measurements) return result;
       const measurement = result.blueprint.visual_measurements[index];
@@ -524,6 +533,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
       }
       if (response.status === 402) throw new Error("Saving measurement reviews requires an active Pro subscription or administrator access.");
       if (!response.ok || !payload.ok) throw new Error(payload.error ?? `Saving measurement reviews failed (HTTP ${response.status}).`);
+      setMeasurementReviewsDirty((previous) => ({ ...previous, [selected.index]: false }));
       setNotice(`Saved ${payload.confirmedCount ?? 0} confirmed reading(s), ${payload.rejectedCount ?? 0} rejected candidate(s), and ${payload.associatedCount ?? 0} explicit CAD field association(s). Saved associations are applied only when generating reviewed CAD.`);
       router.refresh();
     } catch (cause) {
@@ -563,6 +573,9 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
 
   function updateBlueprintBodyType(value: string) {
     const allowed: BlueprintBodyType[] = ["rotational_flange", "prismatic_box", "sheet_enclosure", "revolved_profile"];
+    if ((blueprint?.visual_measurements ?? []).some((measurement) => measurement.targetBinding?.scope === "base_sketch")) {
+      setMeasurementReviewsDirty((previous) => ({ ...previous, [selectedIndex]: true }));
+    }
     updateCurrentResult((result) => !result.blueprint ? result : ({
       ...result,
       blueprint: {
@@ -610,6 +623,9 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
   }
 
   function removeBlueprintFeature(index: number) {
+    if ((blueprint?.visual_measurements ?? []).some((measurement) => measurement.targetBinding?.scope === "feature")) {
+      setMeasurementReviewsDirty((previous) => ({ ...previous, [selectedIndex]: true }));
+    }
     updateCurrentResult((result) => !result.blueprint ? result : ({
       ...result,
       blueprint: {
@@ -677,6 +693,10 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
     }
     if (blueprint && !blueprint.primary_body_type) {
       setError("Select a supported primary body type after inspecting the drawing.");
+      return;
+    }
+    if (measurementReviewsDirty[selectedIndex]) {
+      setError("Save your latest measurement review changes before generating CAD. This persists removals or edits to previous CAD field associations.");
       return;
     }
     const unsavedBindings = (blueprint?.visual_measurements ?? []).some(
