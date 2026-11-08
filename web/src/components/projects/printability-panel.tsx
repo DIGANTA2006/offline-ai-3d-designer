@@ -27,6 +27,8 @@ type Report = {
   versionNumber: number;
   partSpecName: string;
   limitations?: string[];
+  notices?: string[];
+  sourceGeometryType?: "partSpec" | "blueprint";
 };
 type FixPreview = {
   success: boolean;
@@ -239,6 +241,9 @@ export function PrintabilityPanel({ projectId, versions }: { projectId: string; 
               </p>
             </div>
             <CheckList checks={report.checks} onPreviewFix={previewFix} busyKey={busy} />
+            {report.notices?.map((notice) => (
+              <p key={notice} className="text-xs text-muted-foreground">{notice}</p>
+            ))}
             {report.limitations?.map((limitation) => (
               <p key={limitation} className="text-xs text-muted-foreground">{limitation}</p>
             ))}

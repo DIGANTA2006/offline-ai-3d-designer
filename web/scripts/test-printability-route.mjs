@@ -161,6 +161,87 @@ try {
   assert.equal(calls.backend.at(-1).body.partSpec.name, "Saved test box");
   assert.equal(calls.backend.at(-1).headers.Authorization, "Bearer test-service-token");
 
+  // Drawing-generated versions store a Blueprint schema, not the legacy PartSpec.
+  // Route them to the geometry-native checker without relabeling the payload.
+  const savedBlueprint = {
+    part_name: "Drawing flange",
+    primary_body_type: "rotational_flange",
+    base_sketch: {
+      profile: "circle",
+      outer_diameter: 40,
+      thickness: 10,
+      thickness_is_default: true,
+      wall_thickness_is_default: false,
+    },
+    features: [],
+    unsupported_geometry: [],
+    needs_review: true,
+  };
+  const confirmedProvisionalDefaults = [{
+    field: "base_sketch.thickness",
+    value: 10,
+    unit: "mm",
+    source: "provisional_default",
+    confirmedBy: "user-1",
+    confirmedAt: "2026-11-07T15:00:00.000Z",
+  }];
+  versionRecord = {
+    ...versionRecord,
+    spec: {
+      reviewedBlueprint: savedBlueprint,
+      partSpec: savedBlueprint,
+      confirmedProvisionalDefaults,
+    },
+  };
+  backendBody = {
+    success: true,
+    checks: [{ check_id: "min_wall_thickness", status: "pass", available_fixes: [] }],
+    summary: { total: 1, pass: 1, fail: 0, warning: 0, skipped: 0 },
+    notices: ["Checks ran against the saved drawing blueprint."],
+  };
+  response = await route.GET(getRequest(), params);
+  body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.partSpecName, "Drawing flange");
+  assert.equal(body.sourceGeometryType, "blueprint");
+  assert.equal(calls.backend.at(-1).url, "https://cad.example.test/api/v1/printability/check-blueprint");
+  assert.deepEqual(calls.backend.at(-1).body.blueprint, savedBlueprint);
+  assert.equal(calls.backend.at(-1).body.partSpec, undefined);
+  assert.ok(body.notices.some((notice) => notice.includes("remains a provisional default") && notice.includes("explicit confirmation")));
+  assert.ok(body.notices.some((notice) => notice.includes("flagged as needing review")));
+
+  // Older saved versions may contain a provisional default without PR #20 confirmation provenance.
+  // Geometry checks may still run, but the response must not imply that the dimension was approved.
+  versionRecord.spec.confirmedProvisionalDefaults = [];
+  response = await route.GET(getRequest(), params);
+  body = await response.json();
+  assert.equal(response.status, 200);
+  assert.ok(body.notices.some((notice) => notice.includes("no matching user-confirmation record")));
+  assert.ok(body.notices.some((notice) => notice.includes("does not approve this value")));
+
+  // Drawing-blueprint fixes must remain disabled until they can safely rebuild the blueprint.
+  const beforeBlueprintFix = calls.backend.length;
+  response = await route.POST(postRequest({
+    versionId: "version-1",
+    action: "rotate",
+    checkId: "bed_fit_posZ_upright",
+  }), params);
+  body = await response.json();
+  assert.equal(response.status, 409);
+  assert.match(body.error, /One-click fixes for drawing blueprints are not enabled/);
+  assert.equal(calls.backend.length, beforeBlueprintFix);
+
+  // Restore a canonical PartSpec version for legacy mutation tests.
+  versionRecord = {
+    ...versionRecord,
+    spec: {
+      partSpec: {
+        name: "Saved test box",
+        features: [{ id: "base", type: "box", parameters: {} }],
+      },
+    },
+  };
+
   // Mutations require same-origin protection.
   sameOrigin = false;
   response = await route.POST(postRequest({
