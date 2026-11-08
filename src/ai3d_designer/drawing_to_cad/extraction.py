@@ -69,11 +69,13 @@ class RenderedDrawing:
 
 
 SYSTEM_PROMPT = """You are a cautious mechanical drawing interpreter. Return only one JSON object matching the provided Blueprint schema.
-All dimensions are millimetres. Select a supported primary_body_type only when the views and text support it.
-Use only values from DIMENSION INVENTORY for numeric dimensions. If a value cannot be tied to the inventory, set that field to null; do not estimate it.
-Treat a named PCD/BCD value as a pitch-circle diameter, so pitch_radius is PCD / 2. A visual count of repeated holes may be used for count, but do not invent dimensions.
-Ignore title blocks, page numbers, logos and watermarks. Identify front, top, side and section views across the supplied pages.
-For a labelled scalloped flange or circular-gullet sprocket, use radial_cutout_pattern only when the outer radius/diameter, gullet radius, root radius (or explicit cutter-centre radius) and repeat count are grounded in the drawing. Distinguish the tooth/gullet count from mounting-hole count. This creates circular scallops, not involute gear teeth; clearly say so in warnings. For true involute gears, unspecified/non-circular tooth profiles, sheet-metal bends/flanges, threads, welds, or other unsupported geometry, add a concise unsupported_geometry entry. Never substitute a smooth flange for a toothed sprocket.
+Inspect the supplied drawing IMAGE PIXELS directly, not only its OCR text. Identify front, top, side, section, detail and isometric views across all supplied pages.
+The OCR DIMENSION INVENTORY is independent text evidence. It is NOT a whitelist for visual_measurements. Read every clearly visible dimension callout from the image itself, including diameter/radius symbols, linear dimensions, angles, hole counts, thread callouts and tolerances. Put each readable callout in visual_measurements with a short dimension_name, exact raw_callout, numeric value when legible, its printed unit (or unknown), kind, associated feature only when clear, source_page, source_view, normalized image region (x/y/width/height from 0 to 1 when locatable), and an honest low/medium/high self-assessed confidence encoded from 0 to 1. The confidence is not calibrated. Always return visual_measurements as an array (empty when none). Every candidate must include all schema fields: dimension_name, raw_callout, value (number or null), unit, kind, feature (string or null), source_page, source_view, confidence, region (object or null), verification_status="vision_only", and ocr_inventory_id=null. The server overwrites verification fields after deterministic comparison.
+If a callout is partially unreadable or ambiguous, preserve its legible raw text, set value=null when the number is uncertain, and explain the uncertainty in warnings. Never invent a number, infer scale from pixel size, or derive an unstated dimension.
+Keep visual_measurements separate from CAD geometry. Populate numeric fields in base_sketch/features only with values that are independently corroborated by the OCR DIMENSION INVENTORY and have the correct dimension kind. A value seen only in the image must remain a visual_measurements candidate with verification_status=vision_only; deterministic code will mark a candidate ocr_value_match only when its value, kind, unit and source page agree with OCR evidence. Never treat model self-confidence as confirmation.
+All dimensions in CAD geometry are normalized to millimetres. If a drawing's unit is unclear, do not assume mm; set the candidate unit to unknown and add a warning. Do not populate geometry fields from unknown-unit values.
+Select a supported primary_body_type only when the views and text support it. Treat a named PCD/BCD value as a pitch-circle diameter, so pitch_radius is PCD / 2, but keep the original PCD as a named visual measurement. A visual count of repeated holes may be reported as a count candidate; do not invent dimensions.
+Ignore page numbers, logos and watermarks. For a labelled scalloped flange or circular-gullet sprocket, use radial_cutout_pattern only when the outer radius/diameter, gullet radius, root radius (or explicit cutter-centre radius) and repeat count are grounded in OCR evidence. Distinguish the tooth/gullet count from mounting-hole count. This creates circular scallops, not involute gear teeth; clearly say so in warnings. For true involute gears, unspecified/non-circular tooth profiles, sheet-metal bends/flanges, threads, welds, or other unsupported geometry, add a concise unsupported_geometry entry. Never substitute a smooth flange for a toothed sprocket.
 Defaults will be applied by deterministic code and marked for review. Put uncertainties in warnings and set needs_review=true."""
 
 
@@ -363,12 +365,52 @@ def _render_drawing(data: bytes, file_name: str, mime_type: str) -> RenderedDraw
     return RenderedDrawing([png], "raster", [""], [])
 
 
+
+def _has_callout_label(raw: str, labels: tuple[str, ...]) -> bool:
+    """Return true only when a normalized raw callout contains a whole semantic label."""
+    normalized = re.sub(r"\s+", " ", str(raw or "")).strip()
+    for label in labels:
+        escaped = re.escape(label.strip()).replace(r"\ ", r"\s+")
+        if re.search(r"(?<![A-Za-z0-9])" + escaped + r"(?![A-Za-z0-9])", normalized, re.IGNORECASE):
+            return True
+    return False
+
+
+def _semantic_callout_key(raw: str) -> str:
+    """Keep distinct measurement meanings even when their numeric value and kind match."""
+    label_groups = (
+        ("ring_outer_diameter", ("ring outer diameter", "outer ring diameter", "step outer diameter")),
+        ("ring_inner_diameter", ("ring inner diameter", "inner ring diameter", "step inner diameter")),
+        ("outer_diameter", ("outer diameter", "outside diameter", "outer dia", "od")),
+        ("inner_bore_diameter", ("inner bore diameter", "bore diameter", "bore dia", "bore", "inner diameter", "id")),
+        ("pitch_circle_diameter", ("pitch circle diameter", "pitch circle dia", "bolt circle diameter", "pcd", "bcd")),
+        ("hole_diameter", ("hole diameter", "hole dia", "dia of holes", "hole")),
+        ("outer_radius", ("outer radius", "outside radius")),
+        ("root_radius", ("root circle radius", "root radius", "dedendum radius")),
+        ("gullet_radius", ("gullet radius", "radial cutout radius", "cutout radius", "notch radius")),
+        ("wall_thickness", ("wall thickness", "sheet thickness")),
+        ("fillet_radius", ("fillet radius", "edge radius")),
+        ("pocket_depth", ("pocket depth", "slot depth")),
+        ("hole_depth", ("hole depth", "drill depth")),
+        ("ring_depth", ("ring depth", "recess depth", "step depth")),
+        ("pocket_length", ("pocket length", "slot length")),
+        ("pocket_width", ("pocket width", "slot width")),
+        ("width", ("overall width", "width")),
+        ("length", ("overall length", "length")),
+        ("thickness", ("overall thickness", "plate thickness", "thickness", "thk", "height")),
+    )
+    for key, labels in label_groups:
+        if _has_callout_label(raw, labels):
+            return key
+    return re.sub(r"\s+", " ", str(raw or "")).strip().casefold()
+
+
 def _dimension_inventory(
     raw_text: str, dimension_data: dict[str, Any], page_count: int
 ) -> list[DimensionToken]:
     """Build a millimetre inventory from the existing parser's explicit annotations."""
     found: list[DimensionToken] = []
-    keys: dict[tuple[str, float], DimensionToken] = {}
+    keys: dict[tuple[str, float, str, int | None], DimensionToken] = {}
 
     def add(
         value: Any,
@@ -385,7 +427,9 @@ def _dimension_inventory(
         if not (0 < numeric <= 1_000_000):
             return
         normalized_kind = kind.lower()
-        key = (normalized_kind, round(numeric, 4))
+        semantic_key = _semantic_callout_key(raw)
+        normalized_page = max(1, min(page, MAX_BLUEPRINT_PAGES)) if page is not None else None
+        key = (normalized_kind, round(numeric, 4), semantic_key, normalized_page)
         if key in keys:
             existing = keys[key]
             if len(raw) > len(existing.raw):
@@ -447,6 +491,12 @@ def _dimension_inventory(
         (["inner bore diameter", "bore diameter", "bore dia", "inner diameter", "id"], "diameter"),
         (["pitch circle diameter", "pitch circle dia", "pcd", "bcd", "bolt circle diameter"], "diameter"),
         (["hole diameter", "hole dia", "dia of holes"], "diameter"),
+        (["ring outer diameter", "outer ring diameter", "step outer diameter"], "diameter"),
+        (["ring inner diameter", "inner ring diameter", "step inner diameter"], "diameter"),
+        (["fillet radius", "edge radius"], "radius"),
+        (["pocket depth", "slot depth", "hole depth", "drill depth", "ring depth", "recess depth", "step depth"], "linear"),
+        (["pocket length", "slot length"], "linear"),
+        (["pocket width", "slot width"], "linear"),
         (["width", "overall width"], "linear"),
         (["length", "overall length"], "linear"),
         (["overall thickness", "plate thickness", "thickness", "thk", "height"], "linear"),
@@ -458,9 +508,10 @@ def _dimension_inventory(
                 if value is not None:
                     add(value, f"{single_label} R{value:g}", kind)
             continue
-        value = _labeled_value(raw_text, labels)
-        if value is not None:
-            add(value, f"{labels[0]} {value:g} mm", kind)
+        callout = _labeled_callout(raw_text, labels)
+        if callout is not None:
+            value, raw_callout = callout
+            add(value, raw_callout, kind)
 
     # Add explicitly marked Ø/R/angle/unit-bearing values from native text and OCR.
     # Bare title-block numbers are deliberately not treated as dimensions.
@@ -495,6 +546,12 @@ def _dimension_inventory(
             (["inner bore diameter", "bore diameter", "bore dia", "inner diameter", "id"], "diameter"),
             (["pitch circle diameter", "pitch circle dia", "pcd", "bcd", "bolt circle diameter"], "diameter"),
             (["hole diameter", "hole dia", "dia of holes"], "diameter"),
+            (["ring outer diameter", "outer ring diameter", "step outer diameter"], "diameter"),
+            (["ring inner diameter", "inner ring diameter", "step inner diameter"], "diameter"),
+            (["fillet radius", "edge radius"], "radius"),
+            (["pocket depth", "slot depth", "hole depth", "drill depth", "ring depth", "recess depth", "step depth"], "linear"),
+            (["pocket length", "slot length"], "linear"),
+            (["pocket width", "slot width"], "linear"),
             (["width", "overall width"], "linear"),
             (["length", "overall length"], "linear"),
             (["overall thickness", "plate thickness", "thickness", "thk", "height"], "linear"),
@@ -521,9 +578,10 @@ def _dimension_inventory(
                         if value is not None:
                             add(value, f"{single_label} R{value:g}", kind, page=page_index)
                     continue
-                value = _labeled_value(page_text, list(field_labels))
-                if value is not None:
-                    add(value, f"{field_labels[0]} {value:g} mm", kind, page=page_index)
+                callout = _labeled_callout(page_text, list(field_labels))
+                if callout is not None:
+                    value, raw_callout = callout
+                    add(value, raw_callout, kind, page=page_index)
 
     return found[:200]
 
@@ -558,8 +616,9 @@ def _inventory_message(
     )
     return (
         f"Drawing has {page_count} page(s). Classify all supplied views together.\n"
-        f"DIMENSION INVENTORY — only these numeric measurements may populate blueprint dimensions:\n"
+        f"OCR DIMENSION INVENTORY — these are text-extraction results. Only values independently corroborated here may populate numeric CAD geometry fields:\n"
         f"{lines}\n"
+        f"IMPORTANT: inspect the image pixels independently and list readable callouts missing from this inventory in visual_measurements. Do not omit them just because OCR missed them. Visual-only values are review candidates, never trusted geometry.\n"
         f"VECTOR PDF GEOMETRY CANDIDATES — path sizes are PDF points, not millimetres; use as spatial clues only:\n"
         f"Summary:\n{geometry_summary}\nFirst candidate details:\n{vector_details}\n\n"
         f"Return Blueprint JSON. Add unsupported_geometry rather than approximating unsupported features."
@@ -571,12 +630,19 @@ def _is_grounded(
     inventory: list[DimensionToken],
     allowed_kinds: set[str] | None = None,
     allow_half_diameter: bool = False,
+    required_labels: tuple[str, ...] = (),
+    excluded_labels: tuple[str, ...] = (),
 ) -> bool:
+    """Match a value, unit-kind and (for named fields) its semantic drawing callout."""
     if value is None:
         return True
     if abs(value) < 1e-6:
         return True
     for token in inventory:
+        if required_labels and not _has_callout_label(token.raw, required_labels):
+            continue
+        if excluded_labels and _has_callout_label(token.raw, excluded_labels):
+            continue
         kind_matches = allowed_kinds is None or token.kind in allowed_kinds
         if kind_matches and abs(value - token.value) <= max(0.02, abs(token.value) * 0.001):
             return True
@@ -588,27 +654,58 @@ def _is_grounded(
             return True
     return False
 
+
 def ground_blueprint(bp: Blueprint, inventory: list[DimensionToken]) -> list[str]:
-    """Clear numeric blueprint fields that cannot be tied to the correct dimension type."""
+    """Clear fields lacking matching value, dimension kind and semantic callout evidence."""
     cleared: list[str] = []
     sketch = bp.base_sketch
-    sketch_kinds = {
-        "outer_diameter": {"diameter"},
-        "inner_bore_diameter": {"diameter"},
-        "width": {"linear"},
-        "length": {"linear"},
-        "thickness": {"linear"},
-        "wall_thickness": {"linear"},
+    sketch_rules: dict[str, tuple[set[str], tuple[str, ...], tuple[str, ...]]] = {
+        "outer_diameter": (
+            {"diameter"},
+            ("outer diameter", "outside diameter", "outer dia", "od"),
+            ("ring outer diameter", "outer ring diameter", "step outer diameter"),
+        ),
+        "inner_bore_diameter": (
+            {"diameter"},
+            ("inner bore diameter", "bore diameter", "bore dia", "bore", "inner diameter", "id"),
+            ("ring inner diameter", "inner ring diameter", "step inner diameter"),
+        ),
+        "width": (
+            {"linear"},
+            ("overall width", "width"),
+            ("slot width", "pocket width", "hole width"),
+        ),
+        "length": (
+            {"linear"},
+            ("overall length", "length"),
+            ("slot length", "pocket length", "hole spacing", "bolt spacing"),
+        ),
+        "thickness": (
+            {"linear"},
+            ("overall thickness", "plate thickness", "thickness", "thk", "height"),
+            ("wall thickness", "sheet thickness", "rib thickness", "web thickness", "pocket depth", "hole depth"),
+        ),
+        "wall_thickness": (
+            {"linear"},
+            ("wall thickness", "sheet thickness"),
+            (),
+        ),
     }
-    for name, allowed_kinds in sketch_kinds.items():
+    for name, (allowed_kinds, required_labels, excluded_labels) in sketch_rules.items():
         value = getattr(sketch, name)
-        grounded = _is_grounded(value, inventory, allowed_kinds=allowed_kinds)
+        grounded = _is_grounded(
+            value,
+            inventory,
+            allowed_kinds=allowed_kinds,
+            required_labels=required_labels,
+            excluded_labels=excluded_labels,
+        )
         if name == "outer_diameter" and value is not None and not grounded:
-            grounded = any(
-                token.kind == "radius"
-                and re.search(r"\b(?:outer|outside)\s+radius\b", token.raw, re.IGNORECASE)
-                and abs(value - 2 * token.value) <= max(0.02, abs(token.value * 2) * 0.001)
-                for token in inventory
+            grounded = _is_grounded(
+                value / 2,
+                inventory,
+                allowed_kinds={"radius"},
+                required_labels=("outer radius", "outside radius"),
             )
         if not grounded:
             setattr(sketch, name, None)
@@ -655,17 +752,66 @@ def ground_blueprint(bp: Blueprint, inventory: list[DimensionToken]) -> list[str
     for index, feature in enumerate(bp.features):
         for name, allowed_kinds in feature_kinds.items():
             value = getattr(feature, name)
-            if not _is_grounded(value, inventory, allowed_kinds=allowed_kinds):
-                setattr(feature, name, None)
-                cleared.append(f"features[{index}].{name}={value:g}")
+            required_labels: tuple[str, ...] = ()
+            excluded_labels: tuple[str, ...] = ()
+            if name == "diameter" and feature.type in {"through_hole", "hole_pattern", "circular_pattern_cut"}:
+                required_labels = ("hole diameter", "hole dia", "dia of holes", "hole")
+            elif name == "diameter" and feature.type == "ring_step":
+                required_labels = ("ring outer diameter", "outer ring diameter", "step outer diameter")
+            elif name == "inner_diameter" and feature.type == "ring_step":
+                required_labels = ("ring inner diameter", "inner ring diameter", "step inner diameter")
+            elif name == "root_radius":
+                required_labels = ("root radius", "root circle radius", "dedendum radius")
+            elif name == "radius" and feature.type == "radial_cutout_pattern":
+                required_labels = ("gullet radius", "radial cutout radius", "cutout radius", "notch radius")
+            elif name == "radius" and feature.type == "fillet":
+                required_labels = ("fillet radius", "edge radius")
+            elif name == "length" and feature.type == "pocket":
+                required_labels = ("pocket length", "slot length")
+            elif name == "width" and feature.type == "pocket":
+                required_labels = ("pocket width", "slot width")
+            elif name == "depth" and feature.type == "pocket":
+                required_labels = ("pocket depth", "slot depth")
+            elif name == "depth" and feature.type in {"through_hole", "hole_pattern", "circular_pattern_cut"}:
+                required_labels = ("hole depth", "drill depth")
+            elif name == "depth" and feature.type == "ring_step":
+                required_labels = ("ring depth", "recess depth", "step depth")
+            if not _is_grounded(
+                value,
+                inventory,
+                allowed_kinds=allowed_kinds,
+                required_labels=required_labels,
+                excluded_labels=excluded_labels,
+            ):
+                if value is not None:
+                    setattr(feature, name, None)
+                    cleared.append(f"features[{index}].{name}={value:g}")
         value = feature.pitch_radius
-        if not _is_grounded(value, inventory, allowed_kinds={"radius"}, allow_half_diameter=True):
-            feature.pitch_radius = None
-            cleared.append(f"features[{index}].pitch_radius={value:g}")
+        if not _is_grounded(
+            value,
+            inventory,
+            allowed_kinds={"radius"},
+            allow_half_diameter=True,
+            required_labels=(
+                "pitch circle diameter",
+                "pitch circle dia",
+                "pcd",
+                "bcd",
+                "bolt circle diameter",
+                "pitch circle radius",
+                "bolt circle radius",
+                "pitch radius",
+            ),
+        ):
+            if value is not None:
+                feature.pitch_radius = None
+                cleared.append(f"features[{index}].pitch_radius={value:g}")
         if feature.angular_pitch is not None and not _is_grounded(feature.angular_pitch, inventory, allowed_kinds={"angle"}):
+            value = feature.angular_pitch
             feature.angular_pitch = None
             cleared.append(f"features[{index}].angular_pitch={value:g}")
         if feature.start_angle and not _is_grounded(feature.start_angle, inventory, allowed_kinds={"angle"}):
+            value = feature.start_angle
             feature.start_angle = 0.0
             cleared.append(f"features[{index}].start_angle={value:g}")
         x_value = feature.x
@@ -678,6 +824,58 @@ def ground_blueprint(bp: Blueprint, inventory: list[DimensionToken]) -> list[str
             cleared.append(f"features[{index}].y={y_value:g}")
 
     return cleared
+
+
+def reconcile_visual_measurements(bp: Blueprint, inventory: list[DimensionToken]) -> None:
+    """Mark visual callouts as OCR-corroborated only on deterministic same-page agreement."""
+    length_units_to_mm = {
+        "mm": 1.0,
+        "cm": 10.0,
+        "m": 1000.0,
+        "in": 25.4,
+        "inch": 25.4,
+    }
+    inventory_kinds = {
+        "linear": "linear",
+        "diameter": "diameter",
+        "radius": "radius",
+        "angle": "angle",
+    }
+
+    for candidate in bp.visual_measurements:
+        # Model-supplied verification fields and inventory IDs are never trusted.
+        candidate.verification_status = "vision_only"
+        candidate.ocr_inventory_id = None
+        if candidate.value is None:
+            continue
+
+        if candidate.kind == "angle":
+            if candidate.unit not in {"deg", "°"}:
+                continue
+            normalized_value = candidate.value
+        elif candidate.kind in {"linear", "diameter", "radius"} and candidate.unit in length_units_to_mm:
+            normalized_value = candidate.value * length_units_to_mm[candidate.unit]
+        else:
+            # Counts, unknown types and unknown units cannot be cross-checked safely.
+            continue
+
+        expected_kind = inventory_kinds.get(candidate.kind)
+        if expected_kind is None:
+            continue
+        tolerance = max(0.02, abs(normalized_value) * 0.001)
+        match = next(
+            (
+                token
+                for token in inventory
+                if token.kind == expected_kind
+                and (token.page == candidate.source_page or (token.page is None and len(bp.source_pages) == 1 and candidate.source_page == 1))
+                and abs(token.value - normalized_value) <= tolerance
+            ),
+            None,
+        )
+        if match is not None:
+            candidate.verification_status = "ocr_value_match"
+            candidate.ocr_inventory_id = match.id
 
 
 def _labeled_radius_value(text: str, labels: list[str]) -> float | None:
@@ -698,26 +896,49 @@ def _labeled_radius_value(text: str, labels: list[str]) -> float | None:
     return float(match.group(1).replace(",", ".")) if match else None
 
 
-def _labeled_value(text: str, labels: list[str]) -> float | None:
-    """Return a number only when adjacent to a recognized dimension label."""
+def _labeled_callout(text: str, labels: list[str]) -> tuple[float, str] | None:
+    """Return the normalized value and the actual matched source callout label."""
     label_group = "(?:" + "|".join(re.escape(label) for label in labels) + ")"
     pattern = re.compile(
-        rf"(?<![A-Za-z]){label_group}(?![A-Za-z])\s*(?:[:=]|is|of)?\s*[ØøΦ⌀∅]?\s*(\d{{1,7}}(?:[.,]\d{{1,4}})?)\s*(mm|cm|inches?|inch|in)?\b",
+        rf"(?<![A-Za-z])(?P<label>{label_group})(?![A-Za-z])\s*(?:[:=]|is|of)?\s*[ØøΦ⌀∅]?\s*(?P<number>\d{{1,7}}(?:[.,]\d{{1,4}})?)\s*(?P<unit>mm|cm|inches?|inch|in)?\b",
         re.IGNORECASE,
     )
-    match = pattern.search(text[:50_000])
-    if not match:
-        # Also support forms such as 'Ø155 OD'.
-        reverse = re.compile(
-            rf"[ØøΦ⌀∅]\s*(\d{{1,7}}(?:[.,]\d{{1,4}})?)\s*(?:mm\s*)?{label_group}(?![A-Za-z])",
-            re.IGNORECASE,
-        ).search(text[:50_000])
-        if not reverse:
-            return None
-        raw_number, raw_unit = reverse.group(1), "mm"
-    else:
-        raw_number, raw_unit = match.group(1), match.group(2) or "mm"
-    return float(raw_number.replace(",", ".")) * UNIT_MULTIPLIER.get(raw_unit.lower(), 1.0)
+    source = text[:50_000]
+
+    def ring_scoped(match: re.Match[str]) -> bool:
+        # "RING OUTER DIAMETER" is not the parent body's "OUTER DIAMETER".
+        label = match.group("label")
+        preceding = source[:match.start("label")]
+        return not label.lower().startswith("ring ") and bool(
+            re.search(r"\bring\s*$", preceding, re.IGNORECASE)
+        )
+
+    for match in pattern.finditer(source):
+        if ring_scoped(match):
+            continue
+        raw_number = match.group("number")
+        raw_unit = match.group("unit") or "mm"
+        value = float(raw_number.replace(",", ".")) * UNIT_MULTIPLIER.get(raw_unit.lower(), 1.0)
+        return value, match.group(0).strip()
+
+    # Also support reverse forms such as "Ø155 OD" while respecting ring scope.
+    reverse = re.compile(
+        rf"[ØøΦ⌀∅]\s*(?P<number>\d{{1,7}}(?:[.,]\d{{1,4}})?)\s*(?:mm\s*)?(?P<label>{label_group})(?![A-Za-z])",
+        re.IGNORECASE,
+    )
+    for match in reverse.finditer(source):
+        if ring_scoped(match):
+            continue
+        value = float(match.group("number").replace(",", "."))
+        return value, match.group(0).strip()
+
+    return None
+
+
+def _labeled_value(text: str, labels: list[str]) -> float | None:
+    """Compatibility wrapper for callers that need only the normalized numeric value."""
+    callout = _labeled_callout(text, labels)
+    return callout[0] if callout is not None else None
 
 
 def _heuristic_blueprint(raw_text: str, inventory: list[DimensionToken]) -> Blueprint:
@@ -919,6 +1140,7 @@ async def extract_blueprint(
         blueprint = _heuristic_blueprint(raw_text, inventory)
 
     blueprint.source_pages = list(range(1, len(rendered.images) + 1))
+    reconcile_visual_measurements(blueprint, inventory)
     cleared = ground_blueprint(blueprint, inventory)
     defaults = apply_defaults(blueprint)
     errors, warnings = lint(blueprint)

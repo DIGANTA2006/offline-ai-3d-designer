@@ -54,11 +54,39 @@ class Feature(StrictModel):
     y: float = Field(default=0.0, ge=-MAX_DIMENSION_MM, le=MAX_DIMENSION_MM)
 
 
+class DrawingRegion(StrictModel):
+    """Normalized image region (0..1) containing a visible drawing callout."""
+
+    x: float = Field(ge=0, le=1, description="Left coordinate normalized to page width")
+    y: float = Field(ge=0, le=1, description="Top coordinate normalized to page height")
+    width: float = Field(gt=0, le=1)
+    height: float = Field(gt=0, le=1)
+
+
+class VisualMeasurement(StrictModel):
+    """A measurement read from image pixels; it is evidence for review, not CAD authority."""
+
+    dimension_name: str = Field(min_length=1, max_length=100)
+    raw_callout: str = Field(default="", max_length=160)
+    value: float | None = Field(default=None, ge=0, le=MAX_DIMENSION_MM)
+    unit: Literal["mm", "cm", "m", "in", "inch", "deg", "°", "unknown"] = "unknown"
+    kind: Literal["linear", "diameter", "radius", "angle", "count", "unknown"] = "unknown"
+    feature: str | None = Field(default=None, max_length=120)
+    source_page: int = Field(default=1, ge=1, le=8)
+    source_view: Literal["front", "top", "side", "section", "detail", "isometric", "auxiliary", "title_block", "unknown"] = "unknown"
+    confidence: float = Field(default=0.0, ge=0, le=1, description="Uncalibrated model self-assessment; not a probability")
+    region: DrawingRegion | None = None
+    verification_status: Literal["vision_only", "ocr_value_match"] = "vision_only"
+    ocr_inventory_id: str | None = Field(default=None, max_length=16)
+
+
 class Blueprint(StrictModel):
     part_name: str = Field(default="part", min_length=1, max_length=120)
     primary_body_type: BodyType | None = None
     base_sketch: BaseSketch = Field(default_factory=BaseSketch)
     features: list[Feature] = Field(default_factory=list, max_length=100)
+    # Visual callouts stay separate from geometry until they are reviewed/confirmed.
+    visual_measurements: list[VisualMeasurement] = Field(default_factory=list, max_length=200)
     warnings: list[str] = Field(default_factory=list, max_length=100)
     unsupported_geometry: list[str] = Field(default_factory=list, max_length=100)
     source_pages: list[int] = Field(default_factory=list, max_length=8)
