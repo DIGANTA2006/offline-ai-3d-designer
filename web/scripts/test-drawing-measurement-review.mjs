@@ -218,7 +218,9 @@ try {
   assert.equal(calls.updates, 1);
 
   const originalBodyType = project.versions[0].spec.ocrResults[0].spec.blueprint.primary_body_type;
+  const originalProfile = project.versions[0].spec.ocrResults[0].spec.blueprint.base_sketch.profile;
   project.versions[0].spec.ocrResults[0].spec.blueprint.primary_body_type = "prismatic_box";
+  project.versions[0].spec.ocrResults[0].spec.blueprint.base_sketch.profile = "rectangle";
   const wrongBodyFeature = await send({
     fileIndex: 0,
     reviews: [{
@@ -232,8 +234,7 @@ try {
   assert.equal(wrongBodyFeature.status, 422, "hole-pattern targets require a rotational flange body");
   assert.equal(calls.updates, 1);
   project.versions[0].spec.ocrResults[0].spec.blueprint.primary_body_type = originalBodyType;
-
-  const originalProfile = project.versions[0].spec.ocrResults[0].spec.blueprint.base_sketch.profile;
+  project.versions[0].spec.ocrResults[0].spec.blueprint.base_sketch.profile = originalProfile;
   project.versions[0].spec.ocrResults[0].spec.blueprint.base_sketch.profile = "rectangle";
   const wrongBaseProfile = await send({
     fileIndex: 0,
