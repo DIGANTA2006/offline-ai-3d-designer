@@ -300,16 +300,14 @@ function getCanonicalBlueprintForGeneration(source: Blueprint): Blueprint {
   return {
     ...blueprint,
     visual_measurements: (blueprint.visual_measurements ?? []).map((measurement) => {
-      const {
-        reviewStatus: _reviewStatus,
-        reviewedValue: _reviewedValue,
-        reviewedUnit: _reviewedUnit,
-        reviewedFeature: _reviewedFeature,
-        reviewNote: _reviewNote,
-        targetBinding: _targetBinding,
-        reviewPersisted: _reviewPersisted,
-        ...candidate
-      } = measurement;
+      const candidate = { ...measurement };
+      delete candidate.reviewStatus;
+      delete candidate.reviewedValue;
+      delete candidate.reviewedUnit;
+      delete candidate.reviewedFeature;
+      delete candidate.reviewNote;
+      delete candidate.targetBinding;
+      delete candidate.reviewPersisted;
       return candidate;
     }),
   };
