@@ -162,6 +162,7 @@ try {
   assert.equal(good.headers.get("cache-control"), "no-store", "review responses must not be cached");
   assert.equal(goodPayload.confirmedCount, 3);
   assert.equal(goodPayload.rejectedCount, 0);
+  assert.equal(goodPayload.associatedCount, 3);
   assert.equal(calls.updates, 1);
   assert.equal(calls.audits, 1);
 
