@@ -84,6 +84,10 @@ export default async function ProjectDetailPage({ params }: Props) {
                 value?: number | null;
                 unit?: string | null;
                 featureDescription?: string | null;
+                targetBinding?:
+                  | { scope: "base_sketch"; field: "outer_diameter" | "inner_bore_diameter" | "width" | "length" | "thickness" | "wall_thickness" }
+                  | { scope: "feature"; featureIndex: number; field: "count" | "pitch_radius" | "start_angle" | "angular_pitch" | "diameter" | "inner_diameter" | "root_radius" | "length" | "width" | "depth" | "radius" }
+                  | null;
                 note?: string | null;
               }>
             : [],
