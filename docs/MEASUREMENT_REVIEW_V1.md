@@ -44,4 +44,4 @@ The CAD geometry generator remains deterministic. Export validity and a saved bi
 
 ## Verification
 
-The web route regression script covers same-origin rejection, owner-scoped lookup, valid length/angle/count readings, unit-kind mismatch, duplicate candidate indices, unknown candidate/feature indices, incompatible CAD fields, unsupported feature fields, duplicate target bindings, rejected-candidate binding prevention, audit logging, and preservation of original OCR/Blueprint evidence.
+The web route regression script covers same-origin rejection, owner-scoped lookup, valid length/angle/count readings, unit-kind mismatch, duplicate candidate indices, unknown candidate/feature indices, incompatible CAD fields and body/profile combinations, unsupported feature fields, duplicate target bindings, rejected-candidate binding prevention, audit logging, and preservation of original OCR/Blueprint evidence. The `test:drawing-measurement-bindings` suite verifies millimetre normalization, application to a defensive Blueprint copy, and rejection of pending, unsaved or invalid measurements.
