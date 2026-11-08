@@ -1,54 +1,69 @@
 # Work Status — Offline AI 3D Designer
 
 **Updated:** 8 November 2026  
-**Repository:** \`DIGANTA2006/offline-ai-3d-designer\` (private)  
-**Default branch:** \`main\`  
-**Current main:** \`9c8707c89f6ae04607a4a77cd183ba1491ad18a8\`  
-**Latest merged change:** PR #20 — drawing export provenance and provisional-dimension confirmation
+**Repository:** `DIGANTA2006/offline-ai-3d-designer` (private)  
+**Client:** C-DAC Kolkata  
+**Default branch:** `main`  
+**Current main:** `06a3f2b0c60896cfc2c18d0d26d55e4b1da08c80`  
+**Latest merged change:** PR #26
 
-See [Project Architecture, Status and Delivery — 8 November 2026](docs/PROJECT_ARCHITECTURE_STATUS_2026-11-08.md) for the verified architecture, contract boundaries, current PR evidence and release gaps.
+**Submission status: not yet evidenced as a production acceptance candidate.**  
+The internal gate register is [C-DAC Client Submission Readiness](docs/CLIENT_SUBMISSION_READINESS_2026-11-08.md). It supersedes the historical PR-status notes below and older handoff snapshots.
 
-## Current verified repository state
+## Current verified state
 
-- The repository is **Private** and \`main\` is the default branch.
-- PR #20 is merged. Effective CAD defaults are retained in the saved blueprint, drawing generation requires a saved structured blueprint, and the exact provisional height/wall value must be confirmed before export.
-- No application rollback was performed. Authentication, private storage, billing, CAD, OCR, fit-check, printability, slicing and deployment work remain intact.
-- The product is **Offline AI 3D Designer**, an engineering-grade CAD/manufacturing platform. A guided interface for non-specialists is a presentation layer, not a reduced CAD engine.
-- The open Phase 1/2 PRs are not part of \`main\` until reviewed and merged. Green CI on a PR branch is evidence only for that exact branch head.
+- The product is an engineering-grade CAD/manufacturing platform. Guided UX is only a presentation layer.
+- Merged implementation increments: #20, #23, #24, #25 and #29. Documentation increments: #26 and #28.
+- PR #29 includes visual measurement candidates and the first persisted measurement-review ledger. A confirmed reading is a transcription decision only; it does not bind a dimension to a CAD parameter or prove arrow-to-feature association.
+- PR #24 validates positive E-axis extrusion. Latest mainline Docker smoke measured 0.345410 m filament length and 2,962 deposition moves; filament mass is not measured.
+- Current drawing Blueprint remains narrower than the general PartSpec engine: four body types and seven feature types. Sprocket seat cuts are a preview approximation, not an ISO 606 involute chain profile.
+- Hardware fit checking remains axis-aligned. Printability uses generic FDM guidance and is not physical/material certification.
+- No production WebGL viewer, CATIA-open evidence, drawing-accuracy benchmark, physical-print record or complete client acceptance run is evidenced.
 
-## Open pull requests and verification snapshot
+## Latest mainline verification
 
-| PR | Scope | Evidence / state |
+- Python CAD/mesh tests: **337 passed, 2 warnings**.
+- Next.js lint, TypeScript and production build: passed.
+- CodeQL Python and JavaScript/TypeScript: passed.
+- Docker CAD/OCR runtime smoke: passed.
+- Real CuraEngine smoke: passed with positive E-axis extrusion.
+- Vercel and Railway status contexts for the recorded main SHA are successful. These do not replace a fresh full production user-journey test.
+
+Evidence:
+- [CAD Engine Tests](https://github.com/DIGANTA2006/offline-ai-3d-designer/actions/runs/42444037349)
+- [Web Frontend Checks](https://github.com/DIGANTA2006/offline-ai-3d-designer/actions/runs/42444037367)
+- [CodeQL Advanced](https://github.com/DIGANTA2006/offline-ai-3d-designer/actions/runs/42444037363)
+
+## Pull request state
+
+| PR | Current state | Required handling |
 |---|---|---|
-| #15 | Accessible 3D-printing product roadmap | Open; documentation-only |
-| #18 | Initial visual-dimension candidates | Closed as stale; implementation successor is #29 |
-| #22 | Semantic drawing dimension evidence | Draft; recorded head passed 324 Python tests, web, Docker and CodeQL |
-| #23 | Blueprint-native printability | Draft; 320 Python tests, web and CodeQL passed; its old Docker smoke reported 0.000 m filament |
-| #24 | Positive G-code extrusion validation | Draft; 322 Python tests; test cube measured 0.345410 m E-axis filament and 2,962 deposition moves; web and CodeQL passed |
-| #25 | OCR source selection using validated MIME metadata | Draft; 316 Python tests; OCR helper, web, Docker and CodeQL passed |
-| #26 | Guided UX wording / advanced engineering mode | Draft, documentation-only; CI passed |
-| #27 | Combined visual-dimension candidate work | Closed as superseded by #29 |
-| #29 | Combined Phase 2 visual candidates plus persisted Phase 3 measurement-review ledger | Draft; head ee77ff2...; 327 Python tests, web, Docker/CAD-OCR and both CodeQL scans passed. Docker smoke still reports 0.000 m filament pending #24 integration |
+| #15 — Accessible 3D-printing roadmap | Open, documentation-only, diverged 11 ahead / 29 behind at assessment | Refresh against current main; update roadmap status and gates |
+| #22 — Semantic dimension evidence | Open, diverged 3 ahead / 18 behind at assessment | Shared drawing files overlap with merged #29; inspect exact unique hunks and selectively port only missing changes. Do not merge wholesale |
+| #23 — Blueprint-native printability | Merged | Current code path is present; does not prove source-drawing accuracy |
+| #24 — Positive extrusion validation | Merged | Current smoke proves positive E-axis deposition, not real printer acceptance |
+| #25 — MIME-aware OCR source selection | Merged | Included in current OCR-source selection path |
+| #26 — Engineering-grade guided UX terminology | Merged | Documentation change |
+| #28 — Architecture/status documentation | Merged | Original PR-status snapshot became stale after later same-day merges; corrected snapshot is in review |
+| #29 — Measurement-review ledger | Merged | First persisted review stage; measurement-to-geometry association remains future work |
+| #30 — Client submission readiness gates | Draft PR | Documentation-only control register; not a release certificate |
 
-PR #16, #17 and #19 were closed as superseded by #23, #24 and #25. PR #18 and #27 were closed as superseded by #29. PR #21 was closed as superseded by #22. PR #20 is merged. No PR #22–#26 or #29 change is claimed as merged or deployed. Issue #11 was closed as completed after verifying the authenticated printability-router mount; issue #8 remains open for extrusion, endpoint/upload verification and printer acceptance.
+## Immediate delivery priorities
 
-## Immediate priorities
+1. Obtain the signed C-DAC scope and authoritative acceptance catalogue. The separate 65-item list has not been found; do not invent feature coverage.
+2. Confirm written data-handling, hosted-vision, deployment, hosting and offline requirements before using confidential drawings.
+3. Establish the approved golden drawing set and benchmark OCR, dimensions, feature association and generated geometry against references.
+4. Complete measurement-to-feature/CAD-parameter workflow, including source-region review and confirmation invalidation.
+5. Implement the actual web 3D viewer for the exact saved model version.
+6. Validate selected printer/material profiles, G-code, CATIA STEP interoperability and physical prints.
+7. Run full staging end-to-end, security, backup/restore and non-technical user acceptance tests.
+8. Prepare handover and obtain written C-DAC acceptance or an agreed, documented deviation list.
 
-1. Product-owner review of #15's refreshed roadmap, #26's guided/advanced wording, and #28's architecture/status document.
-2. Review/merge smaller corrective PRs #22–#25 in the dependency order agreed with the owner; rerun combined CI after rebasing.
-3. Review #29 (Phase 2 plus the first persisted Phase 3 ledger). A confirmed reading is a transcription decision only, not a CAD parameter or arrow-to-feature association.
-4. Continue Phase 3 with manual measurement entry, explicit dimension-to-feature/CAD-field association, image-region highlighting and confirmation invalidation for geometry edits.
-5. Implement a real interactive viewer from the exact validated geometry.
-5. Establish the owner-approved golden drawing set and compare model dimensions/bounds against references.
-6. Select printer/material profiles and inspect slicer previews before physical tests.
-7. Resolve C-DAC scope, ISO 606 sprocket expectations, hosted-vision data rules, IP/licence and printer acceptance requirements.
+## Release boundary
 
-## Evidence boundaries
+Do not claim arbitrary drawing accuracy, all 65 features, ISO 606 engagement certification, fully offline operation, universal printer support, CATIA acceptance or physical print readiness without corresponding evidence. CI success and merged PRs are engineering progress, not client acceptance.
 
-- CI proves only the checks run on the recorded commit.
-- No fresh full Production sign-in/database/private-Blob/payment/CAD-service journey was run in this documentation audit.
-- No CATIA opening test, drawing-to-mesh accuracy benchmark, customer G-code inspection or physical print is claimed. PR #29's Docker smoke is a real CuraEngine slice but still reports 0.000 m filament; PR #24 remains required before trusting filament estimates.
-- The current npm vulnerability count, IP/licence terms and branch-protection settings need a separate fresh review; old counts must not be presented as current.
+No production secrets, databases, hosted-vision settings or deployments were changed by the readiness documentation work.
 
 
 ## Historical implementation and verification notes
