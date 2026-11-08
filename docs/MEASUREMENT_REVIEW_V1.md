@@ -1,6 +1,6 @@
 # Drawing Measurement Review Ledger v1
 
-**Status:** Draft implementation in PR #29  
+**Status:** Implemented on main via merged PR #29; first-stage review ledger only. It is not a complete dimension-to-CAD association system.  
 **Purpose:** Persist a user's review of image-read measurement candidates without converting those candidates into CAD parameters.
 
 ## Data contract
