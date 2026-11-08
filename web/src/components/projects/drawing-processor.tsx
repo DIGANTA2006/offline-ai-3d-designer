@@ -589,7 +589,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
         },
         visual_measurements: (result.blueprint.visual_measurements ?? []).map((measurement) =>
           measurement.targetBinding?.scope === "base_sketch"
-            ? { ...measurement, targetBinding: null, reviewStatus: "pending" as const, reviewPersisted: false }
+            ? { ...measurement, targetBinding: null, reviewStatus: "pending" as const, reviewPersisted: false, reviewRequiresSave: true }
             : measurement
         ),
         needs_review: true,
