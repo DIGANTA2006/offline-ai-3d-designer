@@ -29,6 +29,10 @@ type BlueprintFeature = {
   x: number;
   y: number;
 };
+type MeasurementBinding =
+  | { scope: "base_sketch"; field: SketchNumberKey }
+  | { scope: "feature"; featureIndex: number; field: Exclude<FeatureNumberKey, "x" | "y"> };
+
 type VisualMeasurement = {
   dimension_name: string;
   raw_callout: string;
@@ -47,6 +51,8 @@ type VisualMeasurement = {
   reviewedUnit?: string;
   reviewedFeature?: string | null;
   reviewNote?: string;
+  targetBinding?: MeasurementBinding | null;
+  reviewPersisted?: boolean;
 };
 
 type StoredMeasurementReview = {
@@ -55,6 +61,7 @@ type StoredMeasurementReview = {
   value?: number | null;
   unit?: string | null;
   featureDescription?: string | null;
+  targetBinding?: MeasurementBinding | null;
   note?: string | null;
 };
 
@@ -122,6 +129,140 @@ type Props = { projectId: string; sourceFiles: SourceFile[] };
 type SketchNumberKey = "outer_diameter" | "inner_bore_diameter" | "width" | "length" | "thickness" | "wall_thickness";
 type FeatureNumberKey = "count" | "pitch_radius" | "start_angle" | "angular_pitch" | "diameter" | "inner_diameter" | "root_radius" | "length" | "width" | "depth" | "radius" | "x" | "y";
 type DefaultFieldKey = "base_sketch.thickness" | "base_sketch.wall_thickness";
+type BindingOption = { value: string; label: string; binding: MeasurementBinding };
+
+const baseBindingFields: Array<{
+  field: SketchNumberKey;
+  label: string;
+  kind: "linear" | "diameter";
+  bodies: BlueprintBodyType[];
+}> = [
+  { field: "outer_diameter", label: "Base sketch · outer diameter", kind: "diameter", bodies: ["rotational_flange"] },
+  { field: "inner_bore_diameter", label: "Base sketch · central bore diameter", kind: "diameter", bodies: ["rotational_flange"] },
+  { field: "length", label: "Base sketch · overall length", kind: "linear", bodies: ["prismatic_box", "sheet_enclosure"] },
+  { field: "width", label: "Base sketch · overall width", kind: "linear", bodies: ["prismatic_box", "sheet_enclosure"] },
+  { field: "thickness", label: "Base sketch · solid thickness", kind: "linear", bodies: ["rotational_flange", "prismatic_box", "sheet_enclosure"] },
+  { field: "wall_thickness", label: "Base sketch · enclosure wall thickness", kind: "linear", bodies: ["sheet_enclosure"] },
+];
+
+const featureBindingFields: Record<BlueprintFeatureType, Array<{
+  field: Exclude<FeatureNumberKey, "x" | "y">;
+  label: string;
+  kind: "linear" | "diameter" | "radius" | "angle" | "count";
+}>> = {
+  circular_pattern_cut: [
+    { field: "count", label: "count", kind: "count" },
+    { field: "diameter", label: "hole diameter", kind: "diameter" },
+    { field: "pitch_radius", label: "pattern radius (PCD / 2)", kind: "radius" },
+    { field: "start_angle", label: "pattern start angle", kind: "angle" },
+    { field: "angular_pitch", label: "pattern angular pitch", kind: "angle" },
+    { field: "depth", label: "cut depth", kind: "linear" },
+  ],
+  hole_pattern: [
+    { field: "count", label: "hole count", kind: "count" },
+    { field: "diameter", label: "hole diameter", kind: "diameter" },
+    { field: "pitch_radius", label: "pattern radius (PCD / 2)", kind: "radius" },
+    { field: "start_angle", label: "pattern start angle", kind: "angle" },
+    { field: "angular_pitch", label: "pattern angular pitch", kind: "angle" },
+    { field: "depth", label: "hole depth", kind: "linear" },
+  ],
+  radial_cutout_pattern: [
+    { field: "count", label: "cutout count", kind: "count" },
+    { field: "radius", label: "cutout / gullet radius", kind: "radius" },
+    { field: "root_radius", label: "root radius", kind: "radius" },
+    { field: "pitch_radius", label: "cutter-centre radius", kind: "radius" },
+    { field: "start_angle", label: "pattern start angle", kind: "angle" },
+    { field: "angular_pitch", label: "pattern angular pitch", kind: "angle" },
+  ],
+  ring_step: [
+    { field: "diameter", label: "ring outer diameter", kind: "diameter" },
+    { field: "inner_diameter", label: "ring inner diameter", kind: "diameter" },
+    { field: "depth", label: "ring recess / boss depth", kind: "linear" },
+  ],
+  through_hole: [
+    { field: "diameter", label: "hole diameter", kind: "diameter" },
+    { field: "depth", label: "hole depth", kind: "linear" },
+  ],
+  pocket: [
+    { field: "diameter", label: "circular pocket diameter", kind: "diameter" },
+    { field: "length", label: "pocket length", kind: "linear" },
+    { field: "width", label: "pocket width", kind: "linear" },
+    { field: "depth", label: "pocket depth", kind: "linear" },
+  ],
+  fillet: [{ field: "radius", label: "fillet radius", kind: "radius" }],
+};
+
+function bindingValue(binding: MeasurementBinding): string {
+  return binding.scope === "base_sketch"
+    ? `base_sketch.${binding.field}`
+    : `features[${binding.featureIndex}].${binding.field}`;
+}
+
+function getMeasurementBindingOptions(blueprint: Blueprint, kind: string): BindingOption[] {
+  const options: BindingOption[] = [];
+  for (const item of baseBindingFields) {
+    if (item.kind !== kind || !item.bodies.includes(blueprint.primary_body_type ?? "revolved_profile")) continue;
+    const binding: MeasurementBinding = { scope: "base_sketch", field: item.field };
+    options.push({ value: bindingValue(binding), label: item.label, binding });
+  }
+  blueprint.features.forEach((feature, featureIndex) => {
+    for (const item of featureBindingFields[feature.type] ?? []) {
+      if (item.kind !== kind) continue;
+      const binding: MeasurementBinding = { scope: "feature", featureIndex, field: item.field };
+      options.push({ value: bindingValue(binding), label: `Feature ${featureIndex + 1} (${feature.type}) · ${item.label}`, binding });
+    }
+  });
+  return options;
+}
+
+function measurementValueInBlueprintUnits(measurement: VisualMeasurement): number | null {
+  const value = measurement.reviewedValue;
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  if (measurement.kind === "linear" || measurement.kind === "diameter" || measurement.kind === "radius") {
+    const unit = measurement.reviewedUnit ?? measurement.unit;
+    const multiplier = unit === "mm" ? 1 : unit === "cm" ? 10 : unit === "m" ? 1000 : unit === "in" || unit === "inch" ? 25.4 : NaN;
+    const converted = value * multiplier;
+    return Number.isFinite(converted) && converted > 0 && converted <= 1_000_000 ? converted : null;
+  }
+  if (measurement.kind === "angle" && ["deg", "°"].includes(measurement.reviewedUnit ?? measurement.unit)) {
+    return value >= 0 && value <= 360 ? value : null;
+  }
+  if (measurement.kind === "count" && (measurement.reviewedUnit ?? measurement.unit) === "count") {
+    return Number.isInteger(value) && value >= 1 && value <= 360 ? value : null;
+  }
+  return null;
+}
+
+function applySavedMeasurementBindings(source: Blueprint): Blueprint {
+  const blueprint: Blueprint = {
+    ...source,
+    base_sketch: { ...source.base_sketch },
+    features: source.features.map((feature) => ({ ...feature })),
+    visual_measurements: [...(source.visual_measurements ?? [])],
+  };
+  const usedTargets = new Set<string>();
+  for (const measurement of blueprint.visual_measurements ?? []) {
+    const binding = measurement.targetBinding;
+    if (measurement.reviewStatus !== "confirmed" || measurement.reviewPersisted !== true || !binding) continue;
+    const target = bindingValue(binding);
+    const value = measurementValueInBlueprintUnits(measurement);
+    if (usedTargets.has(target) || value === null) continue;
+    usedTargets.add(target);
+    if (binding.scope === "base_sketch") {
+      blueprint.base_sketch[binding.field] = value;
+      if (binding.field === "thickness") blueprint.base_sketch.thickness_is_default = false;
+      if (binding.field === "wall_thickness") blueprint.base_sketch.wall_thickness_is_default = false;
+    } else if (blueprint.features[binding.featureIndex]) {
+      blueprint.features[binding.featureIndex] = {
+        ...blueprint.features[binding.featureIndex],
+        [binding.field]: value,
+      };
+    }
+  }
+  if (usedTargets.size > 0) blueprint.needs_review = true;
+  return blueprint;
+}
+
 
 const blueprintSketchFields: Array<{ key: SketchNumberKey; label: string; defaultFlag?: "thickness_is_default" | "wall_thickness_is_default" }> = [
   { key: "outer_diameter", label: "Outer diameter (mm)" },
@@ -175,6 +316,8 @@ function attachSavedMeasurementReviews(spec: OCRSpec, reviews: StoredMeasurement
           reviewedUnit: saved?.unit ?? measurement.unit,
           reviewedFeature: saved?.featureDescription ?? measurement.feature ?? "",
           reviewNote: saved?.note ?? "",
+          targetBinding: saved?.targetBinding ?? null,
+          reviewPersisted: Boolean(saved),
         };
       }),
     },
@@ -193,7 +336,8 @@ function canConfirmMeasurementReading(measurement: VisualMeasurement): boolean {
   return false;
 }
 
-function getCanonicalBlueprintForGeneration(blueprint: Blueprint): Blueprint {
+function getCanonicalBlueprintForGeneration(source: Blueprint): Blueprint {
+  const blueprint = applySavedMeasurementBindings(source);
   return {
     ...blueprint,
     visual_measurements: (blueprint.visual_measurements ?? []).map((measurement) => {
@@ -203,6 +347,8 @@ function getCanonicalBlueprintForGeneration(blueprint: Blueprint): Blueprint {
         reviewedUnit: _reviewedUnit,
         reviewedFeature: _reviewedFeature,
         reviewNote: _reviewNote,
+        targetBinding: _targetBinding,
+        reviewPersisted: _reviewPersisted,
         ...candidate
       } = measurement;
       return candidate;
@@ -213,7 +359,12 @@ function getCanonicalBlueprintForGeneration(blueprint: Blueprint): Blueprint {
 function getProvisionalDefaultFields(blueprint: Blueprint | null): Array<{ field: DefaultFieldKey; label: string; value: number | null }> {
   if (!blueprint) return [];
   const fields: Array<{ field: DefaultFieldKey; label: string; value: number | null }> = [];
-  if (blueprint.primary_body_type !== "revolved_profile" && blueprint.base_sketch.thickness_is_default) {
+  const confirmedBindings = new Set(
+    (blueprint.visual_measurements ?? [])
+      .filter((measurement) => measurement.reviewStatus === "confirmed" && measurement.reviewPersisted === true && measurement.targetBinding)
+      .map((measurement) => measurement.targetBinding ? bindingValue(measurement.targetBinding) : ""),
+  );
+  if (blueprint.primary_body_type !== "revolved_profile" && blueprint.base_sketch.thickness_is_default && !confirmedBindings.has("base_sketch.thickness")) {
     fields.push({
       field: "base_sketch.thickness",
       label: "height / depth",
@@ -222,7 +373,7 @@ function getProvisionalDefaultFields(blueprint: Blueprint | null): Array<{ field
         : null,
     });
   }
-  if (blueprint.primary_body_type === "sheet_enclosure" && blueprint.base_sketch.wall_thickness_is_default) {
+  if (blueprint.primary_body_type === "sheet_enclosure" && blueprint.base_sketch.wall_thickness_is_default && !confirmedBindings.has("base_sketch.wall_thickness")) {
     fields.push({
       field: "base_sketch.wall_thickness",
       label: "enclosure wall thickness",
@@ -292,7 +443,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
     });
   }
 
-  function updateVisualMeasurement(index: number, patch: Partial<Pick<VisualMeasurement, "reviewedValue" | "reviewedUnit" | "reviewedFeature" | "reviewNote">>) {
+  function updateVisualMeasurement(index: number, patch: Partial<Pick<VisualMeasurement, "reviewedValue" | "reviewedUnit" | "reviewedFeature" | "reviewNote" | "targetBinding">>) {
     updateCurrentResult((result) => {
       if (!result.blueprint?.visual_measurements) return result;
       return {
@@ -300,7 +451,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
         blueprint: {
           ...result.blueprint,
           visual_measurements: result.blueprint.visual_measurements.map((measurement, itemIndex) => itemIndex === index
-            ? { ...measurement, ...patch, reviewStatus: "pending" }
+            ? { ...measurement, ...patch, reviewStatus: "pending", reviewPersisted: false }
             : measurement),
         },
       };
@@ -318,7 +469,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
         blueprint: {
           ...result.blueprint,
           visual_measurements: result.blueprint.visual_measurements.map((item, itemIndex) => itemIndex === index
-            ? { ...item, reviewStatus: decision }
+            ? { ...item, reviewStatus: decision, reviewPersisted: false, ...(decision === "rejected" ? { targetBinding: null } : {}) }
             : item),
         },
       };
@@ -336,6 +487,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
           value: measurement.reviewedValue,
           unit: measurement.reviewedUnit ?? measurement.unit,
           featureDescription: measurement.reviewedFeature ?? null,
+          targetBinding: measurement.targetBinding ?? null,
         } : {}),
         note: measurement.reviewNote ?? null,
       }];
@@ -499,6 +651,13 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
     }
     if (blueprint && !blueprint.primary_body_type) {
       setError("Select a supported primary body type after inspecting the drawing.");
+      return;
+    }
+    const unsavedBindings = (blueprint?.visual_measurements ?? []).some(
+      (measurement) => measurement.reviewStatus === "confirmed" && measurement.targetBinding && measurement.reviewPersisted !== true,
+    );
+    if (unsavedBindings) {
+      setError("Save each confirmed CAD field association before generating. This keeps the selected dimension-to-feature mapping in the project review ledger.");
       return;
     }
     if (blueprint?.unsupported_geometry.length) {
