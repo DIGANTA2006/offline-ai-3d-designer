@@ -136,13 +136,14 @@ const baseBindingFields: Array<{
   label: string;
   kind: "linear" | "diameter";
   bodies: BlueprintBodyType[];
+  profiles: BlueprintProfile[];
 }> = [
-  { field: "outer_diameter", label: "Base sketch · outer diameter", kind: "diameter", bodies: ["rotational_flange"] },
-  { field: "inner_bore_diameter", label: "Base sketch · central bore diameter", kind: "diameter", bodies: ["rotational_flange"] },
-  { field: "length", label: "Base sketch · overall length", kind: "linear", bodies: ["prismatic_box", "sheet_enclosure"] },
-  { field: "width", label: "Base sketch · overall width", kind: "linear", bodies: ["prismatic_box", "sheet_enclosure"] },
-  { field: "thickness", label: "Base sketch · solid thickness", kind: "linear", bodies: ["rotational_flange", "prismatic_box", "sheet_enclosure"] },
-  { field: "wall_thickness", label: "Base sketch · enclosure wall thickness", kind: "linear", bodies: ["sheet_enclosure"] },
+  { field: "outer_diameter", label: "Base sketch · outer diameter", kind: "diameter", bodies: ["rotational_flange"], profiles: ["circle"] },
+  { field: "inner_bore_diameter", label: "Base sketch · central bore diameter", kind: "diameter", bodies: ["rotational_flange"], profiles: ["circle"] },
+  { field: "length", label: "Base sketch · overall length", kind: "linear", bodies: ["prismatic_box", "sheet_enclosure"], profiles: ["rectangle", "polygon", "complex_path"] },
+  { field: "width", label: "Base sketch · overall width", kind: "linear", bodies: ["prismatic_box", "sheet_enclosure"], profiles: ["rectangle", "polygon", "complex_path"] },
+  { field: "thickness", label: "Base sketch · solid thickness", kind: "linear", bodies: ["rotational_flange", "prismatic_box", "sheet_enclosure"], profiles: ["circle", "rectangle", "polygon", "complex_path"] },
+  { field: "wall_thickness", label: "Base sketch · enclosure wall thickness", kind: "linear", bodies: ["sheet_enclosure"], profiles: ["rectangle", "polygon", "complex_path"] },
 ];
 
 const featureBindingFields: Record<BlueprintFeatureType, Array<{
@@ -201,7 +202,11 @@ function bindingValue(binding: MeasurementBinding): string {
 function getMeasurementBindingOptions(blueprint: Blueprint, kind: string): BindingOption[] {
   const options: BindingOption[] = [];
   for (const item of baseBindingFields) {
-    if (item.kind !== kind || !item.bodies.includes(blueprint.primary_body_type ?? "revolved_profile")) continue;
+    if (
+      item.kind !== kind
+      || !item.bodies.includes(blueprint.primary_body_type ?? "revolved_profile")
+      || !item.profiles.includes(blueprint.base_sketch.profile)
+    ) continue;
     const binding: MeasurementBinding = { scope: "base_sketch", field: item.field };
     options.push({ value: bindingValue(binding), label: item.label, binding });
   }
