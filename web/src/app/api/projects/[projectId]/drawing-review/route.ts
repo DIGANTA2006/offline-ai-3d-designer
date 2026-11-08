@@ -31,7 +31,7 @@ class RouteError extends Error {
 function json(body: unknown, init: ResponseInit = {}) {
   const headers = new Headers(init.headers);
   headers.set("Cache-Control", "no-store");
-  return json(body, { ...init, headers });
+  return NextResponse.json(body, { ...init, headers });
 }
 
 const MAX_BODY_BYTES = 32 * 1024;
