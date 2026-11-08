@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import shutil
 import json
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
@@ -133,6 +134,9 @@ class SliceResult:
     filament_length_m: Optional[float] = None  # meters
     layers: Optional[int] = None
     filament_weight_estimated: bool = False
+    filament_length_source: Optional[str] = None
+    extrusion_length_mm: Optional[float] = None
+    deposition_moves: int = 0
 
 
 class Slicer:
@@ -314,7 +318,11 @@ class Slicer:
 
             # Parse G-code for metadata only after the structural check passes.
             metadata = self._parse_gcode_metadata(output_path)
-            
+            extrusion_length_mm = float(gcode_validation["stats"]["extrusion_length_mm"])
+            if extrusion_length_mm > 0:
+                metadata["filament_length_m"] = extrusion_length_mm / 1000.0
+                metadata["filament_length_source"] = "gcode_e_axis"
+
             return SliceResult(
                 success=True,
                 gcode_path=output_path,
@@ -324,6 +332,9 @@ class Slicer:
                 filament_length_m=metadata.get("filament_length_m"),
                 layers=metadata.get("layers"),
                 filament_weight_estimated=metadata.get("filament_weight_estimated", False),
+                filament_length_source=metadata.get("filament_length_source"),
+                extrusion_length_mm=gcode_validation["stats"]["extrusion_length_mm"],
+                deposition_moves=gcode_validation["stats"]["deposition_moves"],
             )
             
         except subprocess.TimeoutExpired:
@@ -421,6 +432,7 @@ class Slicer:
             "print_time": None,
             "filament_used": None,
             "filament_length_m": None,
+            "filament_length_source": None,
             "layers": None,
             "filament_weight_estimated": False,
         }
@@ -443,12 +455,20 @@ class Slicer:
                             for part in parts:
                                 part = part.strip()
                                 if part.endswith("mm"):
-                                    metadata["filament_length_m"] = float(part[:-2]) / 1000.0
+                                    length_m = float(part[:-2]) / 1000.0
+                                    if length_m > 0:
+                                        metadata["filament_length_m"] = length_m
+                                        metadata["filament_length_source"] = "cura_metadata"
                                 elif part.endswith("m"):
-                                    metadata["filament_length_m"] = float(part[:-1])
+                                    length_m = float(part[:-1])
+                                    if length_m > 0:
+                                        metadata["filament_length_m"] = length_m
+                                        metadata["filament_length_source"] = "cura_metadata"
                                 elif part.endswith("g"):
-                                    metadata["filament_used"] = float(part[:-1])
-                                    metadata["filament_weight_estimated"] = True
+                                    grams = float(part[:-1])
+                                    if grams > 0:
+                                        metadata["filament_used"] = grams
+                                        metadata["filament_weight_estimated"] = True
                         except ValueError:
                             pass
                     elif line.startswith(";LAYER_COUNT:"):
@@ -467,15 +487,121 @@ class Slicer:
         
         return metadata
 
+    @staticmethod
+    def _analyze_gcode_extrusion(content: str) -> Dict[str, Any]:
+        """Measure positive filament extrusion from G-code E-axis movement.
+
+        M82/M83 select absolute/relative extrusion. G92 resets an absolute
+        coordinate without consuming filament. M200 volumetric E values are
+        converted back to filament length when a filament diameter is supplied.
+        A positive E coordinate by itself is not proof of extrusion: the
+        validator separately requires at least one positive E move coordinated
+        with an XYZ move.
+        """
+        absolute_e = True
+        e_mode_explicit = False
+        volumetric_diameter_mm: Optional[float] = None
+        active_tool = 0
+        e_positions: Dict[int, float] = {}
+        total_extrusion_mm = 0.0
+        deposition_extrusion_mm = 0.0
+        positive_extrusion_moves = 0
+        deposition_moves = 0
+
+        for raw_line in content.splitlines():
+            # Remove semicolon and parenthetical comments before parsing words.
+            code = raw_line.split(";", 1)[0]
+            code = re.sub(r"\([^)]*\)", "", code).strip().upper()
+            if not code:
+                continue
+            code = re.sub(r"^N\d+\s*", "", code)
+            command_match = re.match(r"^(G\d+|M\d+|T\d+)", code)
+            if not command_match:
+                continue
+
+            command = command_match.group(1)
+            arguments = code[command_match.end():]
+            words: Dict[str, float] = {}
+            for letter, raw_value in re.findall(
+                r"([A-Z])\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))",
+                arguments,
+            ):
+                try:
+                    words[letter] = float(raw_value)
+                except ValueError:
+                    continue
+
+            if command == "M82":
+                absolute_e = True
+                e_mode_explicit = True
+                continue
+            if command == "M83":
+                absolute_e = False
+                e_mode_explicit = True
+                continue
+            # On common Marlin/RepRap profiles G90/G91 also select E mode
+            # until an explicit M82/M83 overrides it.
+            if command == "G90" and not e_mode_explicit:
+                absolute_e = True
+                continue
+            if command == "G91" and not e_mode_explicit:
+                absolute_e = False
+                continue
+            if command == "M200":
+                diameter = words.get("D")
+                volumetric_diameter_mm = diameter if diameter and diameter > 0 else None
+                continue
+            if command.startswith("T"):
+                try:
+                    active_tool = int(command[1:])
+                except ValueError:
+                    continue
+                continue
+            if command == "G92":
+                if "E" in words:
+                    e_positions[active_tool] = words["E"]
+                continue
+            if command not in {"G0", "G1", "G2", "G3"} or "E" not in words:
+                continue
+
+            e_value = words["E"]
+            if absolute_e:
+                previous_e = e_positions.get(active_tool, 0.0)
+                delta_e = e_value - previous_e
+                e_positions[active_tool] = e_value
+            else:
+                delta_e = e_value
+                e_positions[active_tool] = e_positions.get(active_tool, 0.0) + e_value
+
+            if delta_e <= 1e-6:
+                continue
+
+            if volumetric_diameter_mm:
+                filament_area_mm2 = math.pi * (volumetric_diameter_mm / 2.0) ** 2
+                filament_length_mm = delta_e / filament_area_mm2
+            else:
+                filament_length_mm = delta_e
+
+            if not math.isfinite(filament_length_mm) or filament_length_mm <= 0:
+                continue
+
+            total_extrusion_mm += filament_length_mm
+            positive_extrusion_moves += 1
+            if any(axis in words for axis in ("X", "Y", "Z")):
+                deposition_extrusion_mm += filament_length_mm
+                deposition_moves += 1
+
+        return {
+            "extrusion_length_mm": total_extrusion_mm,
+            "deposition_extrusion_mm": deposition_extrusion_mm,
+            "positive_extrusion_moves": positive_extrusion_moves,
+            "deposition_moves": deposition_moves,
+            "e_mode": "absolute" if absolute_e else "relative",
+            "volumetric_extrusion": volumetric_diameter_mm is not None,
+        }
+
     def validate_gcode(self, gcode_path: str) -> Dict[str, Any]:
-        """
-        Validate G-code file for structural sanity.
-        
-        Returns dict with:
-        - valid: bool
-        - error: str (if not valid)
-        - stats: dict with has_home, has_extrusion, layers, has_temp, max_x, max_y
-        """
+        """Validate G-code structure and require real positive extrusion moves."""
         result = {
             "valid": False,
             "error": None,
@@ -486,117 +612,113 @@ class Slicer:
                 "has_temp": False,
                 "max_x": 0.0,
                 "max_y": 0.0,
-            }
+                "extrusion_length_mm": 0.0,
+                "deposition_extrusion_mm": 0.0,
+                "positive_extrusion_moves": 0,
+                "deposition_moves": 0,
+                "e_mode": "absolute",
+                "volumetric_extrusion": False,
+            },
         }
-        
+
         try:
-            with open(gcode_path, "r") as f:
-                content = f.read()
-        except Exception as e:
-            result["error"] = f"Failed to read G-code file: {e}"
+            with open(gcode_path, "r", encoding="utf-8", errors="replace") as handle:
+                content = handle.read()
+        except Exception as exc:
+            result["error"] = f"Failed to read G-code file: {exc}"
             return result
-        
-        # Check for placeholder/preview-only marker
+
         if "PREVIEW only" in content or "preview only" in content.lower():
             result["error"] = "Placeholder/preview-only G-code detected"
             return result
-        
-        # Check for basic structural elements
-        lines = content.split('\n')
+
         layer_count = 0
         has_home = False
-        has_extrusion = False
         has_temp = False
         max_x = 0.0
         max_y = 0.0
-        in_comment = False
-        last_z = None
-        z_layer_threshold = 0.01  # Minimum Z change to count as new layer
+        last_z: Optional[float] = None
+        z_layer_threshold = 0.01
         has_layer_count = False
         has_layer_markers = False
-        
-        for line in lines:
-            stripped = line.strip()
-            
-            # Track comment state for ; comments
-            if stripped.startswith(';'):
-                in_comment = True
-            else:
-                in_comment = False
-            
-            # Check for homing commands (G28) - only count if not in comment
-            if not in_comment and re.match(r'^G28\b', stripped):
-                has_home = True
-            
-            # Check for temperature commands (M104, M109, M140, M190) - only count if not in comment
-            if not in_comment and re.match(r'^M1(0[49]|4[09])\b', stripped):
-                has_temp = True
-            
-            # Check for extrusion commands (G1 with E) - only count if not in comment
-            if not in_comment and re.match(r'^G1\b', stripped) and 'E' in stripped:
-                # Check if E value is positive (extrusion) not negative (retraction)
-                e_match = re.search(r'E([+-]?\d*\.?\d+)', stripped)
-                if e_match:
-                    e_val = float(e_match.group(1))
-                    if e_val > 0:
-                        has_extrusion = True
-            
-            # Track max X and Y for bounding box
-            if not in_comment and re.match(r'^G[01]\b', stripped):
-                x_match = re.search(r'X([+-]?\d*\.?\d+)', stripped)
-                y_match = re.search(r'Y([+-]?\d*\.?\d+)', stripped)
-                if x_match:
-                    max_x = max(max_x, abs(float(x_match.group(1))))
-                if y_match:
-                    max_y = max(max_y, abs(float(y_match.group(1))))
-                
-                # Track Z for layer inference (only if no explicit layer markers)
-                z_match = re.search(r'Z([+-]?\d*\.?\d+)', stripped)
-                if z_match and not has_layer_count and not has_layer_markers:
-                    z_val = float(z_match.group(1))
-                    if last_z is not None and z_val > last_z + z_layer_threshold:
+
+        for raw_line in content.splitlines():
+            code = raw_line.split(";", 1)[0].strip()
+            if not code:
+                stripped = raw_line.strip()
+                if stripped.startswith(";LAYER_COUNT:"):
+                    try:
+                        layer_count = int(stripped[13:])
+                        has_layer_count = True
+                    except ValueError:
+                        pass
+                elif stripped.startswith(";LAYER:"):
+                    has_layer_markers = True
+                    if not has_layer_count:
                         layer_count += 1
-                    last_z = z_val
-            
-            # Count layers - prefer LAYER_COUNT over individual LAYER lines
-            if stripped.startswith(';LAYER_COUNT:'):
+                continue
+
+            code = re.sub(r"^N\d+\s*", "", code).strip()
+            if re.match(r"^G28\b", code):
+                has_home = True
+            if re.match(r"^M1(0[49]|4[09])\b", code):
+                has_temp = True
+
+            if re.match(r"^G[012]\b", code):
+                for axis in ("X", "Y"):
+                    match = re.search(rf"{axis}([+-]?(?:\d+(?:\.\d*)?|\.\d+))", code)
+                    if match:
+                        value = abs(float(match.group(1)))
+                        if axis == "X":
+                            max_x = max(max_x, value)
+                        else:
+                            max_y = max(max_y, value)
+
+                z_match = re.search(r"Z([+-]?(?:\d+(?:\.\d*)?|\.\d+))", code)
+                if z_match and not has_layer_count and not has_layer_markers:
+                    z_value = float(z_match.group(1))
+                    if last_z is not None and z_value > last_z + z_layer_threshold:
+                        layer_count += 1
+                    last_z = z_value
+
+            stripped = raw_line.strip()
+            if stripped.startswith(";LAYER_COUNT:"):
                 try:
                     layer_count = int(stripped[13:])
                     has_layer_count = True
                 except ValueError:
                     pass
-            elif stripped.startswith(';LAYER:'):
+            elif stripped.startswith(";LAYER:"):
                 has_layer_markers = True
-                # Only count if we don't have LAYER_COUNT
                 if not has_layer_count:
                     layer_count += 1
-        
-        # If no explicit layer markers (neither LAYER_COUNT nor LAYER), use inferred layers from Z changes
-        # But ensure at least 1 layer if there are Z moves
-        if not has_layer_count and not has_layer_markers:
-            if layer_count == 0 and last_z is not None and last_z > 0:
-                layer_count = 1
-        
-        result["stats"]["has_home"] = has_home
-        result["stats"]["has_extrusion"] = has_extrusion
-        result["stats"]["has_temp"] = has_temp
-        result["stats"]["layers"] = layer_count
-        result["stats"]["max_x"] = max_x
-        result["stats"]["max_y"] = max_y
-        
-        # Basic validation: must have homing and extrusion
+
+        if not has_layer_count and not has_layer_markers and layer_count == 0 and last_z is not None and last_z > 0:
+            layer_count = 1
+
+        extrusion = self._analyze_gcode_extrusion(content)
+        has_extrusion = extrusion["deposition_moves"] > 0 and extrusion["deposition_extrusion_mm"] > 0.01
+
+        result["stats"].update({
+            "has_home": has_home,
+            "has_extrusion": has_extrusion,
+            "has_temp": has_temp,
+            "layers": layer_count,
+            "max_x": max_x,
+            "max_y": max_y,
+            **extrusion,
+        })
+
         if not has_home:
             result["error"] = "G-code missing required commands (homing G28)"
             return result
-        
         if not has_extrusion:
-            result["error"] = "G-code has no extrusion moves"
+            result["error"] = "G-code has no positive extrusion move on a coordinated print path"
             return result
-        
-        if layer_count == 0:
+        if layer_count <= 0:
             result["error"] = "G-code has no layers"
             return result
-        
+
         result["valid"] = True
         return result
 

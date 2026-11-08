@@ -399,3 +399,45 @@ def test_slicer_preset_integration(monkeypatch):
         result = slicer.slice(stl_path, gcode_path, settings=settings)
         assert result.success is True
         assert result.gcode_path == gcode_path
+
+
+def test_zero_cura_filament_metadata_is_not_reported_as_a_real_estimate(tmp_path):
+    slicer = Slicer(cura_engine_path="/fake")
+    path = tmp_path / "zero-filament.gcode"
+    path.write_text(
+        ";TIME:120\n;LAYER_COUNT:2\n;Filament used: 0.0mm, 0.0g\n",
+        encoding="utf-8",
+    )
+    metadata = slicer._parse_gcode_metadata(str(path))
+    assert metadata["filament_length_m"] is None
+    assert metadata["filament_used"] is None
+    assert metadata["filament_weight_estimated"] is False
+
+
+def test_slice_derives_filament_length_from_real_e_axis_moves_when_cura_reports_zero(tmp_path, monkeypatch):
+    stl_path = tmp_path / "input.stl"
+    output_path = tmp_path / "output.gcode"
+    trimesh.creation.box(extents=(10, 10, 10)).export(stl_path)
+
+    def fake_run(command, **kwargs):
+        generated_path = Path(command[command.index("-o") + 1])
+        generated_path.write_text(
+            ";TIME:120\n;LAYER_COUNT:1\n;Filament used: 0.0mm, 0.0g\n"
+            "G21\nG90\nM82\nM104 S200\nG28\n"
+            "G1 X0 Y0 Z0.2 F1200\nG1 X10 Y0 E2.5 F1200\n"
+            "M104 S0\n",
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("ai3d_designer.slicing.slicer.subprocess.run", fake_run)
+    result = Slicer(cura_engine_path="/fake/CuraEngine").slice(
+        str(stl_path), str(output_path), SliceSettings()
+    )
+
+    assert result.success is True
+    assert result.filament_length_m == 0.0025
+    assert result.filament_length_source == "gcode_e_axis"
+    assert result.extrusion_length_mm == 2.5
+    assert result.deposition_moves == 1
+    assert result.filament_used is None
