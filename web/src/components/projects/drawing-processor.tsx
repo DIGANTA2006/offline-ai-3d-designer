@@ -206,6 +206,11 @@ function getMeasurementBindingOptions(blueprint: Blueprint, kind: string): Bindi
     options.push({ value: bindingValue(binding), label: item.label, binding });
   }
   blueprint.features.forEach((feature, featureIndex) => {
+    if (blueprint.primary_body_type === "revolved_profile" || !blueprint.primary_body_type) return;
+    if (
+      ["hole_pattern", "circular_pattern_cut", "radial_cutout_pattern", "ring_step"].includes(feature.type)
+      && blueprint.primary_body_type !== "rotational_flange"
+    ) return;
     for (const item of featureBindingFields[feature.type] ?? []) {
       if (item.kind !== kind) continue;
       const binding: MeasurementBinding = { scope: "feature", featureIndex, field: item.field };
@@ -533,6 +538,16 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
       }
       if (response.status === 402) throw new Error("Saving measurement reviews requires an active Pro subscription or administrator access.");
       if (!response.ok || !payload.ok) throw new Error(payload.error ?? `Saving measurement reviews failed (HTTP ${response.status}).`);
+      updateCurrentResult((result) => !result.blueprint ? result : ({
+        ...result,
+        blueprint: {
+          ...result.blueprint,
+          visual_measurements: (result.blueprint.visual_measurements ?? []).map((measurement) => ({
+            ...measurement,
+            reviewPersisted: measurement.reviewStatus === "confirmed" || measurement.reviewStatus === "rejected",
+          })),
+        },
+      }));
       setMeasurementReviewsDirty((previous) => ({ ...previous, [selected.index]: false }));
       setNotice(`Saved ${payload.confirmedCount ?? 0} confirmed reading(s), ${payload.rejectedCount ?? 0} rejected candidate(s), and ${payload.associatedCount ?? 0} explicit CAD field association(s). Saved associations are applied only when generating reviewed CAD.`);
       router.refresh();
@@ -573,7 +588,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
 
   function updateBlueprintBodyType(value: string) {
     const allowed: BlueprintBodyType[] = ["rotational_flange", "prismatic_box", "sheet_enclosure", "revolved_profile"];
-    if ((blueprint?.visual_measurements ?? []).some((measurement) => measurement.targetBinding?.scope === "base_sketch")) {
+    if ((blueprint?.visual_measurements ?? []).some((measurement) => measurement.targetBinding)) {
       setMeasurementReviewsDirty((previous) => ({ ...previous, [selectedIndex]: true }));
     }
     updateCurrentResult((result) => !result.blueprint ? result : ({
@@ -582,7 +597,7 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
         ...result.blueprint,
         primary_body_type: allowed.includes(value as BlueprintBodyType) ? value as BlueprintBodyType : null,
         visual_measurements: (result.blueprint.visual_measurements ?? []).map((measurement) =>
-          measurement.targetBinding?.scope === "base_sketch"
+          measurement.targetBinding
             ? { ...measurement, targetBinding: null, reviewStatus: "pending" as const, reviewPersisted: false }
             : measurement
         ),
@@ -593,6 +608,9 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
 
   function updateBlueprintProfile(value: string) {
     const allowed: BlueprintProfile[] = ["circle", "rectangle", "polygon", "complex_path"];
+    if ((blueprint?.visual_measurements ?? []).some((measurement) => measurement.targetBinding?.scope === "base_sketch")) {
+      setMeasurementReviewsDirty((previous) => ({ ...previous, [selectedIndex]: true }));
+    }
     updateCurrentResult((result) => !result.blueprint ? result : ({
       ...result,
       blueprint: {
@@ -601,6 +619,11 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
           ...result.blueprint.base_sketch,
           profile: allowed.includes(value as BlueprintProfile) ? value as BlueprintProfile : "circle",
         },
+        visual_measurements: (result.blueprint.visual_measurements ?? []).map((measurement) =>
+          measurement.targetBinding?.scope === "base_sketch"
+            ? { ...measurement, targetBinding: null, reviewStatus: "pending" as const, reviewPersisted: false }
+            : measurement
+        ),
         needs_review: true,
       },
     }));
@@ -623,7 +646,9 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
   }
 
   function removeBlueprintFeature(index: number) {
-    if ((blueprint?.visual_measurements ?? []).some((measurement) => measurement.targetBinding?.scope === "feature")) {
+    if ((blueprint?.visual_measurements ?? []).some(
+      (measurement) => measurement.targetBinding?.scope === "feature" && measurement.targetBinding.featureIndex >= index,
+    )) {
       setMeasurementReviewsDirty((previous) => ({ ...previous, [selectedIndex]: true }));
     }
     updateCurrentResult((result) => !result.blueprint ? result : ({
@@ -632,9 +657,11 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
         ...result.blueprint,
         features: result.blueprint.features.filter((_feature, i) => i !== index),
         visual_measurements: (result.blueprint.visual_measurements ?? []).map((measurement) =>
-          measurement.targetBinding?.scope === "feature"
+          measurement.targetBinding?.scope === "feature" && measurement.targetBinding.featureIndex >= index
             ? { ...measurement, targetBinding: null, reviewStatus: "pending" as const, reviewPersisted: false }
-            : measurement
+            : measurement.targetBinding?.scope === "feature" && measurement.targetBinding.featureIndex < index
+              ? { ...measurement, targetBinding: { ...measurement.targetBinding, featureIndex: measurement.targetBinding.featureIndex } }
+              : measurement
         ),
         needs_review: true,
       },
