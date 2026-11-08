@@ -339,6 +339,9 @@ export async function POST(request: Request, { params }: Context) {
     const savedReviews = body.reviews.map((item) =>
       validateReview(item, candidates as Candidate[], blueprint, user.id, reviewedAt, seen)
     );
+    const confirmedCount = savedReviews.filter((item) => item.decision === "confirmed_reading").length;
+    const rejectedCount = savedReviews.filter((item) => item.decision === "rejected").length;
+    const associatedCount = savedReviews.filter((item) => item.targetBinding).length;
     const usedBindings = new Set<string>();
     for (const review of savedReviews) {
       if (!review.targetBinding) continue;
@@ -370,8 +373,9 @@ export async function POST(request: Request, { params }: Context) {
             projectId,
             versionId: version.id,
             fileIndex,
-            confirmedCount: savedReviews.filter((item) => item.decision === "confirmed_reading").length,
-            rejectedCount: savedReviews.filter((item) => item.decision === "rejected").length,
+            confirmedCount,
+            rejectedCount,
+            associatedCount,
           },
         },
       });
@@ -383,9 +387,9 @@ export async function POST(request: Request, { params }: Context) {
       ok: true,
       fileIndex,
       reviewCount: savedReviews.length,
-      confirmedCount: savedReviews.filter((item) => item.decision === "confirmed_reading").length,
-      rejectedCount: savedReviews.filter((item) => item.decision === "rejected").length,
-      associatedCount: savedReviews.filter((item) => item.targetBinding).length,
+      confirmedCount,
+      rejectedCount,
+      associatedCount,
       reviewedAt,
     });
   } catch (error) {
