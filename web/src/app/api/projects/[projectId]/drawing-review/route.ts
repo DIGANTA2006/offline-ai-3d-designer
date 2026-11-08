@@ -73,6 +73,8 @@ function validateTargetBinding(
     wall_thickness: "linear",
   };
   const bodyType = typeof blueprint.primary_body_type === "string" ? blueprint.primary_body_type : null;
+  const baseSketch = isRecord(blueprint.base_sketch) ? blueprint.base_sketch : null;
+  const profile = typeof baseSketch?.profile === "string" ? baseSketch.profile : null;
 
   if (raw.scope === "base_sketch") {
     if (Object.keys(raw).some((key) => !["scope", "field"].includes(key))) {
@@ -85,10 +87,13 @@ function validateTargetBinding(
     if (candidateKind !== baseFieldKinds[field]) {
       throw new RouteError("Measurement kind does not match the selected base-sketch field.", 422);
     }
-    if ((field === "outer_diameter" || field === "inner_bore_diameter") && bodyType !== "rotational_flange") {
-      throw new RouteError("Diameter bindings on the base sketch require a rotational flange.", 422);
+    if ((field === "outer_diameter" || field === "inner_bore_diameter") &&
+        (bodyType !== "rotational_flange" || profile !== "circle")) {
+      throw new RouteError("Base-sketch diameter bindings require a circular rotational flange profile.", 422);
     }
-    if ((field === "width" || field === "length") && !["prismatic_box", "sheet_enclosure"].includes(bodyType ?? "")) {
+    if ((field === "width" || field === "length") &&
+        (!["prismatic_box", "sheet_enclosure"].includes(bodyType ?? "") ||
+          !["rectangle", "polygon", "complex_path"].includes(profile ?? ""))) {
       throw new RouteError("Base-sketch width and length bindings require a prismatic body.", 422);
     }
     if (field === "thickness" && (!bodyType || bodyType === "revolved_profile")) {
@@ -117,8 +122,8 @@ function validateTargetBinding(
     if (!isRecord(feature) || typeof feature.type !== "string") {
       throw new RouteError("The selected Blueprint feature is invalid.", 422);
     }
-    if (bodyType === "revolved_profile") {
-      throw new RouteError("Feature bindings are not supported on revolved-profile bodies in Blueprint v1.", 422);
+    if (!bodyType || bodyType === "revolved_profile") {
+      throw new RouteError("Feature bindings require a resolved, supported Blueprint body type.", 422);
     }
     if (
       ["hole_pattern", "radial_cutout_pattern", "ring_step"].includes(feature.type)
