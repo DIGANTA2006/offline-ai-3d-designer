@@ -1,27 +1,53 @@
 # Work Status — Offline AI 3D Designer
 
-Updated: 2 November 2026 — PR #3 and PR #6 merged; Vercel deployment completed for `main` commit `f6a0449`
+**Updated:** 8 November 2026  
+**Repository:** \`DIGANTA2006/offline-ai-3d-designer\` (private)  
+**Default branch:** \`main\`  
+**Current main:** \`9c8707c89f6ae04607a4a77cd183ba1491ad18a8\`  
+**Latest merged change:** PR #20 — drawing export provenance and provisional-dimension confirmation
 
-## Current main status
+See [Project Architecture, Status and Delivery — 8 November 2026](docs/PROJECT_ARCHITECTURE_STATUS_2026-11-08.md) for the verified architecture, contract boundaries, current PR evidence and release gaps.
 
-- Repository: `DIGANTA2006/offline-ai-3d-designer` (private); default branch: `main`.
-- PR #3 — drawing-to-CAD/OCR workflow: **merged 25 October 2026**. Merge commit: `36992adfa34d30a70df3147eac725b9dfffebc1d`.
-- PR #6 — hardware fit-check and CuraEngine/CAD deployment fixes: **merged 1 November 2026**. Merge commit: `806b7b55b6f57c8a96546cafaf77fe3ab334bea1`. [PR #6](https://github.com/DIGANTA2006/offline-ai-3d-designer/pull/6)
-- PR #6 integrated the authenticated fit-check endpoints/dashboard flow, axis-aligned mounting-hole/boss checks, conservative preset confirmation, separate removable enclosure lid geometry, and the CuraEngine image capability smoke check.
-- **Vercel deployment:** the supplied deployment log shows `main` commit `f6a0449` completed successfully on 2 November 2026. `npm ci`, Prisma Client generation (6.19.3), Next.js 15.5.28 compilation, lint/type validation, 10/10 static page generation, serverless-function creation, output collection, and deployment all completed.
-- **Vercel project layout:** Root Directory `web`; Install Command `npm ci`; Build Command `npm run build`; Output Directory `.next`. Both root and `web/vercel.json` should remain consistent with the configured project root.
-- The successful build confirms compilation and deployment packaging. It does **not** establish that authentication, Supabase/PostgreSQL operations, private Blob access, Railway CAD/OCR calls, billing webhooks, or the cron route have passed end-to-end runtime testing.
-- **Build warnings to review separately:** npm reported 29 vulnerabilities (22 moderate, 7 high), deprecated package warnings, the unknown `cache-dir` npm configuration, and install scripts not yet covered by `allowScripts` for `prisma`, `protobufjs`, and `unrs-resolver`. These warnings did not stop this deployment. Review the dependency audit and package install scripts deliberately; do not run `npm audit fix --force` blindly.
-- **Free-plan retention:** one saved project. Active Pro subscriptions and ADMIN accounts have unlimited projects. Projects are not deleted automatically; users must explicitly delete them. Each project keeps its two newest unprotected output versions, while protected versions are retained.
-- **Engineering boundary:** fit-check is axis-aligned and does not provide arbitrary-rotation placement, complete 3D interference/keep-out analysis, thermal or structural analysis, or manufacturing certification. Drawing OCR/vision also requires human review and only supports the implemented geometry set.
+## Current verified repository state
 
-## Current next steps
+- The repository is **Private** and \`main\` is the default branch.
+- PR #20 is merged. Effective CAD defaults are retained in the saved blueprint, drawing generation requires a saved structured blueprint, and the exact provisional height/wall value must be confirmed before export.
+- No application rollback was performed. Authentication, private storage, billing, CAD, OCR, fit-check, printability, slicing and deployment work remain intact.
+- The product is **Offline AI 3D Designer**, an engineering-grade CAD/manufacturing platform. A guided interface for non-specialists is a presentation layer, not a reduced CAD engine.
+- The open Phase 1/2 PRs are not part of \`main\` until reviewed and merged. Green CI on a PR branch is evidence only for that exact branch head.
 
-1. Run live smoke tests against the deployed URL: signup/login/session refresh, dashboard, project create/delete, private upload/download, and database persistence.
-2. Verify the configured Production CAD backend `/health` and service-token pairing. Test supported text-to-CAD, drawing OCR/blueprint review, STEP/STL generation, and the hardware fit-check flow.
-3. Verify Razorpay only if checkout is enabled, including webhook handling and subscription entitlements. Verify the daily account-deletion cron with the configured `CRON_SECRET`.
-4. Review the 29 npm audit findings and the three install-script approval warnings before changing dependency versions or allowing scripts.
-5. Keep representative CAD exports and slicing checks subject to independent CAD-viewer/Cura review; do not treat a green web build as engineering validation.
+## Open pull requests and verification snapshot
+
+| PR | Scope | Evidence / state |
+|---|---|---|
+| #15 | Accessible 3D-printing product roadmap | Open; documentation-only |
+| #18 | Initial visual-dimension candidates | Open, stale/non-mergeable; successor #27 |
+| #22 | Semantic drawing dimension evidence | Draft; recorded head passed 324 Python tests, web checks, Docker smoke and CodeQL |
+| #23 | Blueprint-native printability | Draft; 320 Python tests, web and CodeQL passed; Docker smoke still reported 0.000 m filament on its old mainline slicer |
+| #24 | Positive G-code extrusion validation | Draft; 322 Python tests; a 10 mm test cube measured 0.345410 m E-axis filament and 2,962 deposition moves; web and CodeQL passed |
+| #25 | OCR source selection using validated MIME metadata | Draft; 316 Python tests; OCR helper test, web, Docker and CodeQL passed |
+| #26 | Guided UX wording / advanced engineering mode | Draft, documentation-only; CI passed |
+| #27 | Combined visual-dimension candidate and grounded-review work | Draft; latest head \`f35d69d...\`; fresh CI is running after two regression-test corrections |
+
+PR #16, #17 and #19 were closed as superseded by #23, #24 and #25. PR #21 was closed as superseded by #22. PR #20 is merged. No PR #22–#27 change is claimed as merged or deployed.
+
+## Immediate priorities
+
+1. Product-owner review of #26's guided/advanced wording and the latest-head checks for #22–#27.
+2. Integrate the reviewed semantic grounding, saved-Blueprint printability, real G-code extrusion validation and MIME-aware upload selection; rerun combined CI after rebasing.
+3. Finish the visual-candidate workflow without promoting vision-only values into CAD geometry.
+4. Implement the full provenance-aware measurement editor and a real interactive viewer from the exact validated geometry.
+5. Establish the owner-approved golden drawing set and compare model dimensions/bounds against references.
+6. Select printer/material profiles and inspect slicer previews before physical tests.
+7. Resolve C-DAC scope, ISO 606 sprocket expectations, hosted-vision data rules, IP/licence and printer acceptance requirements.
+
+## Evidence boundaries
+
+- CI proves only the checks run on the recorded commit.
+- No fresh full Production sign-in/database/private-Blob/payment/CAD-service journey was run in this documentation audit.
+- No CATIA opening test, drawing-to-mesh accuracy benchmark, customer G-code inspection or physical print is claimed.
+- The current npm vulnerability count, IP/licence terms and branch-protection settings need a separate fresh review; old counts must not be presented as current.
+
 
 ## Historical implementation and verification notes
 
