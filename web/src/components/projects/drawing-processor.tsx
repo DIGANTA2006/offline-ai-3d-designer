@@ -208,7 +208,7 @@ function getMeasurementBindingOptions(blueprint: Blueprint, kind: string): Bindi
   blueprint.features.forEach((feature, featureIndex) => {
     if (blueprint.primary_body_type === "revolved_profile" || !blueprint.primary_body_type) return;
     if (
-      ["hole_pattern", "circular_pattern_cut", "radial_cutout_pattern", "ring_step"].includes(feature.type)
+      ["hole_pattern", "radial_cutout_pattern", "ring_step"].includes(feature.type)
       && blueprint.primary_body_type !== "rotational_flange"
     ) return;
     for (const item of featureBindingFields[feature.type] ?? []) {
