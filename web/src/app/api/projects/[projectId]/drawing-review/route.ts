@@ -117,6 +117,16 @@ function validateTargetBinding(
     if (!isRecord(feature) || typeof feature.type !== "string") {
       throw new RouteError("The selected Blueprint feature is invalid.", 422);
     }
+    if (bodyType === "revolved_profile") {
+      throw new RouteError("Feature bindings are not supported on revolved-profile bodies in Blueprint v1.", 422);
+    }
+    if (
+      ["hole_pattern", "radial_cutout_pattern", "ring_step"].includes(feature.type)
+      && bodyType !== "rotational_flange"
+    ) {
+      throw new RouteError("This feature can only be bound on a rotational flange.", 422);
+    }
+
     const featureFieldKinds: Record<string, Record<string, string>> = {
       circular_pattern_cut: { count: "count", pitch_radius: "radius", start_angle: "angle", angular_pitch: "angle", diameter: "diameter", depth: "linear" },
       hole_pattern: { count: "count", pitch_radius: "radius", start_angle: "angle", angular_pitch: "angle", diameter: "diameter", depth: "linear" },
@@ -226,7 +236,7 @@ function validateReview(
         if (targetBinding.field === "count" && value > 360) {
           throw new RouteError("A feature count cannot exceed 360.", 422);
         }
-        if (targetBinding.field === "start_angle" && value > 360) {
+        if (targetBinding.field === "start_angle" && (value < 0 || value > 360)) {
           throw new RouteError("A feature start angle must be between 0 and 360 degrees.", 422);
         }
         if (targetBinding.field === "angular_pitch" && (value <= 0 || value > 360)) {
