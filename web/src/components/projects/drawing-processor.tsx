@@ -153,7 +153,7 @@ const featureBindingFields: Record<BlueprintFeatureType, Array<{
   circular_pattern_cut: [
     { field: "count", label: "count", kind: "count" },
     { field: "diameter", label: "hole diameter", kind: "diameter" },
-    { field: "pitch_radius", label: "pattern radius (PCD / 2)", kind: "radius" },
+    { field: "pitch_radius", label: "pattern radius (explicit R callout)", kind: "radius" },
     { field: "start_angle", label: "pattern start angle", kind: "angle" },
     { field: "angular_pitch", label: "pattern angular pitch", kind: "angle" },
     { field: "depth", label: "cut depth", kind: "linear" },
@@ -514,14 +514,14 @@ export function DrawingProcessor({ projectId, sourceFiles }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fileIndex: selected.index, reviews }),
       });
-      const payload = await response.json().catch(() => ({})) as { error?: string; ok?: boolean; confirmedCount?: number; rejectedCount?: number };
+      const payload = await response.json().catch(() => ({})) as { error?: string; ok?: boolean; confirmedCount?: number; rejectedCount?: number; associatedCount?: number };
       if (response.status === 401) {
         router.replace("/login");
         return;
       }
       if (response.status === 402) throw new Error("Saving measurement reviews requires an active Pro subscription or administrator access.");
       if (!response.ok || !payload.ok) throw new Error(payload.error ?? `Saving measurement reviews failed (HTTP ${response.status}).`);
-      setNotice(`Saved ${payload.confirmedCount ?? 0} confirmed reading(s) and ${payload.rejectedCount ?? 0} rejected candidate(s). These decisions are stored separately from CAD geometry.`);
+      setNotice(`Saved ${payload.confirmedCount ?? 0} confirmed reading(s), ${payload.rejectedCount ?? 0} rejected candidate(s), and ${payload.associatedCount ?? 0} explicit CAD field association(s). Saved associations are applied only when generating reviewed CAD.`);
       router.refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not save measurement reviews.");
