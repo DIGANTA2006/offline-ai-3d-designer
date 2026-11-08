@@ -17,7 +17,8 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "test:drawing-generation-guard": "node scripts/test-drawing-generation-guard.mjs",
-    "test:drawing-measurement-review": "node scripts/test-drawing-measurement-review.mjs"
+    "test:drawing-measurement-review": "node scripts/test-drawing-measurement-review.mjs",
+    "test:drawing-measurement-bindings": "node scripts/test-drawing-measurement-bindings.mjs"
   },
   "allowScripts": {
     "@firebase/util": true,
