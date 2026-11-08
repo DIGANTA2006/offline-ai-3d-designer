@@ -355,6 +355,7 @@ export async function POST(request: Request, { params }: Context) {
       reviewCount: savedReviews.length,
       confirmedCount: savedReviews.filter((item) => item.decision === "confirmed_reading").length,
       rejectedCount: savedReviews.filter((item) => item.decision === "rejected").length,
+      associatedCount: savedReviews.filter((item) => item.targetBinding).length,
       reviewedAt,
     });
   } catch (error) {
