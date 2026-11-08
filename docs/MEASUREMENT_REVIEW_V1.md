@@ -1,31 +1,47 @@
-# Drawing Measurement Review Ledger v1
+# Drawing Measurement Review and CAD Association v1
 
-**Status:** Implemented on main via merged PR #29; first-stage review ledger only. It is not a complete dimension-to-CAD association system.  
-**Purpose:** Persist a user's review of image-read measurement candidates without converting those candidates into CAD parameters.
+**Status:** The transcription-review ledger is on main via PR #29. Explicit, user-selected CAD field associations are implemented in the current feature branch and remain subject to PR CI/review.
+**Purpose:** Preserve source measurements as immutable evidence while allowing a user to deliberately associate a confirmed reading with one compatible Blueprint field.
 
-## Data contract
+## Immutable source and review sidecar
 
-The original OCR/vision response remains immutable in \`ProjectVersion.spec.ocrResults[].spec.blueprint.visual_measurements\`.
+The original OCR/vision response remains immutable in `ProjectVersion.spec.ocrResults[].spec.blueprint.visual_measurements`.
 
-User decisions are stored beside it at \`ProjectVersion.spec.ocrResults[].visualMeasurementReviews\`. Each decision references a candidate by its array index and records:
+User decisions are stored beside it at `ProjectVersion.spec.ocrResults[].visualMeasurementReviews`. Each decision references a candidate by its array index and records:
 
-- Decision: \`confirmed_reading\` or \`rejected\`.
+- Decision: `confirmed_reading` or `rejected`.
 - User-reviewed numeric value and unit for confirmed readings.
 - Optional plain-language feature description and review note.
+- Optional `targetBinding` selecting an exact base-sketch field or a feature index/field.
 - Server-generated review timestamp and authenticated user ID.
 
-The review API is:
+No source OCR value, source visual candidate or source Blueprint field is overwritten when a review or association is saved.
 
-\`POST /api/projects/[projectId]/drawing-review\`
+## Explicit CAD field association
 
-The route enforces same-origin requests, authenticated project ownership, the shared paid-feature entitlement check, bounded request size, unique candidate indices, candidate index range, supported units for the candidate kind, and finite/ranged values. The original OCR candidate object is not overwritten. Audit logging records the counts of confirmed and rejected readings.
+The review UI lists only compatible Blueprint targets. The user must select one explicitly; AI feature hints and matching labels never create a binding automatically.
 
-## UI behavior
+Supported base-sketch targets are outer diameter, central bore diameter, overall length, overall width, solid thickness, and sheet-enclosure wall thickness, with body-type restrictions.
 
-The drawing panel allows the user to correct the transcribed value/unit, describe which feature the callout refers to, add a note, and explicitly confirm or reject a reading. Any edit resets the decision to pending. The user saves the decisions explicitly; they are restored when the project page is reloaded.
+Supported feature targets are allowlisted by feature type: hole/pattern count, diameter, explicit radius fields, pattern angles, ring-step diameters/depth, pocket dimensions/depth, and fillet radius. Ambiguous coordinate offsets and unsupported fields are deliberately excluded.
 
-**Critical engineering boundary:** confirming a reading means the person confirms the transcription shown by the review UI. It does not prove that the dimension leader/arrow is associated with the described feature, and it does not map that reading to a CAD parameter. The visual candidates remain separate from the Blueprint fields. They are stripped of UI-only review properties before the Blueprint is submitted to the deterministic generator. Applying a reviewed measurement to a specific geometry field is a separate future workflow requiring a feature-association control and its own confirmation gate.
+The authenticated `POST /api/projects/[projectId]/drawing-review` route validates:
+- Same-origin request, authentication, project ownership and paid-feature entitlement.
+- Bounded request size, unique candidate indices and valid candidate range.
+- Candidate kind/unit compatibility with the selected target.
+- Feature index and field allowlists, body-type restrictions and field-specific limits.
+- At most one candidate mapped to a target field in a single save.
+
+Length values are converted to millimetres when a saved association is applied. Angles remain degrees and count values remain integers. A saved confirmed association is applied to a copied Blueprint only when the user requests reviewed CAD generation. The original saved Blueprint and OCR evidence remain untouched. Any direct edit to a mapped field or removal of a feature invalidates affected bindings instead of silently retargeting them.
+
+## UI behavior and engineering boundary
+
+The drawing panel lets the user correct a reading, optionally select an exact CAD field, confirm/reject the reading, and save the review. A binding is applied only when the reading is confirmed and the association is saved. Changing the value, unit, target, body type, or relevant feature state resets or invalidates the affected approval.
+
+A manual field association records the user's intended mapping; it does **not** prove that a dimension leader/arrow or extension line points to the selected feature or view. The user must compare the source drawing and the CAD target. Visual candidates remain separate from the source Blueprint. No unreviewed or AI-inferred candidate is promoted into CAD geometry.
+
+The CAD geometry generator remains deterministic. Export validity and a saved binding do not establish drawing accuracy, tolerance compliance, strength, manufacturability, or physical print acceptance.
 
 ## Verification
 
-The web route regression script covers same-origin rejection, owner-scoped lookup, valid length/angle/count readings, unit-kind mismatch, duplicate candidate indices, out-of-range indices, audit logging and preservation of original OCR/Blueprint evidence.
+The web route regression script covers same-origin rejection, owner-scoped lookup, valid length/angle/count readings, unit-kind mismatch, duplicate candidate indices, unknown candidate/feature indices, incompatible CAD fields, unsupported feature fields, duplicate target bindings, rejected-candidate binding prevention, audit logging, and preservation of original OCR/Blueprint evidence.
