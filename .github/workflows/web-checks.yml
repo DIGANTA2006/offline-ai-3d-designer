@@ -78,6 +78,8 @@ jobs:
         run: npm run test:drawing-generation-guard
       - name: Drawing measurement review persistence and validation
         run: npm run test:drawing-measurement-review
+      - name: Drawing measurement CAD binding application
+        run: npm run test:drawing-measurement-bindings
       - name: ESLint
         run: npm run lint
       - name: TypeScript typecheck
