@@ -196,6 +196,13 @@ const featureBindingFields: Record<BlueprintFeatureType, Array<{
 
 function getMeasurementBindingOptions(blueprint: Blueprint, kind: string): BindingOption[] {
   const options: BindingOption[] = [];
+  const bodyType = blueprint.primary_body_type;
+  const supportedBodyProfile = bodyType === "rotational_flange"
+    ? blueprint.base_sketch.profile === "circle"
+    : (bodyType === "prismatic_box" || bodyType === "sheet_enclosure")
+      && ["rectangle", "polygon", "complex_path"].includes(blueprint.base_sketch.profile);
+  if (!supportedBodyProfile) return options;
+
   for (const item of baseBindingFields) {
     if (
       item.kind !== kind
