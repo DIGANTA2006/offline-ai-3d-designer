@@ -97,7 +97,10 @@ function validateTargetBinding(
     if (field === "wall_thickness" && bodyType !== "sheet_enclosure") {
       throw new RouteError("Wall thickness can only be bound on a sheet enclosure.", 422);
     }
-    return { scope: "base_sketch", field: field as MeasurementBinding & never } as MeasurementBinding;
+    return {
+      scope: "base_sketch",
+      field: field as Extract<MeasurementBinding, { scope: "base_sketch" }>["field"],
+    };
   }
 
   if (raw.scope === "feature") {
