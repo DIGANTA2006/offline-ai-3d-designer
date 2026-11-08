@@ -226,6 +226,10 @@ A part is "supported" only when it passes all four layers. Coverage is the share
 - Design: STEP (CATIA and other CAD), STL and 3MF (printing), ZIP with files, dimension report, and print guide
 - Slicing: G-code for a chosen printer, with time and filament estimates; or slicing of a user's own STL
 
+**Experience architecture**
+
+The guided user experience is a presentation and assistance layer, not a reduced CAD product. It must not downgrade the feature program, CAD kernel, dimensional tolerances, provenance, geometry validation, printability requirements, export safeguards, or manufacturing acceptance gates. Guided mode asks plain-language questions and explains engineering decisions; advanced engineering mode exposes detailed parameters and controls over the same validated contracts.
+
 **Core user loop**
 1. Describe or upload.
 2. The system reads the input and proposes the part as a feature program, with a summary in words.
@@ -506,7 +510,7 @@ Task IDs are used in branch names (for example `feature/WS3-T04-planner-validato
 - T70 Five screens: home, questions, preview and check, print, results
 - T71 Template gallery with a few examples per family
 - T72 Preview: 3D viewer with dimension list and the summary in words
-- T73 Beginner mode and advanced mode switch
+- T73 Guided user experience and advanced engineering mode switch
 - T74 Accessibility basics and mobile layout check
 - T75 Interface copy (ChatGPT drafts, Diganta approves)
 
