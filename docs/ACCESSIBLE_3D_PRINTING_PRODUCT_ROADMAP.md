@@ -7,6 +7,33 @@
 **Primary deployment:** Vercel (web) + Railway (Python/CAD) + Supabase/PostgreSQL (data)  
 **Execution rule:** Work in small, testable branches and pull requests. Do not commit directly to `main` or deploy to Production without the product owner's approval.
 
+
+## Current execution update — 8 November 2026
+
+**Product positioning:** The product identity remains **Offline AI 3D Designer**. The application is an engineering-grade CAD and manufacturing platform with a guided interface for non-specialists. “Accessible” describes the user experience; it does not mean beginner-level CAD, a toy application, or reduced engineering standards.
+
+**Current GitHub baseline:** \`main\` is \`9c8707c89f6ae04607a4a77cd183ba1491ad18a8\`. PR #20 is merged and preserves effective drawing defaults, saved-Blueprint provenance, the drawing-generation guard and explicit confirmation of provisional defaults.
+
+**Current corrective work:**
+
+| Current PR | Work | Latest recorded evidence |
+|---|---|---|
+| #22 | Semantic dimension-evidence binding | 324 Python tests; web, Docker and CodeQL passed |
+| #23 | Printability against saved drawing Blueprint | 320 Python tests; web and CodeQL passed; its old mainline Docker smoke still reports 0.000 m filament |
+| #24 | Positive G-code extrusion and measured filament | 322 Python tests; the 10 mm test cube reported 0.345410 m E-axis filament and 2,962 deposition moves; web and CodeQL passed |
+| #25 | OCR source selection using validated MIME/type | 316 Python tests; OCR helper, web, Docker and CodeQL passed |
+| #26 | Engineering-grade guided UX wording | Documentation-only; CI passed; T73 renamed to “Guided user experience and advanced engineering mode switch” |
+| #27 | Combined visual measurement candidates, semantic grounding and MIME-aware drawing review | Latest head f35d69d...; 327 Python tests, web, Docker/CAD-OCR smoke and CodeQL passed |
+
+The earlier PRs #16, #17 and #19 were closed as superseded by #23, #24 and #25. PR #18 was closed in favour of #27. PR #21 was closed in favour of #22. PR #20 is merged. PRs #22–#27 remain drafts and are **not** part of main until Diganta reviews and merges them.
+
+**Important CI boundary:** PR #27's Docker/CAD-OCR smoke still reports 0.000 m filament because #27 does not include the separate slicer correction in #24. A successful image build or CAD/OCR smoke is not proof of valid extrusion. Re-run the combined smoke after #24 is integrated.
+
+**Phase 2 boundary:** #27 displays vision-read measurement candidates and OCR corroboration. Vision-only candidates remain separate from CAD geometry. OCR value agreement does not prove that a dimension arrow points to the proposed feature; feature association and the full measurement editor remain open. Hosted vision remains blocked unless C-DAC's data-handling decision explicitly permits it.
+
+**Historical note:** The 3 November baseline, PR #16–#19 status statements, and the historical CI records below describe the repository at that date. They are retained for audit history and must not be used as today's PR order or release status.
+
+
 ---
 
 ## 1. Product mission
